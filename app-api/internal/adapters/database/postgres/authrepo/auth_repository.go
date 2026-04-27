@@ -20,23 +20,40 @@ type Repository struct {
 }
 
 type userAccountRow struct {
-	ID                uuid.UUID  `gorm:"column:id;type:uuid"`
-	Email             string     `gorm:"column:email"`
-	PasswordHash      string     `gorm:"column:password_hash"`
-	Status            string     `gorm:"column:status"`
-	EmailVerifiedAt   *time.Time `gorm:"column:email_verified_at"`
-	PasswordChangedAt *time.Time `gorm:"column:password_changed_at"`
-	LastLoginAt       *time.Time `gorm:"column:last_login_at"`
-	FailedLoginCount  int        `gorm:"column:failed_login_count"`
-	LockedUntil       *time.Time `gorm:"column:locked_until"`
-	CreatedAt         time.Time  `gorm:"column:created_at"`
-	UpdatedAt         time.Time  `gorm:"column:updated_at"`
-	DeletedAt         *time.Time `gorm:"column:deleted_at"`
-	DeletedBy         *uuid.UUID `gorm:"column:deleted_by"`
+	ID               uuid.UUID  `gorm:"column:id;type:uuid"`
+	PrimaryEmail     string     `gorm:"column:primary_email"`
+	Status           string     `gorm:"column:status"`
+	LastLoginAt      *time.Time `gorm:"column:last_login_at"`
+	FailedLoginCount int        `gorm:"column:failed_login_count"`
+	LockedUntil      *time.Time `gorm:"column:locked_until"`
+	CreatedAt        time.Time  `gorm:"column:created_at"`
+	UpdatedAt        time.Time  `gorm:"column:updated_at"`
+	DeletedAt        *time.Time `gorm:"column:deleted_at"`
+	DeletedBy        *uuid.UUID `gorm:"column:deleted_by"`
 }
 
 func (userAccountRow) TableName() string {
 	return "user_accounts"
+}
+
+type authIdentityRow struct {
+	ID                uuid.UUID  `gorm:"column:id;type:uuid"`
+	UserAccountID     uuid.UUID  `gorm:"column:user_account_id"`
+	IdentityType      string     `gorm:"column:identity_type"`
+	Provider          string     `gorm:"column:provider"`
+	ProviderUserID    *string    `gorm:"column:provider_user_id"`
+	Email             string     `gorm:"column:email"`
+	EmailVerifiedAt   *time.Time `gorm:"column:email_verified_at"`
+	PasswordHash      string     `gorm:"column:password_hash"`
+	PasswordChangedAt *time.Time `gorm:"column:password_changed_at"`
+	LastUsedAt        *time.Time `gorm:"column:last_used_at"`
+	CreatedAt         time.Time  `gorm:"column:created_at"`
+	UpdatedAt         time.Time  `gorm:"column:updated_at"`
+	DeletedAt         *time.Time `gorm:"column:deleted_at"`
+}
+
+func (authIdentityRow) TableName() string {
+	return "auth_identities"
 }
 
 type loginAttemptRow struct {
@@ -78,7 +95,14 @@ func NewRepository(db *gorm.DB) *Repository {
 func (r *Repository) FindUserAccountByEmail(ctx context.Context, email string) (*auth.UserAccount, error) {
 	var row userAccountRow
 	err := r.db.WithContext(ctx).
-		Where("email = ? AND deleted_at IS NULL", email).
+		Table("user_accounts").
+		Select("user_accounts.*").
+		Joins("JOIN auth_identities ON auth_identities.user_account_id = user_accounts.id").
+		Where("auth_identities.identity_type = ?", string(auth.AuthIdentityTypeEmailPassword)).
+		Where("auth_identities.provider = ?", string(auth.AuthProviderEmail)).
+		Where("auth_identities.email = ?", email).
+		Where("auth_identities.deleted_at IS NULL").
+		Where("user_accounts.deleted_at IS NULL").
 		First(&row).
 		Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -106,19 +130,16 @@ func (r *Repository) CreateUserAccount(ctx context.Context, account *auth.UserAc
 	}
 
 	row := userAccountRow{
-		ID:                account.ID,
-		Email:             account.Email,
-		PasswordHash:      account.PasswordHash,
-		Status:            string(account.Status),
-		EmailVerifiedAt:   account.EmailVerifiedAt,
-		PasswordChangedAt: account.PasswordChangedAt,
-		LastLoginAt:       account.LastLoginAt,
-		FailedLoginCount:  account.FailedLoginCount,
-		LockedUntil:       account.LockedUntil,
-		CreatedAt:         account.CreatedAt,
-		UpdatedAt:         account.UpdatedAt,
-		DeletedAt:         account.DeletedAt,
-		DeletedBy:         account.DeletedBy,
+		ID:               account.ID,
+		PrimaryEmail:     account.PrimaryEmail,
+		Status:           string(account.Status),
+		LastLoginAt:      account.LastLoginAt,
+		FailedLoginCount: account.FailedLoginCount,
+		LockedUntil:      account.LockedUntil,
+		CreatedAt:        account.CreatedAt,
+		UpdatedAt:        account.UpdatedAt,
+		DeletedAt:        account.DeletedAt,
+		DeletedBy:        account.DeletedBy,
 	}
 
 	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
@@ -128,6 +149,49 @@ func (r *Repository) CreateUserAccount(ctx context.Context, account *auth.UserAc
 	account.ID = row.ID
 	account.CreatedAt = row.CreatedAt
 	account.UpdatedAt = row.UpdatedAt
+	return nil
+}
+
+func (r *Repository) CreateAuthIdentity(ctx context.Context, identity *auth.AuthIdentity) error {
+	if err := ensureUUID(&identity.ID); err != nil {
+		return err
+	}
+	if identity.IdentityType == "" {
+		identity.IdentityType = auth.AuthIdentityTypeEmailPassword
+	}
+	if identity.Provider == "" {
+		identity.Provider = auth.AuthProviderEmail
+	}
+	if identity.CreatedAt.IsZero() {
+		identity.CreatedAt = time.Now().UTC()
+	}
+	if identity.UpdatedAt.IsZero() {
+		identity.UpdatedAt = identity.CreatedAt
+	}
+
+	row := authIdentityRow{
+		ID:                identity.ID,
+		UserAccountID:     identity.UserAccountID,
+		IdentityType:      string(identity.IdentityType),
+		Provider:          string(identity.Provider),
+		ProviderUserID:    stringPtrOrNil(identity.ProviderUserID),
+		Email:             identity.Email,
+		EmailVerifiedAt:   identity.EmailVerifiedAt,
+		PasswordHash:      identity.PasswordHash,
+		PasswordChangedAt: identity.PasswordChangedAt,
+		LastUsedAt:        identity.LastUsedAt,
+		CreatedAt:         identity.CreatedAt,
+		UpdatedAt:         identity.UpdatedAt,
+		DeletedAt:         identity.DeletedAt,
+	}
+
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return err
+	}
+
+	identity.ID = row.ID
+	identity.CreatedAt = row.CreatedAt
+	identity.UpdatedAt = row.UpdatedAt
 	return nil
 }
 
@@ -215,18 +279,15 @@ func stringPtrOrNil(value string) *string {
 
 func (r userAccountRow) toDomain() *auth.UserAccount {
 	return &auth.UserAccount{
-		ID:                r.ID,
-		Email:             r.Email,
-		PasswordHash:      r.PasswordHash,
-		Status:            auth.UserAccountStatus(r.Status),
-		EmailVerifiedAt:   r.EmailVerifiedAt,
-		PasswordChangedAt: r.PasswordChangedAt,
-		LastLoginAt:       r.LastLoginAt,
-		FailedLoginCount:  r.FailedLoginCount,
-		LockedUntil:       r.LockedUntil,
-		CreatedAt:         r.CreatedAt,
-		UpdatedAt:         r.UpdatedAt,
-		DeletedAt:         r.DeletedAt,
-		DeletedBy:         r.DeletedBy,
+		ID:               r.ID,
+		PrimaryEmail:     r.PrimaryEmail,
+		Status:           auth.UserAccountStatus(r.Status),
+		LastLoginAt:      r.LastLoginAt,
+		FailedLoginCount: r.FailedLoginCount,
+		LockedUntil:      r.LockedUntil,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
+		DeletedAt:        r.DeletedAt,
+		DeletedBy:        r.DeletedBy,
 	}
 }

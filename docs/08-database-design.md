@@ -267,13 +267,10 @@ deleted_by
 ### user_accounts
 
 id
-email
-password_hash
+primary_email
 status -- active, suspended, disabled
 status_reason -- resigned, account_restricted, other
-email_verified_at
 last_login_at
-password_changed_at
 created_at
 updated_at
 disabled_at
@@ -284,7 +281,31 @@ disabled_at
 1. 1 account สามารถอยู่หลาย Workspace ผ่าน workspace_memberships
 1. 1 account อาจมีหลาย Workspace Profile ตาม Workspace ที่เข้าร่วม
 1. user_accounts ไม่ควรมี tenant_id / workspace_id และไม่ควรผูก profile_id เดียวแบบตายตัว
-1. password_changed_at ใช้ invalidate token/session หลังเปลี่ยนรหัสผ่าน
+1. user_accounts ไม่ใช่ login identity โดยตรง; วิธี login ต้องอยู่ใน auth_identities
+
+### auth_identities
+
+id
+user_account_id
+identity_type -- email_password, oauth
+provider -- email, google, facebook, microsoft, line, github
+provider_user_id -- ใช้กับ oauth เท่านั้น
+email
+email_verified_at
+password_hash -- ใช้กับ email_password เท่านั้น
+password_changed_at
+last_used_at
+created_at
+updated_at
+deleted_at
+
+หลักการ:
+
+1. email ไม่ใช่ source of truth ของ social identity
+1. OAuth identity ต้องหาโดย provider + provider_user_id
+1. email/password login เป็น identity ประเภทหนึ่ง ไม่ใช่ logic พิเศษใน user_accounts
+1. Google/Facebook ที่ใช้ email เดียวกันต้องไม่ auto-merge แบบเงียบ ๆ; ต้องผ่าน flow link account ที่ชัดเจน
+1. password_changed_at อยู่ที่ auth_identities เพื่อ invalidate session/token เฉพาะ identity ที่เกี่ยวข้อง
 ### auth_sessions
 
 id
@@ -340,7 +361,7 @@ created_at
 
 ### Password Changed Tracking
 
-user_accounts ต้องมี password_changed_at
+auth_identities ต้องมี password_changed_at สำหรับ identity ที่มี password
 
 ใช้เพื่อ:
 

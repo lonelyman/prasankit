@@ -55,6 +55,8 @@ Not allowed for Workspace API:
 - Auth API ใช้จัดการตัวตนบัญชีผู้ใช้กลาง
 - Auth API บอกว่า user คือใคร ส่วน Permission Guard บอกว่า user ทำอะไรได้ที่ไหน
 - Workspace Role และ Project Role ไม่ควรผูกอยู่ใน Auth โดยตรง
+- `user_accounts` เป็น account กลาง ส่วน `auth_identities` เป็นช่องทาง login เช่น email/password และ OAuth provider ในอนาคต
+- ห้ามใช้ email อย่างเดียวเป็น source of truth ของ social login; OAuth ต้องแยกด้วย `provider + provider_user_id`
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
@@ -79,7 +81,7 @@ Not allowed for Workspace API:
 - auth_sessions ใช้เก็บ session metadata / revoke history / device history
 - Login failed ต้องบันทึกใน auth_login_attempts
 - Security event สำคัญต้องบันทึกใน security_events
-- password_changed_at ใช้ invalidate token/session เก่าหลังเปลี่ยนรหัสผ่าน
+- password_changed_at อยู่ที่ auth_identities และใช้ invalidate token/session เก่าหลังเปลี่ยนรหัสผ่าน
 - Email verification จำเป็นก่อนใช้งานจริง
 ## 9.3 Tenant / Workspace API
 

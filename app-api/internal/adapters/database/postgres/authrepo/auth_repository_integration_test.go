@@ -37,15 +37,14 @@ func TestRepositoryIntegration(t *testing.T) {
 	t.Run("create user account", func(t *testing.T) {
 		email := "create-account-" + uuid.NewString() + "@example.test"
 		account := &auth.UserAccount{
-			Email:        email,
-			PasswordHash: "test-password-hash",
+			PrimaryEmail: email,
 		}
 
 		if err := repo.CreateUserAccount(ctx, account); err != nil {
 			t.Fatalf("create user account: %v", err)
 		}
 		t.Cleanup(func() {
-			_ = db.Exec(`DELETE FROM user_accounts WHERE email = ?`, email).Error
+			_ = db.Exec(`DELETE FROM user_accounts WHERE id = ?`, account.ID).Error
 		})
 
 		if account.ID == uuid.Nil {
@@ -64,15 +63,58 @@ func TestRepositoryIntegration(t *testing.T) {
 			t.Fatal("account.UpdatedAt was not set")
 		}
 
-		found, err := repo.FindUserAccountByEmail(ctx, email)
-		if err != nil {
-			t.Fatalf("find created user account: %v", err)
+		var storedPrimaryEmail string
+		if err := db.Table("user_accounts").
+			Select("primary_email").
+			Where("id = ?", account.ID).
+			Scan(&storedPrimaryEmail).
+			Error; err != nil {
+			t.Fatalf("query created user account: %v", err)
 		}
-		if found.ID != account.ID {
-			t.Fatalf("found.ID = %s, want %s", found.ID, account.ID)
+		if storedPrimaryEmail != email {
+			t.Fatalf("primary_email = %s, want %s", storedPrimaryEmail, email)
 		}
-		if found.Status != auth.UserAccountStatusPendingVerification {
-			t.Fatalf("found.Status = %s, want %s", found.Status, auth.UserAccountStatusPendingVerification)
+	})
+
+	t.Run("create auth identity", func(t *testing.T) {
+		email := "identity-" + uuid.NewString() + "@example.test"
+		account := &auth.UserAccount{
+			PrimaryEmail: email,
+		}
+		if err := repo.CreateUserAccount(ctx, account); err != nil {
+			t.Fatalf("create user account: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = db.Exec(`DELETE FROM auth_identities WHERE email = ?`, email).Error
+			_ = db.Exec(`DELETE FROM user_accounts WHERE id = ?`, account.ID).Error
+		})
+
+		identity := &auth.AuthIdentity{
+			UserAccountID: account.ID,
+			Email:         email,
+			PasswordHash:  "test-password-hash",
+		}
+		if err := repo.CreateAuthIdentity(ctx, identity); err != nil {
+			t.Fatalf("create auth identity: %v", err)
+		}
+
+		if identity.ID == uuid.Nil {
+			t.Fatal("identity.ID was not set")
+		}
+		if identity.ID.Version() != 7 {
+			t.Fatalf("identity.ID version = %d, want 7", identity.ID.Version())
+		}
+		if identity.IdentityType != auth.AuthIdentityTypeEmailPassword {
+			t.Fatalf("identity.IdentityType = %s, want %s", identity.IdentityType, auth.AuthIdentityTypeEmailPassword)
+		}
+		if identity.Provider != auth.AuthProviderEmail {
+			t.Fatalf("identity.Provider = %s, want %s", identity.Provider, auth.AuthProviderEmail)
+		}
+		if identity.CreatedAt.IsZero() {
+			t.Fatal("identity.CreatedAt was not set")
+		}
+		if identity.UpdatedAt.IsZero() {
+			t.Fatal("identity.UpdatedAt was not set")
 		}
 	})
 
@@ -84,23 +126,31 @@ func TestRepositoryIntegration(t *testing.T) {
 		}
 
 		account := &auth.UserAccount{
-			Email:        email,
-			PasswordHash: "test-password-hash",
+			PrimaryEmail: email,
 			Status:       auth.UserAccountStatusActive,
 		}
 		if err := repo.CreateUserAccount(ctx, account); err != nil {
 			t.Fatalf("create user account: %v", err)
 		}
+		identity := &auth.AuthIdentity{
+			UserAccountID: account.ID,
+			Email:         email,
+			PasswordHash:  "test-password-hash",
+		}
+		if err := repo.CreateAuthIdentity(ctx, identity); err != nil {
+			t.Fatalf("create auth identity: %v", err)
+		}
 		t.Cleanup(func() {
-			_ = db.Exec(`DELETE FROM user_accounts WHERE email = ?`, email).Error
+			_ = db.Exec(`DELETE FROM auth_identities WHERE email = ?`, email).Error
+			_ = db.Exec(`DELETE FROM user_accounts WHERE id = ?`, account.ID).Error
 		})
 
 		account, err = repo.FindUserAccountByEmail(ctx, email)
 		if err != nil {
 			t.Fatalf("find user account: %v", err)
 		}
-		if account.Email != email {
-			t.Fatalf("account.Email = %s, want %s", account.Email, email)
+		if account.PrimaryEmail != email {
+			t.Fatalf("account.PrimaryEmail = %s, want %s", account.PrimaryEmail, email)
 		}
 		if account.Status != auth.UserAccountStatusActive {
 			t.Fatalf("account.Status = %s, want %s", account.Status, auth.UserAccountStatusActive)

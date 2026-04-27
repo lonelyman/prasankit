@@ -1,11 +1,8 @@
 -- +goose Up
 CREATE TABLE user_accounts (
     id UUID PRIMARY KEY,
-    email CITEXT NOT NULL,
-    password_hash TEXT NOT NULL,
+    primary_email CITEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending_verification',
-    email_verified_at TIMESTAMPTZ,
-    password_changed_at TIMESTAMPTZ,
     last_login_at TIMESTAMPTZ,
     failed_login_count INTEGER NOT NULL DEFAULT 0,
     locked_until TIMESTAMPTZ,
@@ -19,12 +16,62 @@ CREATE TABLE user_accounts (
     CONSTRAINT ck_user_accounts_failed_login_count CHECK (failed_login_count >= 0)
 );
 
-CREATE UNIQUE INDEX uq_user_accounts_email_active
-    ON user_accounts (email)
+CREATE INDEX ix_user_accounts_primary_email
+    ON user_accounts (primary_email)
     WHERE deleted_at IS NULL;
 
 CREATE INDEX ix_user_accounts_status
     ON user_accounts (status)
+    WHERE deleted_at IS NULL;
+
+CREATE TABLE auth_identities (
+    id UUID PRIMARY KEY,
+    user_account_id UUID NOT NULL REFERENCES user_accounts(id),
+    identity_type TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    provider_user_id TEXT,
+    email CITEXT,
+    email_verified_at TIMESTAMPTZ,
+    password_hash TEXT,
+    password_changed_at TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ,
+    CONSTRAINT ck_auth_identities_identity_type CHECK (
+        identity_type IN ('email_password', 'oauth')
+    ),
+    CONSTRAINT ck_auth_identities_provider CHECK (
+        provider IN ('email', 'google', 'facebook', 'microsoft', 'line', 'github')
+    ),
+    CONSTRAINT ck_auth_identities_email_password_shape CHECK (
+        identity_type != 'email_password'
+        OR (
+            provider = 'email'
+            AND provider_user_id IS NULL
+            AND email IS NOT NULL
+            AND password_hash IS NOT NULL
+        )
+    ),
+    CONSTRAINT ck_auth_identities_oauth_shape CHECK (
+        identity_type != 'oauth'
+        OR (
+            provider != 'email'
+            AND provider_user_id IS NOT NULL
+        )
+    )
+);
+
+CREATE UNIQUE INDEX uq_auth_identities_provider_user_active
+    ON auth_identities (provider, provider_user_id)
+    WHERE provider_user_id IS NOT NULL AND deleted_at IS NULL;
+
+CREATE UNIQUE INDEX uq_auth_identities_email_password_active
+    ON auth_identities (provider, email)
+    WHERE identity_type = 'email_password' AND provider = 'email' AND deleted_at IS NULL;
+
+CREATE INDEX ix_auth_identities_user_account
+    ON auth_identities (user_account_id)
     WHERE deleted_at IS NULL;
 
 CREATE TABLE auth_sessions (
@@ -74,7 +121,7 @@ CREATE INDEX ix_auth_login_attempts_user_created_at
 
 CREATE TABLE auth_email_verification_tokens (
     id UUID PRIMARY KEY,
-    user_account_id UUID NOT NULL REFERENCES user_accounts(id),
+    auth_identity_id UUID NOT NULL REFERENCES auth_identities(id),
     token_hash TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -88,12 +135,12 @@ CREATE TABLE auth_email_verification_tokens (
 CREATE UNIQUE INDEX uq_auth_email_verification_tokens_token_hash
     ON auth_email_verification_tokens (token_hash);
 
-CREATE INDEX ix_auth_email_verification_tokens_user_status
-    ON auth_email_verification_tokens (user_account_id, status);
+CREATE INDEX ix_auth_email_verification_tokens_identity_status
+    ON auth_email_verification_tokens (auth_identity_id, status);
 
 CREATE TABLE auth_password_reset_tokens (
     id UUID PRIMARY KEY,
-    user_account_id UUID NOT NULL REFERENCES user_accounts(id),
+    auth_identity_id UUID NOT NULL REFERENCES auth_identities(id),
     token_hash TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -107,8 +154,8 @@ CREATE TABLE auth_password_reset_tokens (
 CREATE UNIQUE INDEX uq_auth_password_reset_tokens_token_hash
     ON auth_password_reset_tokens (token_hash);
 
-CREATE INDEX ix_auth_password_reset_tokens_user_status
-    ON auth_password_reset_tokens (user_account_id, status);
+CREATE INDEX ix_auth_password_reset_tokens_identity_status
+    ON auth_password_reset_tokens (auth_identity_id, status);
 
 CREATE TABLE security_events (
     id UUID PRIMARY KEY,
@@ -136,4 +183,5 @@ DROP TABLE IF EXISTS auth_password_reset_tokens;
 DROP TABLE IF EXISTS auth_email_verification_tokens;
 DROP TABLE IF EXISTS auth_login_attempts;
 DROP TABLE IF EXISTS auth_sessions;
+DROP TABLE IF EXISTS auth_identities;
 DROP TABLE IF EXISTS user_accounts;

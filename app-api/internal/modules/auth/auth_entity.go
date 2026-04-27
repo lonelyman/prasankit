@@ -17,19 +17,50 @@ const (
 )
 
 type UserAccount struct {
+	ID               uuid.UUID
+	PrimaryEmail     string
+	Status           UserAccountStatus
+	LastLoginAt      *time.Time
+	FailedLoginCount int
+	LockedUntil      *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	DeletedAt        *time.Time
+	DeletedBy        *uuid.UUID
+}
+
+type AuthIdentityType string
+
+const (
+	AuthIdentityTypeEmailPassword AuthIdentityType = "email_password"
+	AuthIdentityTypeOAuth         AuthIdentityType = "oauth"
+)
+
+type AuthProvider string
+
+const (
+	AuthProviderEmail     AuthProvider = "email"
+	AuthProviderGoogle    AuthProvider = "google"
+	AuthProviderFacebook  AuthProvider = "facebook"
+	AuthProviderMicrosoft AuthProvider = "microsoft"
+	AuthProviderLine      AuthProvider = "line"
+	AuthProviderGitHub    AuthProvider = "github"
+)
+
+type AuthIdentity struct {
 	ID                uuid.UUID
+	UserAccountID     uuid.UUID
+	IdentityType      AuthIdentityType
+	Provider          AuthProvider
+	ProviderUserID    string
 	Email             string
-	PasswordHash      string
-	Status            UserAccountStatus
 	EmailVerifiedAt   *time.Time
+	PasswordHash      string
 	PasswordChangedAt *time.Time
-	LastLoginAt       *time.Time
-	FailedLoginCount  int
-	LockedUntil       *time.Time
+	LastUsedAt        *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	DeletedAt         *time.Time
-	DeletedBy         *uuid.UUID
 }
 
 type AuthSessionStatus string
