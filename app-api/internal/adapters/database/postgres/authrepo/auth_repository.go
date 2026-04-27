@@ -91,8 +91,44 @@ func (r *Repository) FindUserAccountByEmail(ctx context.Context, email string) (
 	return row.toDomain(), nil
 }
 
-func (r *Repository) CreateUserAccount(context.Context, *auth.UserAccount) error {
-	return ErrNotImplemented
+func (r *Repository) CreateUserAccount(ctx context.Context, account *auth.UserAccount) error {
+	if err := ensureUUID(&account.ID); err != nil {
+		return err
+	}
+	if account.Status == "" {
+		account.Status = auth.UserAccountStatusPendingVerification
+	}
+	if account.CreatedAt.IsZero() {
+		account.CreatedAt = time.Now().UTC()
+	}
+	if account.UpdatedAt.IsZero() {
+		account.UpdatedAt = account.CreatedAt
+	}
+
+	row := userAccountRow{
+		ID:                account.ID,
+		Email:             account.Email,
+		PasswordHash:      account.PasswordHash,
+		Status:            string(account.Status),
+		EmailVerifiedAt:   account.EmailVerifiedAt,
+		PasswordChangedAt: account.PasswordChangedAt,
+		LastLoginAt:       account.LastLoginAt,
+		FailedLoginCount:  account.FailedLoginCount,
+		LockedUntil:       account.LockedUntil,
+		CreatedAt:         account.CreatedAt,
+		UpdatedAt:         account.UpdatedAt,
+		DeletedAt:         account.DeletedAt,
+		DeletedBy:         account.DeletedBy,
+	}
+
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return err
+	}
+
+	account.ID = row.ID
+	account.CreatedAt = row.CreatedAt
+	account.UpdatedAt = row.UpdatedAt
+	return nil
 }
 
 func (r *Repository) CreateAuthSession(context.Context, *auth.AuthSession) error {

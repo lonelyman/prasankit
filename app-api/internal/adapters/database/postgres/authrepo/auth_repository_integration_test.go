@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"prasankit-api/internal/modules/auth"
-	"prasankit-api/pkg/ids"
 
 	"github.com/google/uuid"
 	"gorm.io/driver/postgres"
@@ -35,6 +34,48 @@ func TestRepositoryIntegration(t *testing.T) {
 	repo := NewRepository(db)
 	ctx := context.Background()
 
+	t.Run("create user account", func(t *testing.T) {
+		email := "create-account-" + uuid.NewString() + "@example.test"
+		account := &auth.UserAccount{
+			Email:        email,
+			PasswordHash: "test-password-hash",
+		}
+
+		if err := repo.CreateUserAccount(ctx, account); err != nil {
+			t.Fatalf("create user account: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = db.Exec(`DELETE FROM user_accounts WHERE email = ?`, email).Error
+		})
+
+		if account.ID == uuid.Nil {
+			t.Fatal("account.ID was not set")
+		}
+		if account.ID.Version() != 7 {
+			t.Fatalf("account.ID version = %d, want 7", account.ID.Version())
+		}
+		if account.Status != auth.UserAccountStatusPendingVerification {
+			t.Fatalf("account.Status = %s, want %s", account.Status, auth.UserAccountStatusPendingVerification)
+		}
+		if account.CreatedAt.IsZero() {
+			t.Fatal("account.CreatedAt was not set")
+		}
+		if account.UpdatedAt.IsZero() {
+			t.Fatal("account.UpdatedAt was not set")
+		}
+
+		found, err := repo.FindUserAccountByEmail(ctx, email)
+		if err != nil {
+			t.Fatalf("find created user account: %v", err)
+		}
+		if found.ID != account.ID {
+			t.Fatalf("found.ID = %s, want %s", found.ID, account.ID)
+		}
+		if found.Status != auth.UserAccountStatusPendingVerification {
+			t.Fatalf("found.Status = %s, want %s", found.Status, auth.UserAccountStatusPendingVerification)
+		}
+	})
+
 	t.Run("find user account by email", func(t *testing.T) {
 		email := "repo-test-" + uuid.NewString() + "@example.test"
 		_, err := repo.FindUserAccountByEmail(ctx, email)
@@ -42,24 +83,19 @@ func TestRepositoryIntegration(t *testing.T) {
 			t.Fatalf("err = %v, want ErrUserAccountNotFound", err)
 		}
 
-		accountID, err := ids.NewUUID()
-		if err != nil {
-			t.Fatalf("new account id: %v", err)
+		account := &auth.UserAccount{
+			Email:        email,
+			PasswordHash: "test-password-hash",
+			Status:       auth.UserAccountStatusActive,
 		}
-		if err := db.Exec(
-			`INSERT INTO user_accounts (id, email, password_hash, status) VALUES (?, ?, ?, ?)`,
-			accountID,
-			email,
-			"test-password-hash",
-			string(auth.UserAccountStatusActive),
-		).Error; err != nil {
-			t.Fatalf("insert user account: %v", err)
+		if err := repo.CreateUserAccount(ctx, account); err != nil {
+			t.Fatalf("create user account: %v", err)
 		}
 		t.Cleanup(func() {
 			_ = db.Exec(`DELETE FROM user_accounts WHERE email = ?`, email).Error
 		})
 
-		account, err := repo.FindUserAccountByEmail(ctx, email)
+		account, err = repo.FindUserAccountByEmail(ctx, email)
 		if err != nil {
 			t.Fatalf("find user account: %v", err)
 		}

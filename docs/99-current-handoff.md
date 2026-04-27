@@ -169,6 +169,7 @@ app-api/
 - เพิ่ม Auth routes แบบ placeholder ที่ตอบ `501 NOT_IMPLEMENTED`
 - Implement Auth repository method แรก:
   - `FindUserAccountByEmail`
+  - `CreateUserAccount` โดยใช้ UUID v7 จาก Go application, set status default และ set `created_at`/`updated_at` ใน app
   - `CreateLoginAttempt` โดยใช้ UUID v7 จาก Go application และ set `created_at` ใน app หาก caller ไม่ส่งมา
   - `CreateSecurityEvent` โดยใช้ UUID v7 จาก Go application และ `pkg/dbtypes.JSONB` สำหรับ `metadata_json`
 - เพิ่ม Auth repository integration test ที่ใช้ `PRASANKIT_TEST_DB_DSN`
@@ -328,8 +329,8 @@ PostgreSQL connection done
 -> Migration 000002_create_auth_core_tables applied
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Auth module skeleton created
--> Auth repository: FindUserAccountByEmail/CreateLoginAttempt/CreateSecurityEvent implemented
--> ต่อไปทำ Auth repository method ถัดไป: CreateUserAccount
+-> Auth repository: FindUserAccountByEmail/CreateUserAccount/CreateLoginAttempt/CreateSecurityEvent implemented
+-> ต่อไปทำ Auth repository method ถัดไป: CreateAuthSession
 ```
 
 ## Do Not Do Yet
