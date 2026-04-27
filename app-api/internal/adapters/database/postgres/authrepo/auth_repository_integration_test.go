@@ -79,7 +79,6 @@ func TestRepositoryIntegration(t *testing.T) {
 			FailureReason: "invalid_password",
 			IPAddress:     "127.0.0.1",
 			UserAgent:     "repository integration test",
-			CreatedAt:     time.Now().UTC(),
 		}
 
 		if err := repo.CreateLoginAttempt(ctx, attempt); err != nil {
@@ -94,6 +93,9 @@ func TestRepositoryIntegration(t *testing.T) {
 		}
 		if attempt.ID.Version() != 7 {
 			t.Fatalf("attempt.ID version = %d, want 7", attempt.ID.Version())
+		}
+		if attempt.CreatedAt.IsZero() {
+			t.Fatal("attempt.CreatedAt was not set")
 		}
 
 		var count int64

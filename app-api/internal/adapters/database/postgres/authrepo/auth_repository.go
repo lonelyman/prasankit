@@ -103,6 +103,9 @@ func (r *Repository) CreateLoginAttempt(ctx context.Context, attempt *auth.Login
 	if err := ensureUUID(&attempt.ID); err != nil {
 		return err
 	}
+	if attempt.CreatedAt.IsZero() {
+		attempt.CreatedAt = time.Now().UTC()
+	}
 
 	row := loginAttemptRow{
 		ID:            attempt.ID,

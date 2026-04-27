@@ -155,6 +155,7 @@ Verified:
 - apply migration `000002_create_auth_core_tables.sql` ผ่าน Docker PostgreSQL แล้ว
 - ปรับ migration `000002_create_auth_core_tables.sql` ให้ fresh install สร้าง auth primary key columns โดยไม่มี database default v4 ตั้งแต่แรก
 - apply migration `000003_drop_auth_uuid_v4_defaults.sql` ผ่าน Docker PostgreSQL แล้ว เพื่อถอด default `gen_random_uuid()` ออกจากฐานที่เคย apply migration รุ่นก่อนหน้า
+- ปรับ migration `000003_drop_auth_uuid_v4_defaults.sql` ทั้ง Up/Down ไม่ให้พา UUID v4 default กลับมาใน dev rollback/redo flow
 - PostgreSQL extensions ที่ยืนยันแล้ว:
   - `citext`
   - `pgcrypto`
@@ -182,12 +183,13 @@ Verified:
   - `GET /api/v1/auth/me`
 - Auth postgres repository implementation เริ่มแล้ว:
   - `FindUserAccountByEmail`
-  - `CreateLoginAttempt` โดยสร้าง primary key เป็น UUID v7 จาก Go application
+  - `CreateLoginAttempt` โดยสร้าง primary key เป็น UUID v7 จาก Go application และ set `created_at` ใน app หาก caller ไม่ส่งมา
   - `CreateSecurityEvent` โดยสร้าง primary key เป็น UUID v7 จาก Go application และใช้ `pkg/dbtypes.JSONB` สำหรับ `metadata_json`
 - Auth repository integration test ใช้ `PRASANKIT_TEST_DB_DSN` และผ่านกับ Docker PostgreSQL แล้ว
 - ทดสอบ fresh install migration กับ database ใหม่ `prasankit_install_check` แล้วผ่านถึง version 3
 - ตรวจ fresh install schema แล้ว auth primary key defaults เป็น `<null>` ทั้งหมด
 - รัน Auth repository integration test กับ fresh install database แล้วผ่าน
+- รัน `goose-redo` สำหรับ `000003_drop_auth_uuid_v4_defaults.sql` แล้วตรวจ primary key defaults ยังเป็น `<null>` ทั้งหมด
 - เพิ่ม `pkg/ids` เป็น UUID v7 generator กลางสำหรับ primary keys
 - เพิ่ม `pkg/dbtypes.JSONB` เป็น JSONB type กลางสำหรับ GORM row model เพื่อลดการใช้ raw SQL/Exec แบบเฉพาะกิจ
 
@@ -208,6 +210,7 @@ Composition note:
 - Schema ใช้ SQL migration ผ่าน goose; goose CLI ใช้ผ่าน `go run ...@v3.27.1` และไม่เพิ่มเป็น runtime dependency ของ app
 - Primary key strategy: ใช้ PostgreSQL `UUID` columns แต่ Go application ต้องสร้าง UUID v7 ก่อน insert; ห้ามใช้ `gen_random_uuid()` เป็น default primary key ใน table ใหม่
 - JSONB strategy: ใช้ `pkg/dbtypes.JSONB` ใน repository row model เมื่อ field เป็น PostgreSQL `JSONB`
+- Timestamp strategy: repository/service ต้อง set timestamp สำคัญใน Go ก่อน insert ไม่พึ่ง DB default เป็น behavior หลัก
 - Fresh server bootstrap order: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
 
