@@ -2,11 +2,11 @@ package authrepo
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
 	"prasankit-api/internal/modules/auth"
+	"prasankit-api/pkg/dbtypes"
 	"prasankit-api/pkg/ids"
 
 	"github.com/google/uuid"
@@ -52,6 +52,21 @@ type loginAttemptRow struct {
 
 func (loginAttemptRow) TableName() string {
 	return "auth_login_attempts"
+}
+
+type securityEventRow struct {
+	ID            uuid.UUID     `gorm:"column:id;type:uuid"`
+	UserAccountID *uuid.UUID    `gorm:"column:user_account_id"`
+	EventType     string        `gorm:"column:event_type"`
+	Severity      string        `gorm:"column:severity"`
+	IPAddress     *string       `gorm:"column:ip_address"`
+	UserAgent     string        `gorm:"column:user_agent"`
+	MetadataJSON  dbtypes.JSONB `gorm:"column:metadata_json;type:jsonb"`
+	CreatedAt     time.Time     `gorm:"column:created_at"`
+}
+
+func (securityEventRow) TableName() string {
+	return "security_events"
 }
 
 func NewRepository(db *gorm.DB) *Repository {
@@ -119,37 +134,22 @@ func (r *Repository) CreateSecurityEvent(ctx context.Context, event *auth.Securi
 	if event.Severity == "" {
 		event.Severity = auth.SecurityEventSeverityInfo
 	}
-
-	metadata := event.MetadataJSON
-	if metadata == nil {
-		metadata = map[string]any{}
-	}
-	metadataJSON, err := json.Marshal(metadata)
-	if err != nil {
-		return err
+	if event.MetadataJSON == nil {
+		event.MetadataJSON = map[string]any{}
 	}
 
-	err = r.db.WithContext(ctx).Exec(
-		`INSERT INTO security_events (
-			id,
-			user_account_id,
-			event_type,
-			severity,
-			ip_address,
-			user_agent,
-			metadata_json,
-			created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?)`,
-		event.ID,
-		event.UserAccountID,
-		event.EventType,
-		string(event.Severity),
-		nullableString(event.IPAddress),
-		event.UserAgent,
-		string(metadataJSON),
-		event.CreatedAt,
-	).Error
-	if err != nil {
+	row := securityEventRow{
+		ID:            event.ID,
+		UserAccountID: event.UserAccountID,
+		EventType:     event.EventType,
+		Severity:      string(event.Severity),
+		IPAddress:     stringPtrOrNil(event.IPAddress),
+		UserAgent:     event.UserAgent,
+		MetadataJSON:  dbtypes.NewJSONB(event.MetadataJSON),
+		CreatedAt:     event.CreatedAt,
+	}
+
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return err
 	}
 	return nil
@@ -167,11 +167,11 @@ func ensureUUID(id *uuid.UUID) error {
 	return nil
 }
 
-func nullableString(value string) any {
+func stringPtrOrNil(value string) *string {
 	if value == "" {
 		return nil
 	}
-	return value
+	return &value
 }
 
 func (r userAccountRow) toDomain() *auth.UserAccount {

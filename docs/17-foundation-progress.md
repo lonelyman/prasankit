@@ -74,6 +74,8 @@ Foundation Step 2: Backend Skeleton
 - app-api/internal/bootstrap/http_test.go
 - app-api/pkg/ids/ids.go
 - app-api/pkg/ids/ids_test.go
+- app-api/pkg/dbtypes/jsonb.go
+- app-api/pkg/dbtypes/jsonb_test.go
 
 เป้าหมาย:
 
@@ -181,12 +183,13 @@ Verified:
 - Auth postgres repository implementation เริ่มแล้ว:
   - `FindUserAccountByEmail`
   - `CreateLoginAttempt` โดยสร้าง primary key เป็น UUID v7 จาก Go application
-  - `CreateSecurityEvent` โดยสร้าง primary key เป็น UUID v7 จาก Go application และ marshal `metadata_json` เป็น JSONB
+  - `CreateSecurityEvent` โดยสร้าง primary key เป็น UUID v7 จาก Go application และใช้ `pkg/dbtypes.JSONB` สำหรับ `metadata_json`
 - Auth repository integration test ใช้ `PRASANKIT_TEST_DB_DSN` และผ่านกับ Docker PostgreSQL แล้ว
 - ทดสอบ fresh install migration กับ database ใหม่ `prasankit_install_check` แล้วผ่านถึง version 3
 - ตรวจ fresh install schema แล้ว auth primary key defaults เป็น `<null>` ทั้งหมด
 - รัน Auth repository integration test กับ fresh install database แล้วผ่าน
 - เพิ่ม `pkg/ids` เป็น UUID v7 generator กลางสำหรับ primary keys
+- เพิ่ม `pkg/dbtypes.JSONB` เป็น JSONB type กลางสำหรับ GORM row model เพื่อลดการใช้ raw SQL/Exec แบบเฉพาะกิจ
 
 Known note:
 
@@ -204,6 +207,7 @@ Composition note:
 - ใช้ GORM สำหรับ query/ORM เท่านั้น ห้ามใช้ AutoMigrate เปลี่ยน schema production โดยไม่มี decision ใหม่
 - Schema ใช้ SQL migration ผ่าน goose; goose CLI ใช้ผ่าน `go run ...@v3.27.1` และไม่เพิ่มเป็น runtime dependency ของ app
 - Primary key strategy: ใช้ PostgreSQL `UUID` columns แต่ Go application ต้องสร้าง UUID v7 ก่อน insert; ห้ามใช้ `gen_random_uuid()` เป็น default primary key ใน table ใหม่
+- JSONB strategy: ใช้ `pkg/dbtypes.JSONB` ใน repository row model เมื่อ field เป็น PostgreSQL `JSONB`
 - Fresh server bootstrap order: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
 

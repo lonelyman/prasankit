@@ -246,7 +246,7 @@ internal/transport/http/presenter
 = response format กลาง
 
 pkg
-= shared utility ที่ไม่ผูก business module เช่น `pkg/ids` สำหรับ UUID v7 generator กลาง
+= shared utility ที่ไม่ผูก business module เช่น `pkg/ids` สำหรับ UUID v7 generator กลาง และ `pkg/dbtypes` สำหรับ database value type เช่น JSONB
 ```
 
 ### Package Naming Rule
