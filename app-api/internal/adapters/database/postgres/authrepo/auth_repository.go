@@ -2,6 +2,7 @@ package authrepo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -84,12 +85,8 @@ func (r *Repository) CreateAuthSession(context.Context, *auth.AuthSession) error
 }
 
 func (r *Repository) CreateLoginAttempt(ctx context.Context, attempt *auth.LoginAttempt) error {
-	if attempt.ID == uuid.Nil {
-		id, err := ids.NewUUID()
-		if err != nil {
-			return err
-		}
-		attempt.ID = id
+	if err := ensureUUID(&attempt.ID); err != nil {
+		return err
 	}
 
 	row := loginAttemptRow{
@@ -112,8 +109,69 @@ func (r *Repository) CreateLoginAttempt(ctx context.Context, attempt *auth.Login
 	return nil
 }
 
-func (r *Repository) CreateSecurityEvent(context.Context, *auth.SecurityEvent) error {
-	return ErrNotImplemented
+func (r *Repository) CreateSecurityEvent(ctx context.Context, event *auth.SecurityEvent) error {
+	if err := ensureUUID(&event.ID); err != nil {
+		return err
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	if event.Severity == "" {
+		event.Severity = auth.SecurityEventSeverityInfo
+	}
+
+	metadata := event.MetadataJSON
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+
+	err = r.db.WithContext(ctx).Exec(
+		`INSERT INTO security_events (
+			id,
+			user_account_id,
+			event_type,
+			severity,
+			ip_address,
+			user_agent,
+			metadata_json,
+			created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?)`,
+		event.ID,
+		event.UserAccountID,
+		event.EventType,
+		string(event.Severity),
+		nullableString(event.IPAddress),
+		event.UserAgent,
+		string(metadataJSON),
+		event.CreatedAt,
+	).Error
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureUUID(id *uuid.UUID) error {
+	if *id != uuid.Nil {
+		return nil
+	}
+	newID, err := ids.NewUUID()
+	if err != nil {
+		return err
+	}
+	*id = newID
+	return nil
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (r userAccountRow) toDomain() *auth.UserAccount {

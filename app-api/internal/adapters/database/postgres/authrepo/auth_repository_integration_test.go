@@ -104,4 +104,49 @@ func TestRepositoryIntegration(t *testing.T) {
 			t.Fatalf("login attempt count = %d, want 1", count)
 		}
 	})
+
+	t.Run("create security event", func(t *testing.T) {
+		eventType := "repository.integration." + uuid.NewString()
+		event := &auth.SecurityEvent{
+			EventType: eventType,
+			Severity:  auth.SecurityEventSeverityWarning,
+			IPAddress: "127.0.0.1",
+			UserAgent: "repository integration test",
+			MetadataJSON: map[string]any{
+				"reason": "invalid_password",
+			},
+			CreatedAt: time.Now().UTC(),
+		}
+
+		if err := repo.CreateSecurityEvent(ctx, event); err != nil {
+			t.Fatalf("create security event: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = db.Exec(`DELETE FROM security_events WHERE event_type = ?`, eventType).Error
+		})
+
+		if event.ID == uuid.Nil {
+			t.Fatal("event.ID was not set")
+		}
+		if event.ID.Version() != 7 {
+			t.Fatalf("event.ID version = %d, want 7", event.ID.Version())
+		}
+
+		var stored struct {
+			Severity string
+			Reason   string
+		}
+		if err := db.Raw(
+			`SELECT severity, metadata_json->>'reason' AS reason FROM security_events WHERE id = ?`,
+			event.ID,
+		).Scan(&stored).Error; err != nil {
+			t.Fatalf("query security event: %v", err)
+		}
+		if stored.Severity != string(auth.SecurityEventSeverityWarning) {
+			t.Fatalf("stored severity = %s, want %s", stored.Severity, auth.SecurityEventSeverityWarning)
+		}
+		if stored.Reason != "invalid_password" {
+			t.Fatalf("stored reason = %s, want invalid_password", stored.Reason)
+		}
+	})
 }

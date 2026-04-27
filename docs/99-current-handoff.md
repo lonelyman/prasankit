@@ -166,6 +166,7 @@ app-api/
 - Implement Auth repository method แรก:
   - `FindUserAccountByEmail`
   - `CreateLoginAttempt` โดยใช้ UUID v7 จาก Go application
+  - `CreateSecurityEvent` โดยใช้ UUID v7 จาก Go application และ marshal `metadata_json` เป็น JSONB
 - เพิ่ม Auth repository integration test ที่ใช้ `PRASANKIT_TEST_DB_DSN`
 - เพิ่ม `app-api/pkg/ids` เป็น UUID v7 generator กลาง
 - เปลี่ยน `docker-compose.yml` ให้ API container อ่าน runtime env จาก `.env` แทน `.env.example`
@@ -201,6 +202,7 @@ app-api/
 - ทดสอบ fresh install migration กับ database ใหม่ `prasankit_install_check` แล้วผ่านถึง version 3
 - ตรวจ fresh install schema แล้ว auth primary key defaults เป็น `<null>` ทั้งหมด
 - Auth repository integration test ผ่านกับ fresh install database
+- Auth repository integration test ผ่านหลังเพิ่ม `CreateSecurityEvent`
 - Auth placeholder routes ที่ test ผ่าน:
   - `POST /api/v1/auth/register`
   - `POST /api/v1/auth/verify-email`
@@ -318,8 +320,8 @@ PostgreSQL connection done
 -> Migration 000002_create_auth_core_tables applied
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Auth module skeleton created
--> Auth repository: FindUserAccountByEmail/CreateLoginAttempt implemented
--> ต่อไปทำ Auth repository method ถัดไป: CreateSecurityEvent
+-> Auth repository: FindUserAccountByEmail/CreateLoginAttempt/CreateSecurityEvent implemented
+-> ต่อไปทำ Auth repository method ถัดไป: CreateUserAccount
 ```
 
 ## Do Not Do Yet

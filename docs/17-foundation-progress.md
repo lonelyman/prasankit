@@ -181,6 +181,7 @@ Verified:
 - Auth postgres repository implementation เริ่มแล้ว:
   - `FindUserAccountByEmail`
   - `CreateLoginAttempt` โดยสร้าง primary key เป็น UUID v7 จาก Go application
+  - `CreateSecurityEvent` โดยสร้าง primary key เป็น UUID v7 จาก Go application และ marshal `metadata_json` เป็น JSONB
 - Auth repository integration test ใช้ `PRASANKIT_TEST_DB_DSN` และผ่านกับ Docker PostgreSQL แล้ว
 - ทดสอบ fresh install migration กับ database ใหม่ `prasankit_install_check` แล้วผ่านถึง version 3
 - ตรวจ fresh install schema แล้ว auth primary key defaults เป็น `<null>` ทั้งหมด
@@ -226,7 +227,7 @@ PostgreSQL connection done
 -> Migration 000002_create_auth_core_tables applied
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Auth module skeleton created
--> Auth repository: FindUserAccountByEmail/CreateLoginAttempt implemented
+-> Auth repository: FindUserAccountByEmail/CreateLoginAttempt/CreateSecurityEvent implemented
 ```
 
-ขั้นถัดไปทำ Auth repository implementation ต่อแบบเล็ก ๆ: `CreateSecurityEvent`
+ขั้นถัดไปทำ Auth repository implementation ต่อแบบเล็ก ๆ: `CreateUserAccount`
