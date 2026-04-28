@@ -128,6 +128,23 @@ func TestRepositoryIntegration(t *testing.T) {
 		t.Fatalf("membership role = %s, want owner", foundMembership.Role)
 	}
 
+	resolved, err := repo.FindActiveWorkspaceMembershipBySlug(ctx, workspaceRecord.Slug, accountID)
+	if err != nil {
+		t.Fatalf("find active workspace membership by slug: %v", err)
+	}
+	if resolved.Workspace.ID != workspaceRecord.ID {
+		t.Fatalf("resolved workspace ID = %s, want %s", resolved.Workspace.ID, workspaceRecord.ID)
+	}
+	if resolved.Workspace.TenantID != workspaceRecord.TenantID {
+		t.Fatalf("resolved tenant ID = %s, want %s", resolved.Workspace.TenantID, workspaceRecord.TenantID)
+	}
+	if resolved.Membership.ID != membership.ID {
+		t.Fatalf("resolved membership ID = %s, want %s", resolved.Membership.ID, membership.ID)
+	}
+	if resolved.Membership.Role != workspace.WorkspaceRoleOwner {
+		t.Fatalf("resolved role = %s, want owner", resolved.Membership.Role)
+	}
+
 	items, total, err := repo.ListWorkspacesByUserAccountID(ctx, accountID, 10, 0)
 	if err != nil {
 		t.Fatalf("list workspaces by user account id: %v", err)

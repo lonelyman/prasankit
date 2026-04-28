@@ -29,6 +29,9 @@ type fakeWorkspaceService struct {
 	listResult     *workspacesvc.ListMyWorkspacesResult
 	listErr        error
 	listInput      workspacesvc.ListMyWorkspacesInput
+	resolveResult  *workspacesvc.ResolveTenantContextResult
+	resolveErr     error
+	resolveInput   workspacesvc.ResolveTenantContextInput
 }
 
 func (s *fakeWorkspaceService) CheckSlug(_ context.Context, input workspacesvc.CheckSlugInput) (*workspacesvc.CheckSlugResult, error) {
@@ -53,6 +56,14 @@ func (s *fakeWorkspaceService) ListMyWorkspaces(_ context.Context, input workspa
 		return nil, s.listErr
 	}
 	return s.listResult, nil
+}
+
+func (s *fakeWorkspaceService) ResolveTenantContext(_ context.Context, input workspacesvc.ResolveTenantContextInput) (*workspacesvc.ResolveTenantContextResult, error) {
+	s.resolveInput = input
+	if s.resolveErr != nil {
+		return nil, s.resolveErr
+	}
+	return s.resolveResult, nil
 }
 
 type fakeSessionService struct {
@@ -255,6 +266,123 @@ func TestMyWorkspaces(t *testing.T) {
 	if _, ok := data["pagination"]; !ok {
 		t.Fatalf("pagination missing: %#v", data)
 	}
+}
+
+func TestCurrentWorkspace(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.Must(uuid.NewV7())
+	membershipID := uuid.Must(uuid.NewV7())
+	service := &fakeWorkspaceService{
+		resolveResult: &workspacesvc.ResolveTenantContextResult{
+			Context: workspace.TenantContext{
+				TenantID:      tenantID,
+				WorkspaceID:   workspaceID,
+				WorkspaceSlug: "team-one",
+				MembershipID:  membershipID,
+				Role:          workspace.WorkspaceRoleOwner,
+			},
+			Workspace: workspace.Workspace{
+				ID:           workspaceID,
+				TenantID:     tenantID,
+				Name:         "Team One",
+				Slug:         "team-one",
+				Mode:         workspace.WorkspaceModeDemo,
+				Status:       workspace.WorkspaceStatusActive,
+				ContactEmail: "owner@example.test",
+			},
+			Membership: workspace.Membership{
+				ID:          membershipID,
+				TenantID:    tenantID,
+				WorkspaceID: workspaceID,
+				Role:        workspace.WorkspaceRoleOwner,
+				Status:      workspace.MembershipStatusActive,
+			},
+		},
+	}
+	session := &fakeSessionService{
+		result: &authsvc.CurrentAccountResult{
+			Account: auth.UserAccount{
+				ID:     accountID,
+				Status: auth.UserAccountStatusActive,
+			},
+		},
+	}
+	app := newWorkspaceTestApp(newTestHandler(service, session))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/current", nil)
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.resolveInput.Account.ID != accountID {
+		t.Fatalf("account id = %s, want %s", service.resolveInput.Account.ID, accountID)
+	}
+	if service.resolveInput.WorkspaceSlug != "team-one" {
+		t.Fatalf("workspace slug = %s, want team-one", service.resolveInput.WorkspaceSlug)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	workspaceData := data["workspace"].(map[string]any)
+	if _, ok := workspaceData["tenant_id"]; ok {
+		t.Fatalf("response must not expose tenant_id: %#v", workspaceData)
+	}
+	contextData := data["context"].(map[string]any)
+	if _, ok := contextData["tenant_id"]; ok {
+		t.Fatalf("response context must not expose tenant_id: %#v", contextData)
+	}
+	if contextData["workspace_slug"] != "team-one" {
+		t.Fatalf("context.workspace_slug = %v, want team-one", contextData["workspace_slug"])
+	}
+	if contextData["role"] != "owner" {
+		t.Fatalf("context.role = %v, want owner", contextData["role"])
+	}
+}
+
+func TestCurrentWorkspaceRequiresWorkspaceSlug(t *testing.T) {
+	app := newWorkspaceTestApp(newTestHandler(
+		&fakeWorkspaceService{resolveErr: workspacesvc.ErrWorkspaceSlugRequired},
+		&fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}}},
+	))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/current", nil)
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertWorkspaceError(t, resp, http.StatusBadRequest, "WORKSPACE_SLUG_REQUIRED")
+}
+
+func TestCurrentWorkspaceRejectsMissingMembership(t *testing.T) {
+	app := newWorkspaceTestApp(newTestHandler(
+		&fakeWorkspaceService{resolveErr: workspacesvc.ErrWorkspaceAccessDenied},
+		&fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}}},
+	))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/current", nil)
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertWorkspaceError(t, resp, http.StatusForbidden, "WORKSPACE_ACCESS_DENIED")
 }
 
 func TestRegisterWorkspaceMapsValidationErrors(t *testing.T) {

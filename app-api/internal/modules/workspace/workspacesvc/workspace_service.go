@@ -29,6 +29,7 @@ var (
 	ErrAccountInactive        = errors.New("account is inactive")
 	ErrWorkspaceRoleMissing   = errors.New("workspace role is missing")
 	ErrMembershipCreateFailed = errors.New("workspace membership create failed")
+	ErrWorkspaceAccessDenied  = errors.New("workspace access denied")
 )
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$`)
@@ -87,6 +88,17 @@ type ListMyWorkspacesInput struct {
 type ListMyWorkspacesResult struct {
 	Items []workspace.WorkspaceWithMembership
 	Total int
+}
+
+type ResolveTenantContextInput struct {
+	Account       auth.UserAccount
+	WorkspaceSlug string
+}
+
+type ResolveTenantContextResult struct {
+	Context    workspace.TenantContext
+	Workspace  workspace.Workspace
+	Membership workspace.Membership
 }
 
 type Service struct {
@@ -247,6 +259,40 @@ func (s *Service) ListMyWorkspaces(ctx context.Context, input ListMyWorkspacesIn
 	return &ListMyWorkspacesResult{
 		Items: items,
 		Total: total,
+	}, nil
+}
+
+func (s *Service) ResolveTenantContext(ctx context.Context, input ResolveTenantContextInput) (*ResolveTenantContextResult, error) {
+	if input.Account.ID == uuid.Nil {
+		return nil, ErrAccountRequired
+	}
+	if input.Account.Status != auth.UserAccountStatusActive {
+		return nil, ErrAccountInactive
+	}
+
+	slug, err := NormalizeSlug(input.WorkspaceSlug)
+	if err != nil {
+		return nil, err
+	}
+
+	item, err := s.repository.FindActiveWorkspaceMembershipBySlug(ctx, slug, input.Account.ID)
+	if errors.Is(err, workspace.ErrMembershipNotFound) || errors.Is(err, workspace.ErrWorkspaceNotFound) {
+		return nil, ErrWorkspaceAccessDenied
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResolveTenantContextResult{
+		Context: workspace.TenantContext{
+			TenantID:      item.Workspace.TenantID,
+			WorkspaceID:   item.Workspace.ID,
+			WorkspaceSlug: item.Workspace.Slug,
+			MembershipID:  item.Membership.ID,
+			Role:          item.Membership.Role,
+		},
+		Workspace:  item.Workspace,
+		Membership: item.Membership,
 	}, nil
 }
 

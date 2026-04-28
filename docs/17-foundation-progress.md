@@ -306,12 +306,15 @@ Verified:
 - เพิ่ม `docs/18.7-auth-logout-all-test-examples.md` สำหรับตัวอย่างทดสอบ logout-all แล้ว
 - เพิ่ม `docs/18.8-auth-password-reset-test-examples.md` สำหรับตัวอย่างทดสอบ forgot/reset password แล้ว
 - เพิ่ม `docs/18.9-workspace-registration-test-examples.md` สำหรับตัวอย่างทดสอบ check slug/register workspace แล้ว
+- เพิ่ม `docs/18.10-workspace-current-test-examples.md` สำหรับตัวอย่างทดสอบ Tenant Context resolver แล้ว
 - เพิ่ม Workspace module ก้อนแรกแล้ว:
   - `GET /api/v1/workspaces/check-slug`
   - `POST /api/v1/workspaces/register`
   - `GET /api/v1/workspaces/me`
+  - `GET /api/v1/workspaces/current`
   - สร้าง `tenant_id` จาก backend เอง
   - สร้าง owner membership จาก account ใน session
+  - resolve Tenant Context จาก session + `X-Workspace-Slug`
   - response ไม่ส่ง `tenant_id` ให้ frontend ใช้คุมสิทธิ์
 
 Known note:
@@ -340,8 +343,9 @@ Composition note:
 - Fresh server bootstrap order: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
 - Auth/session backend หลักเสร็จถึง forgot/reset password แล้ว
-- Workspace registration backend ก้อนแรกเสร็จถึง check slug/register/list my workspaces แล้ว
+- Workspace registration/backend context ก้อนแรกเสร็จถึง check slug/register/list my workspaces/current workspace แล้ว
 - Workspace membership role ปรับเป็น master/FK แล้ว: `workspace_roles` เป็น App Master seed, `workspace_memberships.workspace_role_id` เป็น FK, ส่วน API ยังคืน role code ให้ frontend ใช้งานได้
+- Tenant Context resolver ก้อนแรกใช้ session cookie + `X-Workspace-Slug`, ตรวจ active membership และเก็บ tenant context ภายใน backend โดยไม่รับหรือส่ง `tenant_id`
 - ตรวจกลุ่ม field ที่เป็น text แล้ว: ค่า role/master/permission ต้องเป็น master/FK, ส่วน `status`/`mode`/auth provider/type/security severity ตอนนี้ยังถือเป็น lifecycle/system state และคุมด้วย constraint ได้ก่อน
 
 หมายเหตุ:
@@ -350,7 +354,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปเริ่ม Tenant Context resolver แบบช้า ๆ โดยยังต้องรักษา Tenant Context และ Permission Guard ตาม rule เดิม
+ขั้นถัดไปเริ่ม Permission Guard แบบช้า ๆ โดยใช้ Tenant Context ที่ resolve แล้วเป็นฐาน
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -386,4 +390,5 @@ PostgreSQL connection done
 -> Workspace HTTP: GET /api/v1/workspaces/check-slug wired
 -> Workspace HTTP: POST /api/v1/workspaces/register wired
 -> Workspace HTTP: GET /api/v1/workspaces/me wired
+-> Workspace HTTP: GET /api/v1/workspaces/current wired
 ```

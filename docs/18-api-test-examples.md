@@ -53,6 +53,7 @@ docker compose ps
 | GET | `/api/v1/workspaces/check-slug` | Done, see `docs/18.9-workspace-registration-test-examples.md` |
 | POST | `/api/v1/workspaces/register` | Done, requires session cookie, see `docs/18.9-workspace-registration-test-examples.md` |
 | GET | `/api/v1/workspaces/me` | Done, requires session cookie, see `docs/18.9-workspace-registration-test-examples.md` |
+| GET | `/api/v1/workspaces/current` | Done, resolves Tenant Context from session + `X-Workspace-Slug`, see `docs/18.10-workspace-current-test-examples.md` |
 
 ## Health
 
@@ -172,6 +173,7 @@ HTTP/1.1 503 Service Unavailable
 | `docs/18.7-auth-logout-all-test-examples.md` | `POST /api/v1/auth/logout-all` |
 | `docs/18.8-auth-password-reset-test-examples.md` | `POST /api/v1/auth/forgot-password`, `POST /api/v1/auth/reset-password` |
 | `docs/18.9-workspace-registration-test-examples.md` | `GET /api/v1/workspaces/check-slug`, `POST /api/v1/workspaces/register`, `GET /api/v1/workspaces/me` |
+| `docs/18.10-workspace-current-test-examples.md` | `GET /api/v1/workspaces/current` |
 
 ## Not Done Yet
 
@@ -181,4 +183,4 @@ Workspace routes ถัดไปที่ยังไม่ทำ:
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| GET | `/api/v1/workspace` | workspace ปัจจุบันหลัง Tenant Resolution |
+| - | - | Project/Team/Task routes ที่ต้องใช้ Tenant Context |

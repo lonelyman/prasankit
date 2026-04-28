@@ -19,5 +19,6 @@ type Repository interface {
 	CreateWorkspace(ctx context.Context, workspace *Workspace) error
 	CreateMembership(ctx context.Context, membership *Membership) error
 	FindActiveMembership(ctx context.Context, tenantID uuid.UUID, userAccountID uuid.UUID) (*Membership, error)
+	FindActiveWorkspaceMembershipBySlug(ctx context.Context, slug string, userAccountID uuid.UUID) (*WorkspaceWithMembership, error)
 	ListWorkspacesByUserAccountID(ctx context.Context, userAccountID uuid.UUID, limit int, offset int) ([]WorkspaceWithMembership, int, error)
 }

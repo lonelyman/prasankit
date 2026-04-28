@@ -62,6 +62,7 @@ Foundation
 │  ├─ 18.7-auth-logout-all-test-examples.md
 │  ├─ 18.8-auth-password-reset-test-examples.md
 │  ├─ 18.9-workspace-registration-test-examples.md
+│  ├─ 18.10-workspace-current-test-examples.md
 ├─ .env.example
 ├─ Makefile
 ├─ docker-compose.yml
@@ -469,6 +470,7 @@ config
 - Email verification ใช้ SMTP จริงจาก env, เก็บเฉพาะ token hash ใน `auth_email_verification_tokens`, และคุมจำนวนส่งด้วย Redis rate limit
 - Login ใช้ Redis session store + httpOnly cookie; raw session token ไม่ถูกส่งใน response body และไม่เก็บตรง ๆ ใน database
 - `GET /api/v1/auth/me` ตรวจ session จาก cookie/Redis แล้วคืน account กลางเท่านั้น; workspace context จะเติมตอนเริ่ม Workspace/Tenant flow
+- `GET /api/v1/workspaces/current` ตรวจ session + `X-Workspace-Slug` แล้ว resolve Tenant Context ภายใน backend โดยไม่รับหรือส่ง `tenant_id`
 - `POST /api/v1/auth/logout` revoke เฉพาะ session ปัจจุบัน; session อื่นยังอยู่เพื่อรองรับ multi-device และ `logout-all`
 - `POST /api/v1/auth/logout-all` revoke session ทุกอุปกรณ์ของ account เดียวกัน
 - `POST /api/v1/auth/forgot-password` ตอบ generic success เพื่อไม่เปิดเผยว่า email มี account หรือไม่
@@ -515,12 +517,13 @@ PostgreSQL connection done
 -> Workspace HTTP: GET /api/v1/workspaces/check-slug wired
 -> Workspace HTTP: POST /api/v1/workspaces/register wired
 -> Workspace HTTP: GET /api/v1/workspaces/me wired
--> ต่อไปเริ่ม Tenant Context resolver
+-> Workspace HTTP: GET /api/v1/workspaces/current wired
+-> ต่อไปเริ่ม Permission Guard
 ```
 
 ## Do Not Do Yet
 
-- อย่าเริ่ม Workspace แบบข้าม Tenant Context/Permission Guard
+- อย่าเริ่ม Workspace/Project แบบข้าม Tenant Context/Permission Guard
 - อย่าเริ่ม Project
 - อย่าเริ่ม Task
 - อย่าเพิ่ม Finance

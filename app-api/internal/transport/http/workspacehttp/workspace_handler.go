@@ -15,11 +15,14 @@ import (
 )
 
 const accountLocalKey = "workspace.account"
+const tenantContextLocalKey = "workspace.tenant_context"
+const workspaceSlugHeader = "X-Workspace-Slug"
 
 type WorkspaceService interface {
 	CheckSlug(ctx context.Context, input workspacesvc.CheckSlugInput) (*workspacesvc.CheckSlugResult, error)
 	RegisterWorkspace(ctx context.Context, input workspacesvc.RegisterWorkspaceInput) (*workspacesvc.RegisterWorkspaceResult, error)
 	ListMyWorkspaces(ctx context.Context, input workspacesvc.ListMyWorkspacesInput) (*workspacesvc.ListMyWorkspacesResult, error)
+	ResolveTenantContext(ctx context.Context, input workspacesvc.ResolveTenantContextInput) (*workspacesvc.ResolveTenantContextResult, error)
 }
 
 type SessionService interface {
@@ -77,6 +80,17 @@ type myWorkspaceResponse struct {
 	Membership membershipResponse `json:"membership"`
 }
 
+type currentWorkspaceResponse struct {
+	Workspace  workspaceResponse  `json:"workspace"`
+	Membership membershipResponse `json:"membership"`
+	Context    tenantContextInfo  `json:"context"`
+}
+
+type tenantContextInfo struct {
+	WorkspaceSlug string `json:"workspace_slug"`
+	Role          string `json:"role"`
+}
+
 func NewHandler(workspaceService WorkspaceService, sessionService SessionService, cookie CookieConfig) Handler {
 	return Handler{
 		workspace: workspaceService,
@@ -89,6 +103,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	workspaces := router.Group("/workspaces")
 	workspaces.Get("/check-slug", h.CheckSlug)
 	workspaces.Get("/me", h.requireSession, h.MyWorkspaces)
+	workspaces.Get("/current", h.requireSession, h.requireTenantContext, h.CurrentWorkspace)
 	workspaces.Post("/register", h.requireSession, h.RegisterWorkspace)
 }
 
@@ -173,6 +188,22 @@ func (h Handler) MyWorkspaces(c fiber.Ctx) error {
 	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
 }
 
+func (h Handler) CurrentWorkspace(c fiber.Ctx) error {
+	result, ok := c.Locals(tenantContextLocalKey).(*workspacesvc.ResolveTenantContextResult)
+	if !ok || result == nil {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	return presenter.RenderItem(c, currentWorkspaceResponse{
+		Workspace:  toWorkspaceResponse(result.Workspace),
+		Membership: toMembershipResponse(result.Membership),
+		Context: tenantContextInfo{
+			WorkspaceSlug: result.Context.WorkspaceSlug,
+			Role:          string(result.Context.Role),
+		},
+	})
+}
+
 func (h Handler) requireSession(c fiber.Ctx) error {
 	if h.session == nil {
 		return presenter.RenderError(c, fiber.StatusUnauthorized, "AUTH_SESSION_REQUIRED", "Authentication session is required")
@@ -188,6 +219,28 @@ func (h Handler) requireSession(c fiber.Ctx) error {
 	}
 
 	c.Locals(accountLocalKey, result.Account)
+	return c.Next()
+}
+
+func (h Handler) requireTenantContext(c fiber.Ctx) error {
+	if h.workspace == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, ok := c.Locals(accountLocalKey).(auth.UserAccount)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	result, err := h.workspace.ResolveTenantContext(c.Context(), workspacesvc.ResolveTenantContextInput{
+		Account:       account,
+		WorkspaceSlug: c.Get(workspaceSlugHeader),
+	})
+	if err != nil {
+		return renderWorkspaceError(c, err)
+	}
+
+	c.Locals(tenantContextLocalKey, result)
 	return c.Next()
 }
 
@@ -218,6 +271,8 @@ func renderWorkspaceError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "CONTACT_EMAIL_INVALID", "Contact email is invalid")
 	case errors.Is(err, workspacesvc.ErrAccountInactive):
 		return presenter.RenderError(c, fiber.StatusForbidden, "ACCOUNT_INACTIVE", "Account is inactive")
+	case errors.Is(err, workspacesvc.ErrWorkspaceAccessDenied):
+		return presenter.RenderError(c, fiber.StatusForbidden, "WORKSPACE_ACCESS_DENIED", "Workspace access denied")
 	default:
 		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
 	}

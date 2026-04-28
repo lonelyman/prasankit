@@ -17,6 +17,10 @@ type fakeRepository struct {
 	membership        *workspace.Membership
 	listItems         []workspace.WorkspaceWithMembership
 	listTotal         int
+	resolveItem       *workspace.WorkspaceWithMembership
+	resolveErr        error
+	resolveSlug       string
+	resolveAccountID  uuid.UUID
 	role              *workspace.WorkspaceRoleMaster
 	transactionCalled bool
 }
@@ -61,6 +65,18 @@ func (r *fakeRepository) CreateMembership(_ context.Context, value *workspace.Me
 }
 
 func (r *fakeRepository) FindActiveMembership(context.Context, uuid.UUID, uuid.UUID) (*workspace.Membership, error) {
+	return nil, workspace.ErrMembershipNotFound
+}
+
+func (r *fakeRepository) FindActiveWorkspaceMembershipBySlug(_ context.Context, slug string, userAccountID uuid.UUID) (*workspace.WorkspaceWithMembership, error) {
+	r.resolveSlug = slug
+	r.resolveAccountID = userAccountID
+	if r.resolveErr != nil {
+		return nil, r.resolveErr
+	}
+	if r.resolveItem != nil {
+		return r.resolveItem, nil
+	}
 	return nil, workspace.ErrMembershipNotFound
 }
 
@@ -242,5 +258,72 @@ func TestListMyWorkspaces(t *testing.T) {
 	}
 	if result.Items[0].Workspace.Slug != "team-one" {
 		t.Fatalf("workspace slug = %s, want team-one", result.Items[0].Workspace.Slug)
+	}
+}
+
+func TestResolveTenantContext(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.Must(uuid.NewV7())
+	membershipID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		resolveItem: &workspace.WorkspaceWithMembership{
+			Workspace: workspace.Workspace{
+				ID:       workspaceID,
+				TenantID: tenantID,
+				Name:     "Team One",
+				Slug:     "team-one",
+				Status:   workspace.WorkspaceStatusActive,
+			},
+			Membership: workspace.Membership{
+				ID:          membershipID,
+				TenantID:    tenantID,
+				WorkspaceID: workspaceID,
+				Role:        workspace.WorkspaceRoleOwner,
+				Status:      workspace.MembershipStatusActive,
+			},
+		},
+	}
+	service := NewService(repo)
+
+	result, err := service.ResolveTenantContext(context.Background(), ResolveTenantContextInput{
+		Account: auth.UserAccount{
+			ID:     accountID,
+			Status: auth.UserAccountStatusActive,
+		},
+		WorkspaceSlug: " Team-One ",
+	})
+	if err != nil {
+		t.Fatalf("ResolveTenantContext: %v", err)
+	}
+	if repo.resolveSlug != "team-one" {
+		t.Fatalf("resolved slug = %s, want team-one", repo.resolveSlug)
+	}
+	if repo.resolveAccountID != accountID {
+		t.Fatalf("resolved account id = %s, want %s", repo.resolveAccountID, accountID)
+	}
+	if result.Context.TenantID != tenantID {
+		t.Fatalf("tenant id = %s, want %s", result.Context.TenantID, tenantID)
+	}
+	if result.Context.WorkspaceID != workspaceID {
+		t.Fatalf("workspace id = %s, want %s", result.Context.WorkspaceID, workspaceID)
+	}
+	if result.Context.MembershipID != membershipID {
+		t.Fatalf("membership id = %s, want %s", result.Context.MembershipID, membershipID)
+	}
+	if result.Context.Role != workspace.WorkspaceRoleOwner {
+		t.Fatalf("role = %s, want owner", result.Context.Role)
+	}
+}
+
+func TestResolveTenantContextRejectsMissingMembership(t *testing.T) {
+	service := NewService(&fakeRepository{resolveErr: workspace.ErrMembershipNotFound})
+
+	_, err := service.ResolveTenantContext(context.Background(), ResolveTenantContextInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		WorkspaceSlug: "team-one",
+	})
+	if !errors.Is(err, ErrWorkspaceAccessDenied) {
+		t.Fatalf("err = %v, want ErrWorkspaceAccessDenied", err)
 	}
 }

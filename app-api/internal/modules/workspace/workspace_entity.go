@@ -94,3 +94,11 @@ type WorkspaceWithMembership struct {
 	Workspace  Workspace
 	Membership Membership
 }
+
+type TenantContext struct {
+	TenantID      uuid.UUID
+	WorkspaceID   uuid.UUID
+	WorkspaceSlug string
+	MembershipID  uuid.UUID
+	Role          WorkspaceRole
+}
