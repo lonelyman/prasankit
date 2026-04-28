@@ -54,6 +54,7 @@ Foundation Step 2: Backend Skeleton
 - app-api/database/migrations/000002_create_auth_core_tables.sql
 - app-api/database/migrations/000003_drop_auth_uuid_v4_defaults.sql
 - app-api/database/migrations/000004_create_auth_identities.sql
+- app-api/database/migrations/000005_create_workspace_core_tables.sql
 - app-api/cmd/api/main.go
 - app-api/internal/config/config.go
 - app-api/internal/bootstrap/app.go
@@ -67,6 +68,8 @@ Foundation Step 2: Backend Skeleton
 - app-api/internal/transport/http/router.go
 - app-api/internal/transport/http/authhttp/auth_handler.go
 - app-api/internal/transport/http/authhttp/auth_handler_test.go
+- app-api/internal/transport/http/workspacehttp/workspace_handler.go
+- app-api/internal/transport/http/workspacehttp/workspace_handler_test.go
 - app-api/internal/transport/http/health/health_handler.go
 - app-api/internal/transport/http/presenter/presenter.go
 - app-api/internal/transport/http/middlewares/error_handler.go
@@ -75,8 +78,14 @@ Foundation Step 2: Backend Skeleton
 - app-api/internal/modules/auth/auth_repository.go
 - app-api/internal/modules/auth/authsvc/auth_service.go
 - app-api/internal/modules/auth/authsvc/auth_service_test.go
+- app-api/internal/modules/workspace/workspace_entity.go
+- app-api/internal/modules/workspace/workspace_repository.go
+- app-api/internal/modules/workspace/workspacesvc/workspace_service.go
+- app-api/internal/modules/workspace/workspacesvc/workspace_service_test.go
 - app-api/internal/adapters/database/postgres/authrepo/auth_repository.go
 - app-api/internal/adapters/database/postgres/authrepo/auth_repository_integration_test.go
+- app-api/internal/adapters/database/postgres/workspacerepo/workspace_repository.go
+- app-api/internal/adapters/database/postgres/workspacerepo/workspace_repository_integration_test.go
 - app-api/internal/bootstrap/http_test.go
 - app-api/pkg/ids/ids.go
 - app-api/pkg/ids/ids_test.go
@@ -167,6 +176,7 @@ Verified:
 - apply migration `000003_drop_auth_uuid_v4_defaults.sql` ผ่าน Docker PostgreSQL แล้ว เพื่อถอด default `gen_random_uuid()` ออกจากฐานที่เคย apply migration รุ่นก่อนหน้า
 - ปรับ migration `000003_drop_auth_uuid_v4_defaults.sql` ทั้ง Up/Down ไม่ให้พา UUID v4 default กลับมาใน dev rollback/redo flow
 - เพิ่มและ apply migration `000004_create_auth_identities.sql` เพื่อแยก account owner (`user_accounts`) ออกจาก login methods (`auth_identities`)
+- เพิ่มและ apply migration `000005_create_workspace_core_tables.sql` สำหรับ `workspaces` และ `workspace_memberships`
 - ปรับ fresh install migration `000002_create_auth_core_tables.sql` ให้มี `auth_identities` ตั้งแต่แรก
 - PostgreSQL extensions ที่ยืนยันแล้ว:
   - `citext`
@@ -178,6 +188,9 @@ Verified:
   - `auth_email_verification_tokens`
   - `auth_password_reset_tokens`
   - `security_events`
+- Workspace core tables ที่ยืนยันแล้ว:
+  - `workspaces`
+  - `workspace_memberships`
 - เพิ่ม Auth module skeleton แล้ว:
   - domain entity
   - repository interface
@@ -290,6 +303,13 @@ Verified:
 - เพิ่ม `docs/18.6-auth-logout-test-examples.md` สำหรับตัวอย่างทดสอบ logout แล้ว
 - เพิ่ม `docs/18.7-auth-logout-all-test-examples.md` สำหรับตัวอย่างทดสอบ logout-all แล้ว
 - เพิ่ม `docs/18.8-auth-password-reset-test-examples.md` สำหรับตัวอย่างทดสอบ forgot/reset password แล้ว
+- เพิ่ม `docs/18.9-workspace-registration-test-examples.md` สำหรับตัวอย่างทดสอบ check slug/register workspace แล้ว
+- เพิ่ม Workspace module ก้อนแรกแล้ว:
+  - `GET /api/v1/workspaces/check-slug`
+  - `POST /api/v1/workspaces/register`
+  - สร้าง `tenant_id` จาก backend เอง
+  - สร้าง owner membership จาก account ใน session
+  - response ไม่ส่ง `tenant_id` ให้ frontend ใช้คุมสิทธิ์
 
 Known note:
 
@@ -317,6 +337,7 @@ Composition note:
 - Fresh server bootstrap order: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
 - Auth/session backend หลักเสร็จถึง forgot/reset password แล้ว
+- Workspace registration backend ก้อนแรกเสร็จถึง check slug/register workspace แล้ว
 
 หมายเหตุ:
 
@@ -324,7 +345,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปเริ่ม Workspace registration/check slug แบบช้า ๆ โดยยังต้องรักษา Tenant Context และ Permission Guard ตาม rule เดิม
+ขั้นถัดไปเริ่ม `GET /api/v1/workspaces/me` และ Tenant Context resolver แบบช้า ๆ โดยยังต้องรักษา Tenant Context และ Permission Guard ตาม rule เดิม
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -338,6 +359,7 @@ PostgreSQL connection done
 -> Migration 000002_create_auth_core_tables applied
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Migration 000004_create_auth_identities applied
+-> Migration 000005_create_workspace_core_tables applied
 -> Auth module skeleton created
 -> Auth repository: FindUserAccountByID/FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
 -> Auth service: RegisterEmailPassword implemented
@@ -353,4 +375,9 @@ PostgreSQL connection done
 -> Auth HTTP: POST /api/v1/auth/logout wired
 -> Auth service: LogoutAllSessions implemented
 -> Auth HTTP: POST /api/v1/auth/logout-all wired
+-> Auth service: ForgotPassword/ResetPassword implemented
+-> Auth HTTP: POST /api/v1/auth/forgot-password wired
+-> Auth HTTP: POST /api/v1/auth/reset-password wired
+-> Workspace HTTP: GET /api/v1/workspaces/check-slug wired
+-> Workspace HTTP: POST /api/v1/workspaces/register wired
 ```

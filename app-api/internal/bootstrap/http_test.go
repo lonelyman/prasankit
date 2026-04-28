@@ -12,6 +12,7 @@ import (
 	"prasankit-api/internal/transport/http/authhttp"
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
+	"prasankit-api/internal/transport/http/workspacehttp"
 
 	"github.com/gofiber/fiber/v3"
 )
@@ -267,10 +268,18 @@ func newTestHTTPApp(checks map[string]healthCheck) *fiber.App {
 		ErrorHandler: middlewares.ErrorHandler,
 	})
 
-	httptransport.RegisterRoutes(app, health.NewHandler(checkFuncs), authhttp.NewHandler(nil, authhttp.CookieConfig{
-		Name:     "prasankit_session",
-		SameSite: "Lax",
-	}))
+	httptransport.RegisterRoutes(
+		app,
+		health.NewHandler(checkFuncs),
+		authhttp.NewHandler(nil, authhttp.CookieConfig{
+			Name:     "prasankit_session",
+			SameSite: "Lax",
+		}),
+		workspacehttp.NewHandler(nil, nil, workspacehttp.CookieConfig{
+			Name:     "prasankit_session",
+			SameSite: "Lax",
+		}),
+	)
 	return app
 }
 

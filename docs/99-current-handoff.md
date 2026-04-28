@@ -61,6 +61,7 @@ Foundation
 │  ├─ 18.6-auth-logout-test-examples.md
 │  ├─ 18.7-auth-logout-all-test-examples.md
 │  ├─ 18.8-auth-password-reset-test-examples.md
+│  ├─ 18.9-workspace-registration-test-examples.md
 ├─ .env.example
 ├─ Makefile
 ├─ docker-compose.yml
@@ -246,6 +247,9 @@ app-api/
 - Wire `LogoutCurrentSession` เข้า HTTP handler `POST /api/v1/auth/logout` แล้ว
 - Wire `LogoutAllSessions` เข้า HTTP handler `POST /api/v1/auth/logout-all` แล้ว
 - Wire forgot/reset password เข้า HTTP handler `POST /api/v1/auth/forgot-password` และ `POST /api/v1/auth/reset-password` แล้ว
+- Wire Workspace registration ก้อนแรกเข้า HTTP handler แล้ว:
+  - `GET /api/v1/workspaces/check-slug`
+  - `POST /api/v1/workspaces/register`
 - เพิ่ม Redis session store สำหรับเก็บ session record หลัง login
 - เพิ่ม Redis session store สำหรับอ่าน session record และ delete session record แล้ว
 - เพิ่ม Auth service flow สำหรับ `LoginEmailPassword`:
@@ -285,6 +289,14 @@ app-api/
   - revoke active sessions ทั้งหมดของ account ด้วย reason `password_reset`
   - ลบ Redis session records ของ active sessions ที่ถูก revoke
   - create `security_events` สำหรับ `auth.password_reset_requested` และ `auth.password_reset_success`
+- เพิ่ม Workspace service flow ก้อนแรก:
+  - normalize/validate slug
+  - reserved slug check
+  - check slug availability
+  - require active account จาก session ก่อน register workspace
+  - สร้าง workspace พร้อม `tenant_id` จาก backend
+  - สร้าง owner membership ให้ account ใน session
+  - response ไม่ส่ง `tenant_id` ให้ frontend ใช้คุมสิทธิ์
 - เปลี่ยน `docker-compose.yml` ให้ API container อ่าน runtime env จาก `.env` แทน `.env.example`
 - เพิ่ม root Make targets:
   - `make env-init`
@@ -471,6 +483,7 @@ PostgreSQL connection done
 -> Migration 000002_create_auth_core_tables applied
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Migration 000004_create_auth_identities applied
+-> Migration 000005_create_workspace_core_tables applied
 -> Auth module skeleton created
 -> Auth repository: FindUserAccountByID/FindUserAccountByEmail/FindActiveAuthSessionByHash/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/RevokeAuthSessionByHash/CreateLoginAttempt/CreateSecurityEvent implemented
 -> Auth service: RegisterEmailPassword implemented
@@ -490,7 +503,9 @@ PostgreSQL connection done
 -> Auth service: ForgotPassword/ResetPassword implemented
 -> Auth HTTP: POST /api/v1/auth/forgot-password wired
 -> Auth HTTP: POST /api/v1/auth/reset-password wired
--> ต่อไปเริ่ม Workspace registration/check slug
+-> Workspace HTTP: GET /api/v1/workspaces/check-slug wired
+-> Workspace HTTP: POST /api/v1/workspaces/register wired
+-> ต่อไปเริ่ม GET /api/v1/workspaces/me และ Tenant Context resolver
 ```
 
 ## Do Not Do Yet

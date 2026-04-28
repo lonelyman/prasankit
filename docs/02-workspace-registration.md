@@ -251,6 +251,17 @@ Workspace Profile ต้องมีข้อมูลพื้นฐานส�
 | Account Registration | การสมัครบัญชีผู้ใช้ |
 | Workspace Registration | การสร้างพื้นที่ทำงานใหม่ |
 
+Implementation note ปัจจุบัน:
+
+```text
+Account Registration
+-> Verify Email
+-> Login
+-> Workspace Registration
+```
+
+ดังนั้น `Owner Account` ใน Workspace Registration หมายถึงบัญชีที่ login และ verified แล้ว ไม่ใช่การสร้าง account ใหม่ซ้ำใน endpoint สร้าง workspace
+
 Remark: สมาชิกทั่วไปไม่ต้องสมัคร Workspace ใหม่เพื่อเข้าทีม
 
 #### 7.2 วิธีเพิ่มสมาชิกเข้า Workspace

@@ -8,13 +8,20 @@ import (
 	"prasankit-api/internal/transport/http/authhttp"
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
+	"prasankit-api/internal/transport/http/workspacehttp"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/minio/minio-go/v7"
 	"github.com/redis/go-redis/v9"
 )
 
-func NewHTTPApp(postgres *sql.DB, redisClient *redis.Client, storageClient *minio.Client, authHandler authhttp.Handler) *fiber.App {
+func NewHTTPApp(
+	postgres *sql.DB,
+	redisClient *redis.Client,
+	storageClient *minio.Client,
+	authHandler authhttp.Handler,
+	workspaceHandler workspacehttp.Handler,
+) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:      "prasankit-api",
 		ErrorHandler: middlewares.ErrorHandler,
@@ -31,7 +38,7 @@ func NewHTTPApp(postgres *sql.DB, redisClient *redis.Client, storageClient *mini
 		},
 	})
 
-	httptransport.RegisterRoutes(app, healthHandler, authHandler)
+	httptransport.RegisterRoutes(app, healthHandler, authHandler, workspaceHandler)
 
 	return app
 }

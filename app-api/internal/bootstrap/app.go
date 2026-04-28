@@ -12,10 +12,13 @@ import (
 	"prasankit-api/internal/adapters/cache/redis/ratelimit"
 	"prasankit-api/internal/adapters/cache/redis/sessionstore"
 	"prasankit-api/internal/adapters/database/postgres/authrepo"
+	"prasankit-api/internal/adapters/database/postgres/workspacerepo"
 	"prasankit-api/internal/adapters/email/smtpemail"
 	"prasankit-api/internal/config"
 	"prasankit-api/internal/modules/auth/authsvc"
+	"prasankit-api/internal/modules/workspace/workspacesvc"
 	"prasankit-api/internal/transport/http/authhttp"
+	"prasankit-api/internal/transport/http/workspacehttp"
 	"prasankit-api/pkg/passwordhash"
 
 	"github.com/gofiber/fiber/v3"
@@ -80,10 +83,18 @@ func InitializeApp(cfg config.Config) (*App, error) {
 		Secure:   cfg.Cookie.Secure,
 		SameSite: cfg.Cookie.SameSite,
 	})
+	workspaceRepository := workspacerepo.NewRepository(postgresDB)
+	workspaceService := workspacesvc.NewService(workspaceRepository)
+	workspaceHandler := workspacehttp.NewHandler(workspaceService, authService, workspacehttp.CookieConfig{
+		Name:     cfg.Session.CookieName,
+		TTL:      cfg.Session.TTL,
+		Secure:   cfg.Cookie.Secure,
+		SameSite: cfg.Cookie.SameSite,
+	})
 
 	return &App{
 		config:      cfg,
-		httpApp:     NewHTTPApp(postgresSQLDB, redisClient, storageClient, authHandler),
+		httpApp:     NewHTTPApp(postgresSQLDB, redisClient, storageClient, authHandler, workspaceHandler),
 		postgres:    postgresDB,
 		postgresSQL: postgresSQLDB,
 		redis:       redisClient,

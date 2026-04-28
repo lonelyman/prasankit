@@ -50,6 +50,8 @@ docker compose ps
 | POST | `/api/v1/auth/logout-all` | Done, revokes all account sessions, see `docs/18.7-auth-logout-all-test-examples.md` |
 | POST | `/api/v1/auth/forgot-password` | Done, see `docs/18.8-auth-password-reset-test-examples.md` |
 | POST | `/api/v1/auth/reset-password` | Done, see `docs/18.8-auth-password-reset-test-examples.md` |
+| GET | `/api/v1/workspaces/check-slug` | Done, see `docs/18.9-workspace-registration-test-examples.md` |
+| POST | `/api/v1/workspaces/register` | Done, requires session cookie, see `docs/18.9-workspace-registration-test-examples.md` |
 
 ## Health
 
@@ -168,7 +170,15 @@ HTTP/1.1 503 Service Unavailable
 | `docs/18.6-auth-logout-test-examples.md` | `POST /api/v1/auth/logout` |
 | `docs/18.7-auth-logout-all-test-examples.md` | `POST /api/v1/auth/logout-all` |
 | `docs/18.8-auth-password-reset-test-examples.md` | `POST /api/v1/auth/forgot-password`, `POST /api/v1/auth/reset-password` |
+| `docs/18.9-workspace-registration-test-examples.md` | `GET /api/v1/workspaces/check-slug`, `POST /api/v1/workspaces/register` |
 
 ## Not Done Yet
 
 ยังไม่มี Auth route ที่เป็น placeholder ในชุด backend auth foundation ปัจจุบัน
+
+Workspace routes ถัดไปที่ยังไม่ทำ:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/workspaces/me` | รายการ workspace ของ user ปัจจุบัน |
+| GET | `/api/v1/workspace` | workspace ปัจจุบันหลัง Tenant Resolution |

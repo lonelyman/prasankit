@@ -12,9 +12,10 @@ MVP-0 ต้องตอบคำถามเดียวให้ได้:
 
 ```text
 Public App
--> Create Workspace
+-> Register Account
 -> Verify Email
 -> Login
+-> Create Workspace
 -> Workspace Dashboard
 -> Create Project
 -> Project Detail
@@ -25,31 +26,45 @@ Public App
 -> View Activity Log
 ```
 
-## 1. Create Workspace
+## 1. Register Account
 
-ผู้ใช้กรอกข้อมูลขั้นต่ำ:
+ผู้ใช้สมัครบัญชีกลางก่อน:
 
-- Workspace Name
-- Workspace Slug
-- Owner Name
 - Owner Email
 - Password
-- Contact Email
 
 ระบบทำงาน:
 
 - สร้าง user account
-- สร้าง workspace
-- สร้าง workspace membership ให้ owner
-- seed ค่าเริ่มต้นที่จำเป็น
+- สร้าง auth identity แบบ email/password
 - ส่ง email verification
 
 ผลลัพธ์ที่ต้องได้:
 
-- Workspace ถูกสร้างในสถานะใช้งานได้หลังยืนยัน email
+- account ถูกสร้างเป็น `pending_verification`
+- หลัง verify email แล้ว account เป็น `active`
+
+## 2. Create Workspace
+
+หลัง verify email และ login สำเร็จ ผู้ใช้กรอกข้อมูลขั้นต่ำ:
+
+- Workspace Name
+- Workspace Slug
+- Contact Email
+
+ระบบทำงาน:
+
+- สร้าง workspace
+- สร้าง workspace membership ให้ owner
+- สร้าง tenant_id ใน backend
+- seed ค่าเริ่มต้นที่จำเป็นในรอบถัดไป
+
+ผลลัพธ์ที่ต้องได้:
+
+- Workspace ถูกสร้างในสถานะใช้งานได้จาก account ที่ verified แล้ว
 - Owner เข้า workspace ของตัวเองได้
 
-## 2. Login เข้า Workspace
+## 3. Login เข้า Workspace
 
 ผู้ใช้เข้า:
 
@@ -71,7 +86,7 @@ Public App
 - ผู้ใช้เข้า Workspace Dashboard ได้
 - tenant_id ถูก resolve ฝั่ง backend เท่านั้น
 
-## 3. Workspace Dashboard
+## 4. Workspace Dashboard
 
 รอบ MVP-0 ให้ dashboard เรียบง่าย:
 
@@ -82,7 +97,7 @@ Public App
 
 ยังไม่ต้องมี report, chart, finance summary หรือ notification เต็มระบบ
 
-## 4. Create Project
+## 5. Create Project
 
 ข้อมูลขั้นต่ำ:
 
@@ -103,7 +118,7 @@ Public App
 - คนสร้างเป็น Project Owner
 - เปิด Project Detail ได้
 
-## 5. Project Detail
+## 6. Project Detail
 
 Tabs ที่ต้องมีใน MVP-0:
 
@@ -120,7 +135,7 @@ Tabs ที่ยังไม่ทำใน MVP-0:
 - Announcements
 - Reports
 
-## 6. Add Project Member
+## 7. Add Project Member
 
 Project Owner เพิ่ม member จาก Workspace Members
 
@@ -136,7 +151,7 @@ Project Owner เพิ่ม member จาก Workspace Members
 - ห้าม remove Project Owner คนสุดท้าย
 - คนที่ไม่มี active workspace membership ห้ามถูกเพิ่มเข้า project ใหม่
 
-## 7. Task Board
+## 8. Task Board
 
 ระบบต้องมี default status:
 
@@ -166,7 +181,7 @@ Task ข้อมูลขั้นต่ำ:
 - comment แบบพื้นฐาน
 - checklist แบบพื้นฐาน
 
-## 8. Basic File Upload
+## 9. Basic File Upload
 
 ใช้ Project File Center แบบพื้นฐาน:
 
@@ -181,7 +196,7 @@ Task ข้อมูลขั้นต่ำ:
 - backend ต้องตรวจสิทธิ์ก่อนสร้าง signed URL
 - delete จาก UI เป็น soft delete ก่อน
 
-## 9. Basic Activity Log
+## 10. Basic Activity Log
 
 MVP-0 ต้อง log action สำคัญ:
 
