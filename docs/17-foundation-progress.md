@@ -188,6 +188,7 @@ Verified:
   - `FindUserAccountByEmail`
   - `CreateUserAccount` โดยสร้าง primary key เป็น UUID v7 จาก Go application, set status default และ set `created_at`/`updated_at` ใน app
   - `CreateAuthIdentity` โดยสร้าง primary key เป็น UUID v7 จาก Go application และ default เป็น `email_password/email`
+  - `CreateAuthSession` โดยสร้าง primary key เป็น UUID v7 จาก Go application, set `created_at` ใน app และบังคับ `expires_at`
   - `CreateLoginAttempt` โดยสร้าง primary key เป็น UUID v7 จาก Go application และ set `created_at` ใน app หาก caller ไม่ส่งมา
   - `CreateSecurityEvent` โดยสร้าง primary key เป็น UUID v7 จาก Go application และใช้ `pkg/dbtypes.JSONB` สำหรับ `metadata_json`
 - Auth repository integration test ใช้ `PRASANKIT_TEST_DB_DSN` และผ่านกับ Docker PostgreSQL แล้ว
@@ -242,7 +243,7 @@ PostgreSQL connection done
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Migration 000004_create_auth_identities applied
 -> Auth module skeleton created
--> Auth repository: FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateLoginAttempt/CreateSecurityEvent implemented
+-> Auth repository: FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
 ```
 
-ขั้นถัดไปทำ Auth repository implementation ต่อแบบเล็ก ๆ: `CreateAuthSession`
+ขั้นถัดไปเริ่ม Auth service flow แบบเล็ก ๆ สำหรับ register/login โดยยังคง session-based auth + Redis + httpOnly Cookie

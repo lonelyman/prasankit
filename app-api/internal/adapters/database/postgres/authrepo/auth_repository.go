@@ -56,6 +56,26 @@ func (authIdentityRow) TableName() string {
 	return "auth_identities"
 }
 
+type authSessionRow struct {
+	ID             uuid.UUID     `gorm:"column:id;type:uuid"`
+	UserAccountID  uuid.UUID     `gorm:"column:user_account_id"`
+	SessionKeyHash string        `gorm:"column:session_key_hash"`
+	Status         string        `gorm:"column:status"`
+	IPAddress      *string       `gorm:"column:ip_address"`
+	UserAgent      string        `gorm:"column:user_agent"`
+	DeviceLabel    string        `gorm:"column:device_label"`
+	CreatedAt      time.Time     `gorm:"column:created_at"`
+	LastSeenAt     *time.Time    `gorm:"column:last_seen_at"`
+	ExpiresAt      time.Time     `gorm:"column:expires_at"`
+	RevokedAt      *time.Time    `gorm:"column:revoked_at"`
+	RevokedReason  string        `gorm:"column:revoked_reason"`
+	MetadataJSON   dbtypes.JSONB `gorm:"column:metadata_json;type:jsonb"`
+}
+
+func (authSessionRow) TableName() string {
+	return "auth_sessions"
+}
+
 type loginAttemptRow struct {
 	ID            uuid.UUID  `gorm:"column:id;type:uuid"`
 	UserAccountID *uuid.UUID `gorm:"column:user_account_id"`
@@ -195,8 +215,46 @@ func (r *Repository) CreateAuthIdentity(ctx context.Context, identity *auth.Auth
 	return nil
 }
 
-func (r *Repository) CreateAuthSession(context.Context, *auth.AuthSession) error {
-	return ErrNotImplemented
+func (r *Repository) CreateAuthSession(ctx context.Context, session *auth.AuthSession) error {
+	if err := ensureUUID(&session.ID); err != nil {
+		return err
+	}
+	if session.Status == "" {
+		session.Status = auth.AuthSessionStatusActive
+	}
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = time.Now().UTC()
+	}
+	if session.ExpiresAt.IsZero() {
+		return auth.ErrAuthSessionExpiresAtRequired
+	}
+	if session.MetadataJSON == nil {
+		session.MetadataJSON = map[string]any{}
+	}
+
+	row := authSessionRow{
+		ID:             session.ID,
+		UserAccountID:  session.UserAccountID,
+		SessionKeyHash: session.SessionKeyHash,
+		Status:         string(session.Status),
+		IPAddress:      stringPtrOrNil(session.IPAddress),
+		UserAgent:      session.UserAgent,
+		DeviceLabel:    session.DeviceLabel,
+		CreatedAt:      session.CreatedAt,
+		LastSeenAt:     session.LastSeenAt,
+		ExpiresAt:      session.ExpiresAt,
+		RevokedAt:      session.RevokedAt,
+		RevokedReason:  session.RevokedReason,
+		MetadataJSON:   dbtypes.NewJSONB(session.MetadataJSON),
+	}
+
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return err
+	}
+
+	session.ID = row.ID
+	session.CreatedAt = row.CreatedAt
+	return nil
 }
 
 func (r *Repository) CreateLoginAttempt(ctx context.Context, attempt *auth.LoginAttempt) error {

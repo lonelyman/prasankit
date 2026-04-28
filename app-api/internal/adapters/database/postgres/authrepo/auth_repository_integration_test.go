@@ -157,6 +157,79 @@ func TestRepositoryIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("create auth session", func(t *testing.T) {
+		email := "session-" + uuid.NewString() + "@example.test"
+		account := &auth.UserAccount{
+			PrimaryEmail: email,
+			Status:       auth.UserAccountStatusActive,
+		}
+		if err := repo.CreateUserAccount(ctx, account); err != nil {
+			t.Fatalf("create user account: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = db.Exec(`DELETE FROM auth_sessions WHERE user_account_id = ?`, account.ID).Error
+			_ = db.Exec(`DELETE FROM user_accounts WHERE id = ?`, account.ID).Error
+		})
+
+		session := &auth.AuthSession{
+			UserAccountID:  account.ID,
+			SessionKeyHash: "session-hash-" + uuid.NewString(),
+			IPAddress:      "127.0.0.1",
+			UserAgent:      "repository integration test",
+			DeviceLabel:    "test browser",
+			ExpiresAt:      time.Now().UTC().Add(24 * time.Hour),
+			MetadataJSON: map[string]any{
+				"source": "integration_test",
+			},
+		}
+
+		if err := repo.CreateAuthSession(ctx, session); err != nil {
+			t.Fatalf("create auth session: %v", err)
+		}
+
+		if session.ID == uuid.Nil {
+			t.Fatal("session.ID was not set")
+		}
+		if session.ID.Version() != 7 {
+			t.Fatalf("session.ID version = %d, want 7", session.ID.Version())
+		}
+		if session.Status != auth.AuthSessionStatusActive {
+			t.Fatalf("session.Status = %s, want %s", session.Status, auth.AuthSessionStatusActive)
+		}
+		if session.CreatedAt.IsZero() {
+			t.Fatal("session.CreatedAt was not set")
+		}
+
+		var stored struct {
+			Status string
+			Source string
+		}
+		if err := db.Raw(
+			`SELECT status, metadata_json->>'source' AS source FROM auth_sessions WHERE id = ?`,
+			session.ID,
+		).Scan(&stored).Error; err != nil {
+			t.Fatalf("query auth session: %v", err)
+		}
+		if stored.Status != string(auth.AuthSessionStatusActive) {
+			t.Fatalf("stored status = %s, want %s", stored.Status, auth.AuthSessionStatusActive)
+		}
+		if stored.Source != "integration_test" {
+			t.Fatalf("stored source = %s, want integration_test", stored.Source)
+		}
+	})
+
+	t.Run("create auth session requires expires_at", func(t *testing.T) {
+		session := &auth.AuthSession{
+			UserAccountID:  uuid.New(),
+			SessionKeyHash: "session-hash-" + uuid.NewString(),
+		}
+
+		err := repo.CreateAuthSession(ctx, session)
+		if !errors.Is(err, auth.ErrAuthSessionExpiresAtRequired) {
+			t.Fatalf("err = %v, want ErrAuthSessionExpiresAtRequired", err)
+		}
+	})
+
 	t.Run("create login attempt", func(t *testing.T) {
 		email := "login-attempt-" + uuid.NewString() + "@example.test"
 		attempt := &auth.LoginAttempt{

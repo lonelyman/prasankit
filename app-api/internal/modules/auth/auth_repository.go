@@ -6,6 +6,7 @@ import (
 )
 
 var ErrUserAccountNotFound = errors.New("user account not found")
+var ErrAuthSessionExpiresAtRequired = errors.New("auth session expires_at is required")
 
 type Repository interface {
 	FindUserAccountByEmail(ctx context.Context, email string) (*UserAccount, error)

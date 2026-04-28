@@ -174,6 +174,7 @@ app-api/
   - `FindUserAccountByEmail`
   - `CreateUserAccount` โดยใช้ UUID v7 จาก Go application, set status default และ set `created_at`/`updated_at` ใน app
   - `CreateAuthIdentity` โดยใช้ UUID v7 จาก Go application และ default เป็น `email_password/email`
+  - `CreateAuthSession` โดยใช้ UUID v7 จาก Go application, set `created_at` ใน app และบังคับ `expires_at`
   - `CreateLoginAttempt` โดยใช้ UUID v7 จาก Go application และ set `created_at` ใน app หาก caller ไม่ส่งมา
   - `CreateSecurityEvent` โดยใช้ UUID v7 จาก Go application และ `pkg/dbtypes.JSONB` สำหรับ `metadata_json`
 - เพิ่ม Auth repository integration test ที่ใช้ `PRASANKIT_TEST_DB_DSN`
@@ -336,8 +337,8 @@ PostgreSQL connection done
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Migration 000004_create_auth_identities applied
 -> Auth module skeleton created
--> Auth repository: FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateLoginAttempt/CreateSecurityEvent implemented
--> ต่อไปทำ Auth repository method ถัดไป: CreateAuthSession
+-> Auth repository: FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
+-> ต่อไปเริ่ม Auth service flow แบบเล็ก ๆ สำหรับ register/login
 ```
 
 ## Do Not Do Yet
