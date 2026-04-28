@@ -52,6 +52,7 @@ Foundation
 ├─ deploy/
 ├─ docs/
 │  ├─ 18-api-test-examples.md
+│  ├─ 18.0-auth-flow-status.md
 │  ├─ 18.1-auth-register-test-examples.md
 │  ├─ 18.2-auth-verify-email-test-examples.md
 ├─ .env.example
@@ -148,6 +149,7 @@ app-api/
 - สร้าง `docs/16-foundation-file-plan.md`
 - สร้าง `docs/17-foundation-progress.md`
 - สร้าง `docs/18-api-test-examples.md` สำหรับตัวอย่างทดสอบ API ที่เสร็จจริง
+- สร้าง `docs/18.0-auth-flow-status.md` สำหรับบันทึกสถานะ Auth flow จริงและจุดที่ต้องกลับมาแก้
 - สร้าง `docs/18.1-auth-register-test-examples.md` สำหรับตัวอย่างทดสอบ `POST /api/v1/auth/register`
 - สร้าง `docs/18.2-auth-verify-email-test-examples.md` สำหรับตัวอย่างทดสอบ `POST /api/v1/auth/verify-email`
 - สร้าง `.env.example`

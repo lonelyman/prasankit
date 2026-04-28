@@ -237,6 +237,7 @@ Verified:
 - Docker smoke test `POST /api/v1/auth/register` ผ่าน ได้ `201 Created`
 - Docker smoke test สมัคร email ซ้ำผ่าน ได้ `409 Conflict` และ error code `EMAIL_ALREADY_REGISTERED`
 - เพิ่ม `docs/18-api-test-examples.md` เป็นเอกสารตัวอย่างทดสอบ endpoint ที่เสร็จจริง
+- เพิ่ม `docs/18.0-auth-flow-status.md` เพื่อบันทึกว่า Auth backend ทำถึงไหน อะไรยังเป็น manual/temporary และต้องกลับมาแก้ตรงไหนเมื่อเริ่ม frontend
 - เพิ่ม `docs/18.1-auth-register-test-examples.md` และอัปเดตตัวอย่าง register ให้รวม verification email/rate limit/SMTP failure แล้ว
 - เพิ่ม `docs/18.2-auth-verify-email-test-examples.md` สำหรับตัวอย่างทดสอบ verify email แล้ว
 
