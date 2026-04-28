@@ -385,6 +385,44 @@ func (r *Repository) ActivateUserAccount(ctx context.Context, id uuid.UUID, upda
 	return nil
 }
 
+func (r *Repository) UpdateUserAccountLoginSuccess(ctx context.Context, id uuid.UUID, loggedInAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&userAccountRow{}).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"last_login_at":      loggedInAt,
+			"failed_login_count": 0,
+			"locked_until":       nil,
+			"updated_at":         loggedInAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return auth.ErrUserAccountNotFound
+	}
+	return nil
+}
+
+func (r *Repository) MarkAuthIdentityLastUsed(ctx context.Context, id uuid.UUID, lastUsedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&authIdentityRow{}).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"last_used_at": lastUsedAt,
+			"updated_at":   lastUsedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return auth.ErrAuthIdentityNotFound
+	}
+	return nil
+}
+
 func (r *Repository) CreateAuthSession(ctx context.Context, session *auth.AuthSession) error {
 	if err := ensureUUID(&session.ID); err != nil {
 		return err

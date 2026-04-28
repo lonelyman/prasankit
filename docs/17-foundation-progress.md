@@ -62,6 +62,7 @@ Foundation Step 2: Backend Skeleton
 - app-api/internal/bootstrap/redis.go
 - app-api/internal/bootstrap/storage.go
 - app-api/internal/adapters/cache/redis/ratelimit/limiter.go
+- app-api/internal/adapters/cache/redis/sessionstore/store.go
 - app-api/internal/adapters/email/smtpemail/sender.go
 - app-api/internal/transport/http/router.go
 - app-api/internal/transport/http/authhttp/auth_handler.go
@@ -186,8 +187,6 @@ Verified:
 - Auth register route เริ่มใช้งานจริงแล้ว:
   - `POST /api/v1/auth/register`
 - Auth routes ที่เหลือยังตอบ `501 NOT_IMPLEMENTED` ตามที่ตั้งใจ:
-  - `POST /api/v1/auth/verify-email`
-  - `POST /api/v1/auth/login`
   - `POST /api/v1/auth/logout`
   - `POST /api/v1/auth/logout-all`
   - `POST /api/v1/auth/forgot-password`
@@ -230,6 +229,19 @@ Verified:
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/register` แล้ว โดย response สำเร็จเป็น `201 Created` ใต้ root key `data`
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/verify-email` แล้ว โดย response สำเร็จอยู่ใต้ root key `data`
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/resend-verification-email` แล้ว โดย response เป็น generic success ใต้ root key `data`
+- เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/login` แล้ว โดย set httpOnly cookie และ response อยู่ใต้ root key `data`
+- เพิ่ม Redis session store adapter แล้ว เพื่อเก็บ session record จาก login
+- เพิ่ม Auth service flow สำหรับ email/password login แล้ว:
+  - normalize email
+  - ตรวจ password ด้วย bcrypt
+  - require email verified
+  - require account status `active`
+  - สร้าง session token แบบ random
+  - hash session token ด้วย `SESSION_SECRET`
+  - เก็บ session metadata ใน `auth_sessions`
+  - เก็บ session record ใน Redis
+  - เขียน `auth_login_attempts`
+  - เขียน `security_events` สำหรับ `auth.login_success` และ `auth.login_failed`
 - เพิ่ม test สำหรับ Auth register handler แล้ว
 - เพิ่ม test สำหรับ Auth verify-email handler แล้ว
 - เพิ่ม test สำหรับ Auth resend-verification-email handler แล้ว
@@ -243,6 +255,7 @@ Verified:
 - เพิ่ม `docs/18.1-auth-register-test-examples.md` และอัปเดตตัวอย่าง register ให้รวม verification email/rate limit/SMTP failure แล้ว
 - เพิ่ม `docs/18.2-auth-verify-email-test-examples.md` สำหรับตัวอย่างทดสอบ verify email แล้ว
 - เพิ่ม `docs/18.3-auth-resend-verification-email-test-examples.md` สำหรับตัวอย่างทดสอบ resend verification email แล้ว
+- เพิ่ม `docs/18.4-auth-login-test-examples.md` สำหรับตัวอย่างทดสอบ login แล้ว
 
 Known note:
 
@@ -269,6 +282,7 @@ Composition note:
 - Completed API documentation strategy: เมื่อ endpoint ไหน implement เสร็จจริง ต้องเพิ่ม request/success/error examples ใน `docs/18-api-test-examples.md`
 - Fresh server bootstrap order: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
+- Login/session backend ขั้นแรกเสร็จแล้ว แต่ auth middleware, `GET /api/v1/auth/me`, logout และ session revoke ยังไม่เสร็จ
 
 หมายเหตุ:
 
@@ -276,7 +290,12 @@ Composition note:
 
 ## Next Step
 
-Foundation Step 3: Dependency Readiness
+ขั้นถัดไปเริ่ม auth session validation:
+
+- middleware อ่าน httpOnly cookie
+- hash session token ด้วย `SESSION_SECRET`
+- ตรวจ Redis session
+- `GET /api/v1/auth/me`
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -296,6 +315,7 @@ PostgreSQL connection done
 -> Auth HTTP: POST /api/v1/auth/register wired
 -> Auth HTTP: POST /api/v1/auth/verify-email wired
 -> Auth HTTP: POST /api/v1/auth/resend-verification-email wired
+-> Auth service: LoginEmailPassword implemented
+-> Auth HTTP: POST /api/v1/auth/login wired
+-> Auth session store: Redis session record implemented
 ```
-
-ขั้นถัดไปเริ่ม login/session flow โดยยังคง session-based auth + Redis + httpOnly Cookie

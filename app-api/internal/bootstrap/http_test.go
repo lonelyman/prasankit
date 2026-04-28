@@ -267,7 +267,10 @@ func newTestHTTPApp(checks map[string]healthCheck) *fiber.App {
 		ErrorHandler: middlewares.ErrorHandler,
 	})
 
-	httptransport.RegisterRoutes(app, health.NewHandler(checkFuncs), authhttp.NewHandler(nil))
+	httptransport.RegisterRoutes(app, health.NewHandler(checkFuncs), authhttp.NewHandler(nil, authhttp.CookieConfig{
+		Name:     "prasankit_session",
+		SameSite: "Lax",
+	}))
 	return app
 }
 

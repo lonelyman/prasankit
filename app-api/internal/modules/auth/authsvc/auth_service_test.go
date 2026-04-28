@@ -14,8 +14,9 @@ import (
 )
 
 type fakeHasher struct {
-	hash string
-	err  error
+	hash       string
+	err        error
+	compareErr error
 }
 
 func (h fakeHasher) Hash(string) (string, error) {
@@ -23,6 +24,10 @@ func (h fakeHasher) Hash(string) (string, error) {
 		return "", h.err
 	}
 	return h.hash, nil
+}
+
+func (h fakeHasher) Compare(string, string) error {
+	return h.compareErr
 }
 
 type fakeRepository struct {
@@ -38,6 +43,10 @@ type fakeRepository struct {
 	activatedAccount  uuid.UUID
 	usedToken         uuid.UUID
 	revokedIdentity   uuid.UUID
+	loginSuccessUser  uuid.UUID
+	lastUsedIdentity  uuid.UUID
+	authSession       *auth.AuthSession
+	loginAttempts     []*auth.LoginAttempt
 	securityEvent     *auth.SecurityEvent
 	securityEvents    []*auth.SecurityEvent
 }
@@ -132,11 +141,31 @@ func (r *fakeRepository) ActivateUserAccount(_ context.Context, id uuid.UUID, up
 	return nil
 }
 
-func (r *fakeRepository) CreateAuthSession(context.Context, *auth.AuthSession) error {
+func (r *fakeRepository) UpdateUserAccountLoginSuccess(_ context.Context, id uuid.UUID, loggedInAt time.Time) error {
+	r.loginSuccessUser = id
+	if r.existingAccount != nil && r.existingAccount.ID == id {
+		r.existingAccount.LastLoginAt = &loggedInAt
+		r.existingAccount.UpdatedAt = loggedInAt
+	}
 	return nil
 }
 
-func (r *fakeRepository) CreateLoginAttempt(context.Context, *auth.LoginAttempt) error {
+func (r *fakeRepository) MarkAuthIdentityLastUsed(_ context.Context, id uuid.UUID, lastUsedAt time.Time) error {
+	r.lastUsedIdentity = id
+	if r.identity != nil && r.identity.ID == id {
+		r.identity.LastUsedAt = &lastUsedAt
+		r.identity.UpdatedAt = lastUsedAt
+	}
+	return nil
+}
+
+func (r *fakeRepository) CreateAuthSession(_ context.Context, session *auth.AuthSession) error {
+	r.authSession = session
+	return nil
+}
+
+func (r *fakeRepository) CreateLoginAttempt(_ context.Context, attempt *auth.LoginAttempt) error {
+	r.loginAttempts = append(r.loginAttempts, attempt)
 	return nil
 }
 
@@ -177,6 +206,25 @@ func (l *fakeRateLimiter) Allow(_ context.Context, key string, limit int, window
 	return l.allowed, nil
 }
 
+type fakeSessionStore struct {
+	session     SessionRecord
+	ttl         time.Duration
+	deletedHash string
+	saveErr     error
+	deleteErr   error
+}
+
+func (s *fakeSessionStore) Save(_ context.Context, session SessionRecord, ttl time.Duration) error {
+	s.session = session
+	s.ttl = ttl
+	return s.saveErr
+}
+
+func (s *fakeSessionStore) Delete(_ context.Context, sessionKeyHash string) error {
+	s.deletedHash = sessionKeyHash
+	return s.deleteErr
+}
+
 func newTestService(repo *fakeRepository, email *fakeEmailSender, limiter *fakeRateLimiter) *Service {
 	if email == nil {
 		email = &fakeEmailSender{}
@@ -184,11 +232,13 @@ func newTestService(repo *fakeRepository, email *fakeEmailSender, limiter *fakeR
 	if limiter == nil {
 		limiter = &fakeRateLimiter{allowed: true}
 	}
-	return NewService(repo, fakeHasher{hash: "hashed-password"}, email, limiter, ServiceConfig{
+	return NewService(repo, fakeHasher{hash: "hashed-password"}, email, limiter, &fakeSessionStore{}, ServiceConfig{
 		VerificationBaseURL:  "https://app.example.test/auth/verify-email",
 		VerificationTokenTTL: 30 * time.Minute,
 		VerificationIPLimit:  5,
 		VerificationIPWindow: 10 * time.Minute,
+		SessionSecret:        "test-session-secret",
+		SessionTTL:           24 * time.Hour,
 	})
 }
 
@@ -315,11 +365,13 @@ func TestRegisterEmailPasswordRejectsDuplicateEmail(t *testing.T) {
 }
 
 func TestRegisterEmailPasswordRequiresPasswordHasher(t *testing.T) {
-	service := NewService(&fakeRepository{}, nil, &fakeEmailSender{}, &fakeRateLimiter{allowed: true}, ServiceConfig{
+	service := NewService(&fakeRepository{}, nil, &fakeEmailSender{}, &fakeRateLimiter{allowed: true}, &fakeSessionStore{}, ServiceConfig{
 		VerificationBaseURL:  "https://app.example.test/auth/verify-email",
 		VerificationTokenTTL: 30 * time.Minute,
 		VerificationIPLimit:  5,
 		VerificationIPWindow: 10 * time.Minute,
+		SessionSecret:        "test-session-secret",
+		SessionTTL:           24 * time.Hour,
 	})
 
 	_, err := service.RegisterEmailPassword(context.Background(), RegisterEmailPasswordInput{
@@ -332,11 +384,13 @@ func TestRegisterEmailPasswordRequiresPasswordHasher(t *testing.T) {
 }
 
 func TestRegisterEmailPasswordRequiresEmailSender(t *testing.T) {
-	service := NewService(&fakeRepository{}, fakeHasher{hash: "hashed-password"}, nil, &fakeRateLimiter{allowed: true}, ServiceConfig{
+	service := NewService(&fakeRepository{}, fakeHasher{hash: "hashed-password"}, nil, &fakeRateLimiter{allowed: true}, &fakeSessionStore{}, ServiceConfig{
 		VerificationBaseURL:  "https://app.example.test/auth/verify-email",
 		VerificationTokenTTL: 30 * time.Minute,
 		VerificationIPLimit:  5,
 		VerificationIPWindow: 10 * time.Minute,
+		SessionSecret:        "test-session-secret",
+		SessionTTL:           24 * time.Hour,
 	})
 
 	_, err := service.RegisterEmailPassword(context.Background(), RegisterEmailPasswordInput{
@@ -610,5 +664,179 @@ func TestResendVerificationEmailReturnsEmailSendFailure(t *testing.T) {
 	})
 	if !errors.Is(err, ErrVerificationEmailSendFailed) {
 		t.Fatalf("err = %v, want ErrVerificationEmailSendFailed", err)
+	}
+}
+
+func TestLoginEmailPassword(t *testing.T) {
+	now := time.Now().UTC()
+	accountID := uuid.Must(uuid.NewV7())
+	identityID := uuid.Must(uuid.NewV7())
+	account := &auth.UserAccount{
+		ID:           accountID,
+		PrimaryEmail: "owner@example.test",
+		Status:       auth.UserAccountStatusActive,
+	}
+	identity := &auth.AuthIdentity{
+		ID:              identityID,
+		UserAccountID:   accountID,
+		Email:           "owner@example.test",
+		EmailVerifiedAt: &now,
+		PasswordHash:    "hashed-password",
+	}
+	repo := &fakeRepository{
+		existingAccount: account,
+		identity:        identity,
+	}
+	sessions := &fakeSessionStore{}
+	service := NewService(repo, fakeHasher{hash: "hashed-password"}, &fakeEmailSender{}, &fakeRateLimiter{allowed: true}, sessions, ServiceConfig{
+		VerificationBaseURL:  "https://app.example.test/auth/verify-email",
+		VerificationTokenTTL: 30 * time.Minute,
+		VerificationIPLimit:  5,
+		VerificationIPWindow: 10 * time.Minute,
+		SessionSecret:        "test-session-secret",
+		SessionTTL:           24 * time.Hour,
+	})
+
+	result, err := service.LoginEmailPassword(context.Background(), LoginEmailPasswordInput{
+		Email:     " Owner@Example.Test ",
+		Password:  "correct-password",
+		IPAddress: "127.0.0.1",
+		UserAgent: "service unit test",
+	})
+	if err != nil {
+		t.Fatalf("LoginEmailPassword: %v", err)
+	}
+	if result.Account.ID != accountID {
+		t.Fatalf("account.ID = %s, want %s", result.Account.ID, accountID)
+	}
+	if result.SessionToken == "" {
+		t.Fatal("SessionToken was not set")
+	}
+	if result.SessionID == uuid.Nil {
+		t.Fatal("SessionID was not set")
+	}
+	if !result.SessionExpiresAt.After(time.Now().UTC()) {
+		t.Fatalf("SessionExpiresAt = %s, want future time", result.SessionExpiresAt)
+	}
+	if sessions.session.SessionID != result.SessionID {
+		t.Fatalf("redis session id = %s, want %s", sessions.session.SessionID, result.SessionID)
+	}
+	if sessions.ttl != 24*time.Hour {
+		t.Fatalf("session ttl = %s, want 24h", sessions.ttl)
+	}
+	if repo.authSession == nil {
+		t.Fatal("auth session was not created")
+	}
+	if repo.authSession.SessionKeyHash == "" {
+		t.Fatal("session hash was not stored")
+	}
+	if repo.authSession.SessionKeyHash == result.SessionToken {
+		t.Fatal("raw session token must not be stored as session hash")
+	}
+	if repo.loginSuccessUser != accountID {
+		t.Fatalf("login success user = %s, want %s", repo.loginSuccessUser, accountID)
+	}
+	if repo.lastUsedIdentity != identityID {
+		t.Fatalf("last used identity = %s, want %s", repo.lastUsedIdentity, identityID)
+	}
+	if len(repo.loginAttempts) != 1 || !repo.loginAttempts[0].Success {
+		t.Fatalf("login attempts = %#v, want one success", repo.loginAttempts)
+	}
+	if len(repo.securityEvents) != 1 || repo.securityEvents[0].EventType != "auth.login_success" {
+		t.Fatalf("security events = %#v, want auth.login_success", repo.securityEvents)
+	}
+}
+
+func TestLoginEmailPasswordRejectsInvalidCredentials(t *testing.T) {
+	service := newTestService(&fakeRepository{}, nil, nil)
+
+	_, err := service.LoginEmailPassword(context.Background(), LoginEmailPasswordInput{
+		Email:    "missing@example.test",
+		Password: "correct-password",
+	})
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
+	}
+
+	accountID := uuid.Must(uuid.NewV7())
+	service = NewService(&fakeRepository{
+		existingAccount: &auth.UserAccount{
+			ID:           accountID,
+			PrimaryEmail: "owner@example.test",
+			Status:       auth.UserAccountStatusActive,
+		},
+		identity: &auth.AuthIdentity{
+			ID:            uuid.Must(uuid.NewV7()),
+			UserAccountID: accountID,
+			Email:         "owner@example.test",
+			PasswordHash:  "hashed-password",
+		},
+	}, fakeHasher{compareErr: errors.New("bcrypt mismatch")}, &fakeEmailSender{}, &fakeRateLimiter{allowed: true}, &fakeSessionStore{}, ServiceConfig{
+		SessionSecret: "test-session-secret",
+		SessionTTL:    24 * time.Hour,
+	})
+
+	_, err = service.LoginEmailPassword(context.Background(), LoginEmailPasswordInput{
+		Email:    "owner@example.test",
+		Password: "wrong-password",
+	})
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
+	}
+}
+
+func TestLoginEmailPasswordRequiresVerifiedActiveAccount(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	identityID := uuid.Must(uuid.NewV7())
+	service := NewService(&fakeRepository{
+		existingAccount: &auth.UserAccount{
+			ID:           accountID,
+			PrimaryEmail: "owner@example.test",
+			Status:       auth.UserAccountStatusPendingVerification,
+		},
+		identity: &auth.AuthIdentity{
+			ID:            identityID,
+			UserAccountID: accountID,
+			Email:         "owner@example.test",
+			PasswordHash:  "hashed-password",
+		},
+	}, fakeHasher{hash: "hashed-password"}, &fakeEmailSender{}, &fakeRateLimiter{allowed: true}, &fakeSessionStore{}, ServiceConfig{
+		SessionSecret: "test-session-secret",
+		SessionTTL:    24 * time.Hour,
+	})
+
+	_, err := service.LoginEmailPassword(context.Background(), LoginEmailPasswordInput{
+		Email:    "owner@example.test",
+		Password: "correct-password",
+	})
+	if !errors.Is(err, ErrEmailNotVerified) {
+		t.Fatalf("err = %v, want ErrEmailNotVerified", err)
+	}
+
+	verifiedAt := time.Now().UTC()
+	service = NewService(&fakeRepository{
+		existingAccount: &auth.UserAccount{
+			ID:           accountID,
+			PrimaryEmail: "owner@example.test",
+			Status:       auth.UserAccountStatusSuspended,
+		},
+		identity: &auth.AuthIdentity{
+			ID:              identityID,
+			UserAccountID:   accountID,
+			Email:           "owner@example.test",
+			EmailVerifiedAt: &verifiedAt,
+			PasswordHash:    "hashed-password",
+		},
+	}, fakeHasher{hash: "hashed-password"}, &fakeEmailSender{}, &fakeRateLimiter{allowed: true}, &fakeSessionStore{}, ServiceConfig{
+		SessionSecret: "test-session-secret",
+		SessionTTL:    24 * time.Hour,
+	})
+
+	_, err = service.LoginEmailPassword(context.Background(), LoginEmailPasswordInput{
+		Email:    "owner@example.test",
+		Password: "correct-password",
+	})
+	if !errors.Is(err, ErrAccountInactive) {
+		t.Fatalf("err = %v, want ErrAccountInactive", err)
 	}
 }

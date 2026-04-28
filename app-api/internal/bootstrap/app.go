@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"prasankit-api/internal/adapters/cache/redis/ratelimit"
+	"prasankit-api/internal/adapters/cache/redis/sessionstore"
 	"prasankit-api/internal/adapters/database/postgres/authrepo"
 	"prasankit-api/internal/adapters/email/smtpemail"
 	"prasankit-api/internal/config"
@@ -59,14 +60,22 @@ func InitializeApp(cfg config.Config) (*App, error) {
 		passwordhash.NewBcryptHasher(0),
 		smtpemail.NewSender(cfg.Mail),
 		ratelimit.New(redisClient),
+		sessionstore.New(redisClient),
 		authsvc.ServiceConfig{
 			VerificationBaseURL:  cfg.Mail.VerifyBaseURL,
 			VerificationTokenTTL: cfg.Mail.VerifyTokenTTL,
 			VerificationIPLimit:  cfg.Mail.VerifyIPLimit,
 			VerificationIPWindow: cfg.Mail.VerifyIPWindow,
+			SessionSecret:        cfg.Session.Secret,
+			SessionTTL:           cfg.Session.TTL,
 		},
 	)
-	authHandler := authhttp.NewHandler(authService)
+	authHandler := authhttp.NewHandler(authService, authhttp.CookieConfig{
+		Name:     cfg.Session.CookieName,
+		TTL:      cfg.Session.TTL,
+		Secure:   cfg.Cookie.Secure,
+		SameSite: cfg.Cookie.SameSite,
+	})
 
 	return &App{
 		config:      cfg,

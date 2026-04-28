@@ -28,6 +28,8 @@ type Repository interface {
 	MarkEmailVerificationTokenUsed(ctx context.Context, id uuid.UUID, usedAt time.Time) error
 	MarkAuthIdentityEmailVerified(ctx context.Context, id uuid.UUID, verifiedAt time.Time) error
 	ActivateUserAccount(ctx context.Context, id uuid.UUID, updatedAt time.Time) error
+	UpdateUserAccountLoginSuccess(ctx context.Context, id uuid.UUID, loggedInAt time.Time) error
+	MarkAuthIdentityLastUsed(ctx context.Context, id uuid.UUID, lastUsedAt time.Time) error
 	CreateAuthSession(ctx context.Context, session *AuthSession) error
 	CreateLoginAttempt(ctx context.Context, attempt *LoginAttempt) error
 	CreateSecurityEvent(ctx context.Context, event *SecurityEvent) error

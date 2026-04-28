@@ -7,7 +7,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/internal/modules/auth/authsvc"
@@ -26,6 +28,9 @@ type fakeRegistrar struct {
 	resendResult   *authsvc.ResendVerificationEmailResult
 	resendErr      error
 	resendInput    authsvc.ResendVerificationEmailInput
+	loginResult    *authsvc.LoginEmailPasswordResult
+	loginErr       error
+	loginInput     authsvc.LoginEmailPasswordInput
 }
 
 func (r *fakeRegistrar) RegisterEmailPassword(_ context.Context, input authsvc.RegisterEmailPasswordInput) (*authsvc.RegisterEmailPasswordResult, error) {
@@ -52,6 +57,14 @@ func (r *fakeRegistrar) ResendVerificationEmail(_ context.Context, input authsvc
 	return r.resendResult, nil
 }
 
+func (r *fakeRegistrar) LoginEmailPassword(_ context.Context, input authsvc.LoginEmailPasswordInput) (*authsvc.LoginEmailPasswordResult, error) {
+	r.loginInput = input
+	if r.loginErr != nil {
+		return nil, r.loginErr
+	}
+	return r.loginResult, nil
+}
+
 func TestRegisterEmailPassword(t *testing.T) {
 	accountID := uuid.Must(uuid.NewV7())
 	registrar := &fakeRegistrar{
@@ -64,7 +77,7 @@ func TestRegisterEmailPassword(t *testing.T) {
 			VerificationEmailSent: true,
 		},
 	}
-	app := newAuthTestApp(NewHandler(registrar))
+	app := newAuthTestApp(newTestHandler(registrar))
 
 	resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/register", map[string]string{
 		"email":    "owner@example.test",
@@ -104,7 +117,7 @@ func TestRegisterEmailPassword(t *testing.T) {
 }
 
 func TestRegisterEmailPasswordRejectsInvalidJSON(t *testing.T) {
-	app := newAuthTestApp(NewHandler(&fakeRegistrar{}))
+	app := newAuthTestApp(newTestHandler(&fakeRegistrar{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewBufferString("{"))
 	req.Header.Set("Content-Type", "application/json")
@@ -164,7 +177,7 @@ func TestRegisterEmailPasswordMapsServiceErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			app := newAuthTestApp(NewHandler(&fakeRegistrar{registerErr: tt.err}))
+			app := newAuthTestApp(newTestHandler(&fakeRegistrar{registerErr: tt.err}))
 
 			resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/register", map[string]string{
 				"email":    "owner@example.test",
@@ -188,7 +201,7 @@ func TestVerifyEmail(t *testing.T) {
 			},
 		},
 	}
-	app := newAuthTestApp(NewHandler(registrar))
+	app := newAuthTestApp(newTestHandler(registrar))
 
 	resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/verify-email", map[string]string{
 		"token": "verify-token",
@@ -218,7 +231,7 @@ func TestVerifyEmail(t *testing.T) {
 }
 
 func TestVerifyEmailRejectsInvalidJSON(t *testing.T) {
-	app := newAuthTestApp(NewHandler(&fakeRegistrar{}))
+	app := newAuthTestApp(newTestHandler(&fakeRegistrar{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/verify-email", bytes.NewBufferString("{"))
 	req.Header.Set("Content-Type", "application/json")
@@ -272,7 +285,7 @@ func TestVerifyEmailMapsServiceErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			app := newAuthTestApp(NewHandler(&fakeRegistrar{verifyErr: tt.err}))
+			app := newAuthTestApp(newTestHandler(&fakeRegistrar{verifyErr: tt.err}))
 
 			resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/verify-email", map[string]string{
 				"token": "verify-token",
@@ -290,7 +303,7 @@ func TestResendVerificationEmail(t *testing.T) {
 			VerificationEmailSent: true,
 		},
 	}
-	app := newAuthTestApp(NewHandler(registrar))
+	app := newAuthTestApp(newTestHandler(registrar))
 
 	resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/resend-verification-email", map[string]string{
 		"email": "owner@example.test",
@@ -315,7 +328,7 @@ func TestResendVerificationEmail(t *testing.T) {
 }
 
 func TestResendVerificationEmailRejectsInvalidJSON(t *testing.T) {
-	app := newAuthTestApp(NewHandler(&fakeRegistrar{}))
+	app := newAuthTestApp(newTestHandler(&fakeRegistrar{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/resend-verification-email", bytes.NewBufferString("{"))
 	req.Header.Set("Content-Type", "application/json")
@@ -363,7 +376,7 @@ func TestResendVerificationEmailMapsServiceErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			app := newAuthTestApp(NewHandler(&fakeRegistrar{resendErr: tt.err}))
+			app := newAuthTestApp(newTestHandler(&fakeRegistrar{resendErr: tt.err}))
 
 			resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/resend-verification-email", map[string]string{
 				"email": "owner@example.test",
@@ -373,6 +386,144 @@ func TestResendVerificationEmailMapsServiceErrors(t *testing.T) {
 			assertAuthError(t, resp, tt.wantStatus, tt.wantCode)
 		})
 	}
+}
+
+func TestLoginEmailPassword(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+	registrar := &fakeRegistrar{
+		loginResult: &authsvc.LoginEmailPasswordResult{
+			Account: auth.UserAccount{
+				ID:           accountID,
+				PrimaryEmail: "owner@example.test",
+				Status:       auth.UserAccountStatusActive,
+			},
+			SessionID:        uuid.Must(uuid.NewV7()),
+			SessionToken:     "raw-session-token",
+			SessionExpiresAt: expiresAt,
+		},
+	}
+	app := newAuthTestApp(newTestHandler(registrar))
+
+	resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"email":    "owner@example.test",
+		"password": "correct-password",
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if registrar.loginInput.Email != "owner@example.test" {
+		t.Fatalf("input.Email = %s, want owner@example.test", registrar.loginInput.Email)
+	}
+	if registrar.loginInput.Password != "correct-password" {
+		t.Fatal("password was not passed to service")
+	}
+
+	cookies := resp.Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies count = %d, want 1", len(cookies))
+	}
+	cookie := cookies[0]
+	if cookie.Name != "prasankit_session" {
+		t.Fatalf("cookie.Name = %s, want prasankit_session", cookie.Name)
+	}
+	if cookie.Value != "raw-session-token" {
+		t.Fatalf("cookie.Value = %s, want raw-session-token", cookie.Value)
+	}
+	if !cookie.HttpOnly {
+		t.Fatal("cookie.HttpOnly = false, want true")
+	}
+	if cookie.Path != "/" {
+		t.Fatalf("cookie.Path = %s, want /", cookie.Path)
+	}
+	if !strings.Contains(resp.Header.Get("Set-Cookie"), "SameSite=Lax") {
+		t.Fatalf("Set-Cookie missing SameSite=Lax: %s", resp.Header.Get("Set-Cookie"))
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	accountData := data["account"].(map[string]any)
+	if accountData["id"] != accountID.String() {
+		t.Fatalf("account.id = %v, want %s", accountData["id"], accountID)
+	}
+	if _, ok := data["session_token"]; ok {
+		t.Fatal("response must not expose raw session token")
+	}
+}
+
+func TestLoginEmailPasswordRejectsInvalidJSON(t *testing.T) {
+	app := newAuthTestApp(newTestHandler(&fakeRegistrar{}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString("{"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertAuthError(t, resp, http.StatusBadRequest, "INVALID_REQUEST")
+}
+
+func TestLoginEmailPasswordMapsServiceErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "invalid credentials",
+			err:        authsvc.ErrInvalidCredentials,
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "INVALID_CREDENTIALS",
+		},
+		{
+			name:       "email not verified",
+			err:        authsvc.ErrEmailNotVerified,
+			wantStatus: http.StatusForbidden,
+			wantCode:   "EMAIL_NOT_VERIFIED",
+		},
+		{
+			name:       "account inactive",
+			err:        authsvc.ErrAccountInactive,
+			wantStatus: http.StatusForbidden,
+			wantCode:   "ACCOUNT_INACTIVE",
+		},
+		{
+			name:       "unexpected error",
+			err:        errors.New("redis down"),
+			wantStatus: http.StatusInternalServerError,
+			wantCode:   "INTERNAL_SERVER_ERROR",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := newAuthTestApp(newTestHandler(&fakeRegistrar{loginErr: tt.err}))
+
+			resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/login", map[string]string{
+				"email":    "owner@example.test",
+				"password": "correct-password",
+			})
+			defer resp.Body.Close()
+
+			assertAuthError(t, resp, tt.wantStatus, tt.wantCode)
+		})
+	}
+}
+
+func newTestHandler(service AuthService) Handler {
+	return NewHandler(service, CookieConfig{
+		Name:     "prasankit_session",
+		TTL:      24 * time.Hour,
+		SameSite: "Lax",
+	})
 }
 
 func newAuthTestApp(handler Handler) *fiber.App {

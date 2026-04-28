@@ -91,6 +91,7 @@ Read these before writing code:
 - docs/18.1-auth-register-test-examples.md
 - docs/18.2-auth-verify-email-test-examples.md
 - docs/18.3-auth-resend-verification-email-test-examples.md
+- docs/18.4-auth-login-test-examples.md
 - docs/99-current-handoff.md
 
 ## Important Rule

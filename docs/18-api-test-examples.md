@@ -44,6 +44,7 @@ docker compose ps
 | POST | `/api/v1/auth/register` | Done, requires SMTP env, see `docs/18.1-auth-register-test-examples.md` |
 | POST | `/api/v1/auth/verify-email` | Done, see `docs/18.2-auth-verify-email-test-examples.md` |
 | POST | `/api/v1/auth/resend-verification-email` | Done, see `docs/18.3-auth-resend-verification-email-test-examples.md` |
+| POST | `/api/v1/auth/login` | Done, sets httpOnly cookie, see `docs/18.4-auth-login-test-examples.md` |
 
 ## Health
 
@@ -157,6 +158,7 @@ HTTP/1.1 503 Service Unavailable
 | `docs/18.1-auth-register-test-examples.md` | `POST /api/v1/auth/register` |
 | `docs/18.2-auth-verify-email-test-examples.md` | `POST /api/v1/auth/verify-email` |
 | `docs/18.3-auth-resend-verification-email-test-examples.md` | `POST /api/v1/auth/resend-verification-email` |
+| `docs/18.4-auth-login-test-examples.md` | `POST /api/v1/auth/login` |
 
 ## Not Done Yet
 
@@ -164,7 +166,6 @@ Auth routes ที่ยังเป็น placeholder:
 
 | Method | Endpoint | Current Response |
 | --- | --- | --- |
-| POST | `/api/v1/auth/login` | `501 NOT_IMPLEMENTED` |
 | POST | `/api/v1/auth/logout` | `501 NOT_IMPLEMENTED` |
 | POST | `/api/v1/auth/logout-all` | `501 NOT_IMPLEMENTED` |
 | POST | `/api/v1/auth/forgot-password` | `501 NOT_IMPLEMENTED` |

@@ -16,6 +16,8 @@ type Config struct {
 	Redis    RedisConfig
 	Storage  StorageConfig
 	Mail     MailConfig
+	Session  SessionConfig
+	Cookie   CookieConfig
 }
 
 type PostgresConfig struct {
@@ -59,6 +61,17 @@ type MailConfig struct {
 	VerifyEmailSubject string
 }
 
+type SessionConfig struct {
+	CookieName string
+	Secret     string
+	TTL        time.Duration
+}
+
+type CookieConfig struct {
+	Secure   bool
+	SameSite string
+}
+
 func Load() (Config, error) {
 	apiEnv, err := requiredEnv("API_ENV")
 	if err != nil {
@@ -90,6 +103,16 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	session, err := loadSessionConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
+	cookie, err := loadCookieConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		APIEnv:   apiEnv,
 		APIPort:  apiPort,
@@ -97,6 +120,8 @@ func Load() (Config, error) {
 		Redis:    redis,
 		Storage:  storage,
 		Mail:     mail,
+		Session:  session,
+		Cookie:   cookie,
 	}, nil
 }
 
@@ -343,6 +368,65 @@ func loadMailConfig() (MailConfig, error) {
 		VerifyIPLimit:      verifyIPLimit,
 		VerifyIPWindow:     verifyIPWindow,
 		VerifyEmailSubject: verifyEmailSubject,
+	}, nil
+}
+
+func loadSessionConfig() (SessionConfig, error) {
+	cookieName, err := requiredEnv("SESSION_COOKIE_NAME")
+	if err != nil {
+		return SessionConfig{}, err
+	}
+
+	secret, err := requiredEnv("SESSION_SECRET")
+	if err != nil {
+		return SessionConfig{}, err
+	}
+
+	ttlValue, err := requiredEnv("SESSION_TTL")
+	if err != nil {
+		return SessionConfig{}, err
+	}
+	ttl, err := time.ParseDuration(ttlValue)
+	if err != nil {
+		return SessionConfig{}, fmt.Errorf("invalid SESSION_TTL: %w", err)
+	}
+	if ttl <= 0 {
+		return SessionConfig{}, fmt.Errorf("invalid SESSION_TTL: must be greater than 0")
+	}
+
+	return SessionConfig{
+		CookieName: cookieName,
+		Secret:     secret,
+		TTL:        ttl,
+	}, nil
+}
+
+func loadCookieConfig() (CookieConfig, error) {
+	secureValue, err := requiredEnv("COOKIE_SECURE")
+	if err != nil {
+		return CookieConfig{}, err
+	}
+	secure, err := strconv.ParseBool(secureValue)
+	if err != nil {
+		return CookieConfig{}, fmt.Errorf("invalid COOKIE_SECURE: %w", err)
+	}
+
+	sameSite, err := requiredEnv("COOKIE_SAMESITE")
+	if err != nil {
+		return CookieConfig{}, err
+	}
+	switch sameSite {
+	case "Strict", "Lax", "None":
+	default:
+		return CookieConfig{}, fmt.Errorf("invalid COOKIE_SAMESITE: must be Strict, Lax, or None")
+	}
+	if sameSite == "None" && !secure {
+		return CookieConfig{}, fmt.Errorf("invalid COOKIE_SAMESITE: None requires COOKIE_SECURE=true")
+	}
+
+	return CookieConfig{
+		Secure:   secure,
+		SameSite: sameSite,
 	}, nil
 }
 

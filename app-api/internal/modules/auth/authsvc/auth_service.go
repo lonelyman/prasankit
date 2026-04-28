@@ -2,6 +2,9 @@ package authsvc
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net"
 	"net/mail"
@@ -10,7 +13,10 @@ import (
 	"time"
 
 	"prasankit-api/internal/modules/auth"
+	"prasankit-api/pkg/ids"
 	"prasankit-api/pkg/securetoken"
+
+	"github.com/google/uuid"
 )
 
 const minPasswordLength = 8
@@ -27,9 +33,15 @@ var ErrVerificationTokenRequired = errors.New("verification token is required")
 var ErrVerificationTokenInvalid = errors.New("verification token is invalid")
 var ErrVerificationTokenExpired = errors.New("verification token is expired")
 var ErrVerificationTokenAlreadyUsed = errors.New("verification token is already used")
+var ErrInvalidCredentials = errors.New("invalid credentials")
+var ErrEmailNotVerified = errors.New("email is not verified")
+var ErrAccountInactive = errors.New("account is inactive")
+var ErrSessionStoreRequired = errors.New("session store is required")
+var ErrSessionConfigInvalid = errors.New("session config is invalid")
 
 type PasswordHasher interface {
 	Hash(password string) (string, error)
+	Compare(hash string, password string) error
 }
 
 type EmailSender interface {
@@ -40,11 +52,26 @@ type RateLimiter interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error)
 }
 
+type SessionStore interface {
+	Save(ctx context.Context, session SessionRecord, ttl time.Duration) error
+	Delete(ctx context.Context, sessionKeyHash string) error
+}
+
+type SessionRecord struct {
+	SessionID      uuid.UUID `json:"session_id"`
+	UserAccountID  uuid.UUID `json:"user_account_id"`
+	SessionKeyHash string    `json:"session_key_hash"`
+	CreatedAt      time.Time `json:"created_at"`
+	ExpiresAt      time.Time `json:"expires_at"`
+}
+
 type ServiceConfig struct {
 	VerificationBaseURL  string
 	VerificationTokenTTL time.Duration
 	VerificationIPLimit  int
 	VerificationIPWindow time.Duration
+	SessionSecret        string
+	SessionTTL           time.Duration
 }
 
 type RegisterEmailPasswordInput struct {
@@ -79,20 +106,36 @@ type ResendVerificationEmailResult struct {
 	VerificationEmailSent bool
 }
 
+type LoginEmailPasswordInput struct {
+	Email     string
+	Password  string
+	IPAddress string
+	UserAgent string
+}
+
+type LoginEmailPasswordResult struct {
+	Account          auth.UserAccount
+	SessionID        uuid.UUID
+	SessionToken     string
+	SessionExpiresAt time.Time
+}
+
 type Service struct {
 	repository auth.Repository
 	hasher     PasswordHasher
 	email      EmailSender
 	limiter    RateLimiter
+	sessions   SessionStore
 	config     ServiceConfig
 }
 
-func NewService(repository auth.Repository, hasher PasswordHasher, email EmailSender, limiter RateLimiter, config ServiceConfig) *Service {
+func NewService(repository auth.Repository, hasher PasswordHasher, email EmailSender, limiter RateLimiter, sessions SessionStore, config ServiceConfig) *Service {
 	return &Service{
 		repository: repository,
 		hasher:     hasher,
 		email:      email,
 		limiter:    limiter,
+		sessions:   sessions,
 		config:     config,
 	}
 }
@@ -407,6 +450,145 @@ func (s *Service) ResendVerificationEmail(ctx context.Context, input ResendVerif
 	}, nil
 }
 
+func (s *Service) LoginEmailPassword(ctx context.Context, input LoginEmailPasswordInput) (*LoginEmailPasswordResult, error) {
+	email, err := normalizeEmail(input.Email)
+	if err != nil {
+		return nil, ErrInvalidCredentials
+	}
+	if strings.TrimSpace(input.Password) == "" {
+		return nil, ErrInvalidCredentials
+	}
+	if s.hasher == nil {
+		return nil, ErrPasswordHasherRequired
+	}
+	if s.sessions == nil {
+		return nil, ErrSessionStoreRequired
+	}
+	if err := s.validateSessionConfig(); err != nil {
+		return nil, err
+	}
+
+	account, err := s.repository.FindUserAccountByEmail(ctx, email)
+	if errors.Is(err, auth.ErrUserAccountNotFound) {
+		_ = s.recordLoginFailure(ctx, nil, email, input, "invalid_credentials")
+		return nil, ErrInvalidCredentials
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	identity, err := s.repository.FindAuthIdentityByEmail(ctx, email)
+	if errors.Is(err, auth.ErrAuthIdentityNotFound) {
+		_ = s.recordLoginFailure(ctx, &account.ID, email, input, "invalid_credentials")
+		return nil, ErrInvalidCredentials
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if identity.PasswordHash == "" || s.hasher.Compare(identity.PasswordHash, input.Password) != nil {
+		_ = s.recordLoginFailure(ctx, &account.ID, email, input, "invalid_credentials")
+		return nil, ErrInvalidCredentials
+	}
+
+	if identity.EmailVerifiedAt == nil || account.Status == auth.UserAccountStatusPendingVerification {
+		_ = s.recordLoginFailure(ctx, &account.ID, email, input, "email_not_verified")
+		return nil, ErrEmailNotVerified
+	}
+
+	if account.Status != auth.UserAccountStatusActive {
+		_ = s.recordLoginFailure(ctx, &account.ID, email, input, "account_inactive")
+		return nil, ErrAccountInactive
+	}
+
+	sessionID, err := ids.NewUUID()
+	if err != nil {
+		return nil, err
+	}
+	sessionToken, _, err := securetoken.New()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	expiresAt := now.Add(s.config.SessionTTL)
+	sessionKeyHash := hashSessionKey(sessionToken, s.config.SessionSecret)
+	session := auth.AuthSession{
+		ID:             sessionID,
+		UserAccountID:  account.ID,
+		SessionKeyHash: sessionKeyHash,
+		IPAddress:      input.IPAddress,
+		UserAgent:      input.UserAgent,
+		CreatedAt:      now,
+		ExpiresAt:      expiresAt,
+		MetadataJSON: map[string]any{
+			"identity_id": identity.ID.String(),
+			"provider":    string(identity.Provider),
+		},
+	}
+
+	sessionRecord := SessionRecord{
+		SessionID:      sessionID,
+		UserAccountID:  account.ID,
+		SessionKeyHash: sessionKeyHash,
+		CreatedAt:      now,
+		ExpiresAt:      expiresAt,
+	}
+	if err := s.sessions.Save(ctx, sessionRecord, s.config.SessionTTL); err != nil {
+		return nil, err
+	}
+
+	err = s.repository.WithinTransaction(ctx, func(ctx context.Context, repo auth.Repository) error {
+		if err := repo.CreateAuthSession(ctx, &session); err != nil {
+			return err
+		}
+		if err := repo.CreateLoginAttempt(ctx, &auth.LoginAttempt{
+			UserAccountID: &account.ID,
+			Email:         email,
+			Success:       true,
+			IPAddress:     input.IPAddress,
+			UserAgent:     input.UserAgent,
+			CreatedAt:     now,
+		}); err != nil {
+			return err
+		}
+		if err := repo.UpdateUserAccountLoginSuccess(ctx, account.ID, now); err != nil {
+			return err
+		}
+		if err := repo.MarkAuthIdentityLastUsed(ctx, identity.ID, now); err != nil {
+			return err
+		}
+		return repo.CreateSecurityEvent(ctx, &auth.SecurityEvent{
+			UserAccountID: &account.ID,
+			EventType:     "auth.login_success",
+			Severity:      auth.SecurityEventSeverityInfo,
+			IPAddress:     input.IPAddress,
+			UserAgent:     input.UserAgent,
+			MetadataJSON: map[string]any{
+				"identity_id": identity.ID.String(),
+				"session_id":  sessionID.String(),
+			},
+			CreatedAt: now,
+		})
+	})
+	if err != nil {
+		_ = s.sessions.Delete(ctx, sessionKeyHash)
+		return nil, err
+	}
+
+	account.LastLoginAt = &now
+	account.FailedLoginCount = 0
+	account.LockedUntil = nil
+	account.UpdatedAt = now
+
+	return &LoginEmailPasswordResult{
+		Account:          *account,
+		SessionID:        sessionID,
+		SessionToken:     sessionToken,
+		SessionExpiresAt: expiresAt,
+	}, nil
+}
+
 func (s *Service) validateVerificationConfig() error {
 	if s.config.VerificationBaseURL == "" {
 		return ErrVerificationConfigInvalid
@@ -421,6 +603,41 @@ func (s *Service) validateVerificationConfig() error {
 		return ErrVerificationConfigInvalid
 	}
 	return nil
+}
+
+func (s *Service) validateSessionConfig() error {
+	if s.config.SessionSecret == "" {
+		return ErrSessionConfigInvalid
+	}
+	if s.config.SessionTTL <= 0 {
+		return ErrSessionConfigInvalid
+	}
+	return nil
+}
+
+func (s *Service) recordLoginFailure(ctx context.Context, accountID *uuid.UUID, email string, input LoginEmailPasswordInput, reason string) error {
+	if err := s.repository.CreateLoginAttempt(ctx, &auth.LoginAttempt{
+		UserAccountID: accountID,
+		Email:         email,
+		Success:       false,
+		FailureReason: reason,
+		IPAddress:     input.IPAddress,
+		UserAgent:     input.UserAgent,
+	}); err != nil {
+		return err
+	}
+
+	return s.repository.CreateSecurityEvent(ctx, &auth.SecurityEvent{
+		UserAccountID: accountID,
+		EventType:     "auth.login_failed",
+		Severity:      auth.SecurityEventSeverityWarning,
+		IPAddress:     input.IPAddress,
+		UserAgent:     input.UserAgent,
+		MetadataJSON: map[string]any{
+			"reason": reason,
+			"email":  email,
+		},
+	})
 }
 
 func (s *Service) buildVerificationURL(token string) (string, error) {
@@ -443,6 +660,12 @@ func verificationRateLimitKey(ipAddress string) string {
 
 func verificationEmailRateLimitKey(email string) string {
 	return "rate:auth:verify_email:email:" + strings.ToLower(strings.TrimSpace(email))
+}
+
+func hashSessionKey(token string, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(token))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func normalizeEmail(value string) (string, error) {
