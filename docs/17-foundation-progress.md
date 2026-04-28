@@ -187,7 +187,6 @@ Verified:
 - Auth register route เริ่มใช้งานจริงแล้ว:
   - `POST /api/v1/auth/register`
 - Auth routes ที่เหลือยังตอบ `501 NOT_IMPLEMENTED` ตามที่ตั้งใจ:
-  - `POST /api/v1/auth/logout`
   - `POST /api/v1/auth/logout-all`
   - `POST /api/v1/auth/forgot-password`
   - `POST /api/v1/auth/reset-password`
@@ -199,6 +198,8 @@ Verified:
   - `CreateLoginAttempt` โดยสร้าง primary key เป็น UUID v7 จาก Go application และ set `created_at` ใน app หาก caller ไม่ส่งมา
   - `CreateSecurityEvent` โดยสร้าง primary key เป็น UUID v7 จาก Go application และใช้ `pkg/dbtypes.JSONB` สำหรับ `metadata_json`
   - `FindUserAccountByID`
+  - `FindActiveAuthSessionByHash`
+  - `RevokeAuthSessionByHash`
 - Auth repository integration test ใช้ `PRASANKIT_TEST_DB_DSN` และผ่านกับ Docker PostgreSQL แล้ว
 - ทดสอบ fresh install migration กับ database ใหม่ `prasankit_identity_install_check` แล้วผ่านถึง version 4
 - ตรวจ fresh install schema แล้ว auth primary key defaults เป็น `<null>` ทั้งหมด
@@ -231,6 +232,7 @@ Verified:
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/resend-verification-email` แล้ว โดย response เป็น generic success ใต้ root key `data`
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/login` แล้ว โดย set httpOnly cookie และ response อยู่ใต้ root key `data`
 - เพิ่ม HTTP handler สำหรับ `GET /api/v1/auth/me` แล้ว โดยตรวจ Redis session cookie และ response อยู่ใต้ root key `data`
+- เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/logout` แล้ว โดย revoke current session, ลบ Redis session และ clear cookie
 - เพิ่ม Redis session store adapter แล้ว เพื่อเก็บ session record จาก login
 - เพิ่ม Redis session store read/delete แล้ว เพื่อใช้ validate session และ cleanup session หมดอายุ
 - เพิ่ม Auth service flow สำหรับ email/password login แล้ว:
@@ -251,6 +253,13 @@ Verified:
   - reject missing/invalid/expired session
   - โหลด `user_accounts` จาก database
   - require account status `active`
+- เพิ่ม Auth service flow สำหรับ logout current session แล้ว:
+  - require session token จาก cookie
+  - hash session token ด้วย `SESSION_SECRET`
+  - อ่าน session record จาก Redis
+  - update `auth_sessions.status = revoked`
+  - เขียน `security_events` สำหรับ `auth.logout`
+  - ลบ session record จาก Redis
 - เพิ่ม test สำหรับ Auth register handler แล้ว
 - เพิ่ม test สำหรับ Auth verify-email handler แล้ว
 - เพิ่ม test สำหรับ Auth resend-verification-email handler แล้ว
@@ -266,6 +275,7 @@ Verified:
 - เพิ่ม `docs/18.3-auth-resend-verification-email-test-examples.md` สำหรับตัวอย่างทดสอบ resend verification email แล้ว
 - เพิ่ม `docs/18.4-auth-login-test-examples.md` สำหรับตัวอย่างทดสอบ login แล้ว
 - เพิ่ม `docs/18.5-auth-me-test-examples.md` สำหรับตัวอย่างทดสอบ current session/me แล้ว
+- เพิ่ม `docs/18.6-auth-logout-test-examples.md` สำหรับตัวอย่างทดสอบ logout แล้ว
 
 Known note:
 
@@ -292,7 +302,7 @@ Composition note:
 - Completed API documentation strategy: เมื่อ endpoint ไหน implement เสร็จจริง ต้องเพิ่ม request/success/error examples ใน `docs/18-api-test-examples.md`
 - Fresh server bootstrap order: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
-- Login/session backend และ `GET /api/v1/auth/me` เสร็จแล้ว แต่ logout และ session revoke ยังไม่เสร็จ
+- Login/session backend, `GET /api/v1/auth/me` และ `POST /api/v1/auth/logout` เสร็จแล้ว แต่ logout-all ยังไม่เสร็จ
 
 หมายเหตุ:
 
@@ -300,12 +310,12 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปเริ่ม logout/session revoke:
+ขั้นถัดไปเริ่ม logout-all/session revoke ทั้ง account:
 
-- `POST /api/v1/auth/logout`
-- revoke Redis session
-- update `auth_sessions.status = revoked`
-- clear httpOnly cookie
+- `POST /api/v1/auth/logout-all`
+- revoke Redis sessions ของ account เดียวกัน
+- update `auth_sessions.status = revoked` ทุก session active ของ account
+- clear current httpOnly cookie
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -330,4 +340,6 @@ PostgreSQL connection done
 -> Auth session store: Redis session record implemented
 -> Auth service: CurrentAccount/session validation implemented
 -> Auth HTTP: GET /api/v1/auth/me wired
+-> Auth service: LogoutCurrentSession implemented
+-> Auth HTTP: POST /api/v1/auth/logout wired
 ```

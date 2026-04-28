@@ -393,6 +393,23 @@ func TestRepositoryIntegration(t *testing.T) {
 		if stored.Source != "integration_test" {
 			t.Fatalf("stored source = %s, want integration_test", stored.Source)
 		}
+
+		activeSession, err := repo.FindActiveAuthSessionByHash(ctx, session.SessionKeyHash)
+		if err != nil {
+			t.Fatalf("find active auth session: %v", err)
+		}
+		if activeSession.ID != session.ID {
+			t.Fatalf("active session id = %s, want %s", activeSession.ID, session.ID)
+		}
+
+		if err := repo.RevokeAuthSessionByHash(ctx, session.SessionKeyHash, time.Now().UTC(), "integration_test_logout"); err != nil {
+			t.Fatalf("revoke auth session: %v", err)
+		}
+
+		_, err = repo.FindActiveAuthSessionByHash(ctx, session.SessionKeyHash)
+		if !errors.Is(err, auth.ErrAuthSessionNotFound) {
+			t.Fatalf("err = %v, want ErrAuthSessionNotFound", err)
+		}
 	})
 
 	t.Run("create auth session requires expires_at", func(t *testing.T) {

@@ -34,6 +34,9 @@ type fakeRegistrar struct {
 	currentResult  *authsvc.CurrentAccountResult
 	currentErr     error
 	currentInput   authsvc.CurrentAccountInput
+	logoutResult   *authsvc.LogoutCurrentSessionResult
+	logoutErr      error
+	logoutInput    authsvc.LogoutCurrentSessionInput
 }
 
 func (r *fakeRegistrar) RegisterEmailPassword(_ context.Context, input authsvc.RegisterEmailPasswordInput) (*authsvc.RegisterEmailPasswordResult, error) {
@@ -74,6 +77,14 @@ func (r *fakeRegistrar) CurrentAccount(_ context.Context, input authsvc.CurrentA
 		return nil, r.currentErr
 	}
 	return r.currentResult, nil
+}
+
+func (r *fakeRegistrar) LogoutCurrentSession(_ context.Context, input authsvc.LogoutCurrentSessionInput) (*authsvc.LogoutCurrentSessionResult, error) {
+	r.logoutInput = input
+	if r.logoutErr != nil {
+		return nil, r.logoutErr
+	}
+	return r.logoutResult, nil
 }
 
 func TestRegisterEmailPassword(t *testing.T) {
@@ -618,6 +629,101 @@ func TestMeMapsSessionErrors(t *testing.T) {
 			app := newAuthTestApp(newTestHandler(&fakeRegistrar{currentErr: tt.err}))
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+			req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			assertAuthError(t, resp, tt.wantStatus, tt.wantCode)
+		})
+	}
+}
+
+func TestLogout(t *testing.T) {
+	registrar := &fakeRegistrar{
+		logoutResult: &authsvc.LogoutCurrentSessionResult{
+			Status: "ok",
+		},
+	}
+	app := newAuthTestApp(newTestHandler(registrar))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if registrar.logoutInput.SessionToken != "raw-session-token" {
+		t.Fatalf("session token = %s, want raw-session-token", registrar.logoutInput.SessionToken)
+	}
+
+	cookies := resp.Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies count = %d, want 1", len(cookies))
+	}
+	cookie := cookies[0]
+	if cookie.Name != "prasankit_session" {
+		t.Fatalf("cookie.Name = %s, want prasankit_session", cookie.Name)
+	}
+	if cookie.Value != "" {
+		t.Fatalf("cookie.Value = %s, want empty", cookie.Value)
+	}
+	if cookie.MaxAge != -1 {
+		t.Fatalf("cookie.MaxAge = %d, want -1", cookie.MaxAge)
+	}
+	if !cookie.HttpOnly {
+		t.Fatal("cookie.HttpOnly = false, want true")
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	if data["status"] != "ok" {
+		t.Fatalf("data.status = %v, want ok", data["status"])
+	}
+}
+
+func TestLogoutMapsSessionErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "session required",
+			err:        authsvc.ErrSessionTokenRequired,
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "AUTH_SESSION_REQUIRED",
+		},
+		{
+			name:       "session invalid",
+			err:        authsvc.ErrSessionInvalid,
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "AUTH_SESSION_INVALID",
+		},
+		{
+			name:       "unexpected error",
+			err:        errors.New("database down"),
+			wantStatus: http.StatusInternalServerError,
+			wantCode:   "INTERNAL_SERVER_ERROR",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := newAuthTestApp(newTestHandler(&fakeRegistrar{logoutErr: tt.err}))
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
 			req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
 			resp, err := app.Test(req)
 			if err != nil {

@@ -11,6 +11,7 @@ import (
 var ErrUserAccountNotFound = errors.New("user account not found")
 var ErrAuthIdentityNotFound = errors.New("auth identity not found")
 var ErrEmailVerificationTokenNotFound = errors.New("email verification token not found")
+var ErrAuthSessionNotFound = errors.New("auth session not found")
 var ErrAuthSessionExpiresAtRequired = errors.New("auth session expires_at is required")
 var ErrEmailVerificationTokenExpiresAtRequired = errors.New("email verification token expires_at is required")
 var ErrEmailAlreadyRegistered = errors.New("email is already registered")
@@ -31,7 +32,9 @@ type Repository interface {
 	ActivateUserAccount(ctx context.Context, id uuid.UUID, updatedAt time.Time) error
 	UpdateUserAccountLoginSuccess(ctx context.Context, id uuid.UUID, loggedInAt time.Time) error
 	MarkAuthIdentityLastUsed(ctx context.Context, id uuid.UUID, lastUsedAt time.Time) error
+	FindActiveAuthSessionByHash(ctx context.Context, sessionKeyHash string) (*AuthSession, error)
 	CreateAuthSession(ctx context.Context, session *AuthSession) error
+	RevokeAuthSessionByHash(ctx context.Context, sessionKeyHash string, revokedAt time.Time, reason string) error
 	CreateLoginAttempt(ctx context.Context, attempt *LoginAttempt) error
 	CreateSecurityEvent(ctx context.Context, event *SecurityEvent) error
 }

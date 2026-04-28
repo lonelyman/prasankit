@@ -46,6 +46,9 @@ type fakeRepository struct {
 	loginSuccessUser  uuid.UUID
 	lastUsedIdentity  uuid.UUID
 	authSession       *auth.AuthSession
+	activeSession     *auth.AuthSession
+	revokedSession    string
+	revokeReason      string
 	loginAttempts     []*auth.LoginAttempt
 	securityEvent     *auth.SecurityEvent
 	securityEvents    []*auth.SecurityEvent
@@ -169,8 +172,28 @@ func (r *fakeRepository) MarkAuthIdentityLastUsed(_ context.Context, id uuid.UUI
 	return nil
 }
 
+func (r *fakeRepository) FindActiveAuthSessionByHash(_ context.Context, sessionKeyHash string) (*auth.AuthSession, error) {
+	if r.activeSession != nil && r.activeSession.SessionKeyHash == sessionKeyHash && r.activeSession.Status == auth.AuthSessionStatusActive {
+		return r.activeSession, nil
+	}
+	return nil, auth.ErrAuthSessionNotFound
+}
+
 func (r *fakeRepository) CreateAuthSession(_ context.Context, session *auth.AuthSession) error {
 	r.authSession = session
+	r.activeSession = session
+	return nil
+}
+
+func (r *fakeRepository) RevokeAuthSessionByHash(_ context.Context, sessionKeyHash string, revokedAt time.Time, reason string) error {
+	if r.activeSession == nil || r.activeSession.SessionKeyHash != sessionKeyHash || r.activeSession.Status != auth.AuthSessionStatusActive {
+		return auth.ErrAuthSessionNotFound
+	}
+	r.revokedSession = sessionKeyHash
+	r.revokeReason = reason
+	r.activeSession.Status = auth.AuthSessionStatusRevoked
+	r.activeSession.RevokedAt = &revokedAt
+	r.activeSession.RevokedReason = reason
 	return nil
 }
 
@@ -880,7 +903,17 @@ func TestCurrentAccount(t *testing.T) {
 			ExpiresAt:      time.Now().UTC().Add(24 * time.Hour),
 		},
 	}
-	service := NewService(&fakeRepository{existingAccount: account}, fakeHasher{}, &fakeEmailSender{}, &fakeRateLimiter{}, sessions, ServiceConfig{
+	service := NewService(&fakeRepository{
+		existingAccount: account,
+		activeSession: &auth.AuthSession{
+			ID:             sessions.session.SessionID,
+			UserAccountID:  accountID,
+			SessionKeyHash: sessionKeyHash,
+			Status:         auth.AuthSessionStatusActive,
+			CreatedAt:      sessions.session.CreatedAt,
+			ExpiresAt:      sessions.session.ExpiresAt,
+		},
+	}, fakeHasher{}, &fakeEmailSender{}, &fakeRateLimiter{}, sessions, ServiceConfig{
 		SessionSecret: "test-session-secret",
 		SessionTTL:    24 * time.Hour,
 	})
@@ -963,6 +996,14 @@ func TestCurrentAccountRequiresActiveAccount(t *testing.T) {
 			PrimaryEmail: "owner@example.test",
 			Status:       auth.UserAccountStatusSuspended,
 		},
+		activeSession: &auth.AuthSession{
+			ID:             sessions.session.SessionID,
+			UserAccountID:  accountID,
+			SessionKeyHash: sessionKeyHash,
+			Status:         auth.AuthSessionStatusActive,
+			CreatedAt:      sessions.session.CreatedAt,
+			ExpiresAt:      sessions.session.ExpiresAt,
+		},
 	}, fakeHasher{}, &fakeEmailSender{}, &fakeRateLimiter{}, sessions, ServiceConfig{
 		SessionSecret: "test-session-secret",
 		SessionTTL:    24 * time.Hour,
@@ -971,5 +1012,77 @@ func TestCurrentAccountRequiresActiveAccount(t *testing.T) {
 	_, err := service.CurrentAccount(context.Background(), CurrentAccountInput{SessionToken: sessionToken})
 	if !errors.Is(err, ErrAccountInactive) {
 		t.Fatalf("err = %v, want ErrAccountInactive", err)
+	}
+}
+
+func TestLogoutCurrentSession(t *testing.T) {
+	sessionToken := "raw-session-token"
+	sessionKeyHash := hashSessionKey(sessionToken, "test-session-secret")
+	accountID := uuid.Must(uuid.NewV7())
+	sessionID := uuid.Must(uuid.NewV7())
+	sessions := &fakeSessionStore{
+		session: SessionRecord{
+			SessionID:      sessionID,
+			UserAccountID:  accountID,
+			SessionKeyHash: sessionKeyHash,
+			CreatedAt:      time.Now().UTC().Add(-time.Minute),
+			ExpiresAt:      time.Now().UTC().Add(24 * time.Hour),
+		},
+	}
+	repo := &fakeRepository{
+		activeSession: &auth.AuthSession{
+			ID:             sessionID,
+			UserAccountID:  accountID,
+			SessionKeyHash: sessionKeyHash,
+			Status:         auth.AuthSessionStatusActive,
+			CreatedAt:      sessions.session.CreatedAt,
+			ExpiresAt:      sessions.session.ExpiresAt,
+		},
+	}
+	service := NewService(repo, fakeHasher{}, &fakeEmailSender{}, &fakeRateLimiter{}, sessions, ServiceConfig{
+		SessionSecret: "test-session-secret",
+		SessionTTL:    24 * time.Hour,
+	})
+
+	result, err := service.LogoutCurrentSession(context.Background(), LogoutCurrentSessionInput{
+		SessionToken: sessionToken,
+		IPAddress:    "127.0.0.1",
+		UserAgent:    "service unit test",
+	})
+	if err != nil {
+		t.Fatalf("LogoutCurrentSession: %v", err)
+	}
+	if result.Status != "ok" {
+		t.Fatalf("status = %s, want ok", result.Status)
+	}
+	if repo.revokedSession != sessionKeyHash {
+		t.Fatalf("revoked session = %s, want %s", repo.revokedSession, sessionKeyHash)
+	}
+	if repo.revokeReason != "user_logout" {
+		t.Fatalf("revoke reason = %s, want user_logout", repo.revokeReason)
+	}
+	if sessions.deletedHash != sessionKeyHash {
+		t.Fatalf("deleted hash = %s, want %s", sessions.deletedHash, sessionKeyHash)
+	}
+	if len(repo.securityEvents) != 1 || repo.securityEvents[0].EventType != "auth.logout" {
+		t.Fatalf("security events = %#v, want auth.logout", repo.securityEvents)
+	}
+}
+
+func TestLogoutCurrentSessionRejectsMissingAndInvalidSession(t *testing.T) {
+	service := newTestService(&fakeRepository{}, nil, nil)
+
+	_, err := service.LogoutCurrentSession(context.Background(), LogoutCurrentSessionInput{})
+	if !errors.Is(err, ErrSessionTokenRequired) {
+		t.Fatalf("err = %v, want ErrSessionTokenRequired", err)
+	}
+
+	service = NewService(&fakeRepository{}, fakeHasher{}, &fakeEmailSender{}, &fakeRateLimiter{}, &fakeSessionStore{}, ServiceConfig{
+		SessionSecret: "test-session-secret",
+		SessionTTL:    24 * time.Hour,
+	})
+	_, err = service.LogoutCurrentSession(context.Background(), LogoutCurrentSessionInput{SessionToken: "missing-session"})
+	if !errors.Is(err, ErrSessionInvalid) {
+		t.Fatalf("err = %v, want ErrSessionInvalid", err)
 	}
 }

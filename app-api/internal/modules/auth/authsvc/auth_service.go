@@ -136,6 +136,16 @@ type CurrentAccountResult struct {
 	Session SessionRecord
 }
 
+type LogoutCurrentSessionInput struct {
+	SessionToken string
+	IPAddress    string
+	UserAgent    string
+}
+
+type LogoutCurrentSessionResult struct {
+	Status string
+}
+
 type Service struct {
 	repository auth.Repository
 	hasher     PasswordHasher
@@ -632,6 +642,23 @@ func (s *Service) CurrentAccount(ctx context.Context, input CurrentAccountInput)
 		return nil, ErrSessionExpired
 	}
 
+	dbSession, err := s.repository.FindActiveAuthSessionByHash(ctx, session.SessionKeyHash)
+	if errors.Is(err, auth.ErrAuthSessionNotFound) {
+		_ = s.sessions.Delete(ctx, session.SessionKeyHash)
+		return nil, ErrSessionInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+	if dbSession.ExpiresAt.Before(now) || dbSession.ExpiresAt.Equal(now) {
+		_ = s.sessions.Delete(ctx, session.SessionKeyHash)
+		return nil, ErrSessionExpired
+	}
+	if dbSession.UserAccountID != session.UserAccountID || dbSession.ID != session.SessionID {
+		_ = s.sessions.Delete(ctx, session.SessionKeyHash)
+		return nil, ErrSessionInvalid
+	}
+
 	account, err := s.repository.FindUserAccountByID(ctx, session.UserAccountID)
 	if errors.Is(err, auth.ErrUserAccountNotFound) {
 		_ = s.sessions.Delete(ctx, session.SessionKeyHash)
@@ -647,6 +674,60 @@ func (s *Service) CurrentAccount(ctx context.Context, input CurrentAccountInput)
 	return &CurrentAccountResult{
 		Account: *account,
 		Session: *session,
+	}, nil
+}
+
+func (s *Service) LogoutCurrentSession(ctx context.Context, input LogoutCurrentSessionInput) (*LogoutCurrentSessionResult, error) {
+	sessionToken := strings.TrimSpace(input.SessionToken)
+	if sessionToken == "" {
+		return nil, ErrSessionTokenRequired
+	}
+	if s.sessions == nil {
+		return nil, ErrSessionStoreRequired
+	}
+	if err := s.validateSessionConfig(); err != nil {
+		return nil, err
+	}
+
+	sessionKeyHash := hashSessionKey(sessionToken, s.config.SessionSecret)
+	session, err := s.sessions.Get(ctx, sessionKeyHash)
+	if errors.Is(err, ErrSessionNotFound) {
+		return nil, ErrSessionInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	err = s.repository.WithinTransaction(ctx, func(ctx context.Context, repo auth.Repository) error {
+		if err := repo.RevokeAuthSessionByHash(ctx, session.SessionKeyHash, now, "user_logout"); err != nil {
+			if errors.Is(err, auth.ErrAuthSessionNotFound) {
+				return ErrSessionInvalid
+			}
+			return err
+		}
+		return repo.CreateSecurityEvent(ctx, &auth.SecurityEvent{
+			UserAccountID: &session.UserAccountID,
+			EventType:     "auth.logout",
+			Severity:      auth.SecurityEventSeverityInfo,
+			IPAddress:     input.IPAddress,
+			UserAgent:     input.UserAgent,
+			MetadataJSON: map[string]any{
+				"session_id": session.SessionID.String(),
+			},
+			CreatedAt: now,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.sessions.Delete(ctx, session.SessionKeyHash); err != nil {
+		return nil, err
+	}
+
+	return &LogoutCurrentSessionResult{
+		Status: "ok",
 	}, nil
 }
 

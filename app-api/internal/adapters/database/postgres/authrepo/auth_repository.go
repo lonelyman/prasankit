@@ -440,6 +440,23 @@ func (r *Repository) MarkAuthIdentityLastUsed(ctx context.Context, id uuid.UUID,
 	return nil
 }
 
+func (r *Repository) FindActiveAuthSessionByHash(ctx context.Context, sessionKeyHash string) (*auth.AuthSession, error) {
+	var row authSessionRow
+	err := r.db.WithContext(ctx).
+		Where("session_key_hash = ?", sessionKeyHash).
+		Where("status = ?", string(auth.AuthSessionStatusActive)).
+		First(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, auth.ErrAuthSessionNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return row.toDomain(), nil
+}
+
 func (r *Repository) CreateAuthSession(ctx context.Context, session *auth.AuthSession) error {
 	if err := ensureUUID(&session.ID); err != nil {
 		return err
@@ -479,6 +496,25 @@ func (r *Repository) CreateAuthSession(ctx context.Context, session *auth.AuthSe
 
 	session.ID = row.ID
 	session.CreatedAt = row.CreatedAt
+	return nil
+}
+
+func (r *Repository) RevokeAuthSessionByHash(ctx context.Context, sessionKeyHash string, revokedAt time.Time, reason string) error {
+	result := r.db.WithContext(ctx).
+		Model(&authSessionRow{}).
+		Where("session_key_hash = ?", sessionKeyHash).
+		Where("status = ?", string(auth.AuthSessionStatusActive)).
+		Updates(map[string]any{
+			"status":         string(auth.AuthSessionStatusRevoked),
+			"revoked_at":     revokedAt,
+			"revoked_reason": reason,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return auth.ErrAuthSessionNotFound
+	}
 	return nil
 }
 
@@ -624,5 +660,27 @@ func (r emailVerificationTokenRow) toDomain() *auth.EmailVerificationToken {
 		CreatedAt:      r.CreatedAt,
 		ExpiresAt:      r.ExpiresAt,
 		UsedAt:         r.UsedAt,
+	}
+}
+
+func (r authSessionRow) toDomain() *auth.AuthSession {
+	ipAddress := ""
+	if r.IPAddress != nil {
+		ipAddress = *r.IPAddress
+	}
+	return &auth.AuthSession{
+		ID:             r.ID,
+		UserAccountID:  r.UserAccountID,
+		SessionKeyHash: r.SessionKeyHash,
+		Status:         auth.AuthSessionStatus(r.Status),
+		IPAddress:      ipAddress,
+		UserAgent:      r.UserAgent,
+		DeviceLabel:    r.DeviceLabel,
+		CreatedAt:      r.CreatedAt,
+		LastSeenAt:     r.LastSeenAt,
+		ExpiresAt:      r.ExpiresAt,
+		RevokedAt:      r.RevokedAt,
+		RevokedReason:  r.RevokedReason,
+		MetadataJSON:   map[string]any(r.MetadataJSON),
 	}
 }

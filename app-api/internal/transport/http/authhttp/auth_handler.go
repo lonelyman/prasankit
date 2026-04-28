@@ -18,6 +18,7 @@ type AuthService interface {
 	ResendVerificationEmail(ctx context.Context, input authsvc.ResendVerificationEmailInput) (*authsvc.ResendVerificationEmailResult, error)
 	LoginEmailPassword(ctx context.Context, input authsvc.LoginEmailPasswordInput) (*authsvc.LoginEmailPasswordResult, error)
 	CurrentAccount(ctx context.Context, input authsvc.CurrentAccountInput) (*authsvc.CurrentAccountResult, error)
+	LogoutCurrentSession(ctx context.Context, input authsvc.LogoutCurrentSessionInput) (*authsvc.LogoutCurrentSessionResult, error)
 }
 
 const accountLocalKey = "auth.account"
@@ -74,6 +75,10 @@ type currentAccountResponse struct {
 	Account accountResponse `json:"account"`
 }
 
+type logoutResponse struct {
+	Status string `json:"status"`
+}
+
 type accountResponse struct {
 	ID           string `json:"id"`
 	PrimaryEmail string `json:"primary_email"`
@@ -93,7 +98,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	auth.Post("/verify-email", h.VerifyEmail)
 	auth.Post("/resend-verification-email", h.ResendVerificationEmail)
 	auth.Post("/login", h.LoginEmailPassword)
-	auth.Post("/logout", h.NotImplemented)
+	auth.Post("/logout", h.Logout)
 	auth.Post("/logout-all", h.NotImplemented)
 	auth.Post("/forgot-password", h.NotImplemented)
 	auth.Post("/reset-password", h.NotImplemented)
@@ -229,6 +234,27 @@ func (h Handler) Me(c fiber.Ctx) error {
 	})
 }
 
+func (h Handler) Logout(c fiber.Ctx) error {
+	if h.auth == nil {
+		return h.NotImplemented(c)
+	}
+
+	_, err := h.auth.LogoutCurrentSession(c.Context(), authsvc.LogoutCurrentSessionInput{
+		SessionToken: c.Cookies(h.cookieName()),
+		IPAddress:    c.IP(),
+		UserAgent:    c.UserAgent(),
+	})
+	if err != nil {
+		return renderSessionError(c, err)
+	}
+
+	h.clearSessionCookie(c)
+
+	return presenter.RenderItem(c, logoutResponse{
+		Status: "ok",
+	})
+}
+
 func (h Handler) requireSession(c fiber.Ctx) error {
 	if h.auth == nil {
 		return h.NotImplemented(c)
@@ -275,6 +301,24 @@ func (h Handler) setSessionCookie(c fiber.Ctx, value string, expiresAt time.Time
 		Path:     "/",
 		Expires:  expiresAt,
 		MaxAge:   maxAge,
+		Secure:   h.cookie.Secure,
+		HTTPOnly: true,
+		SameSite: sameSite,
+	})
+}
+
+func (h Handler) clearSessionCookie(c fiber.Ctx) {
+	sameSite := h.cookie.SameSite
+	if sameSite == "" {
+		sameSite = "Lax"
+	}
+
+	c.Cookie(&fiber.Cookie{
+		Name:     h.cookieName(),
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Now().UTC().Add(-time.Hour),
+		MaxAge:   -1,
 		Secure:   h.cookie.Secure,
 		HTTPOnly: true,
 		SameSite: sameSite,
