@@ -493,7 +493,6 @@ PostgreSQL connection done
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Migration 000004_create_auth_identities applied
 -> Migration 000005_create_workspace_core_tables applied
--> Migration 000006_create_workspace_roles_master applied
 -> Auth module skeleton created
 -> Auth repository: FindUserAccountByID/FindUserAccountByEmail/FindActiveAuthSessionByHash/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/RevokeAuthSessionByHash/CreateLoginAttempt/CreateSecurityEvent implemented
 -> Auth service: RegisterEmailPassword implemented

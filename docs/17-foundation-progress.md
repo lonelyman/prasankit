@@ -55,7 +55,6 @@ Foundation Step 2: Backend Skeleton
 - app-api/database/migrations/000003_drop_auth_uuid_v4_defaults.sql
 - app-api/database/migrations/000004_create_auth_identities.sql
 - app-api/database/migrations/000005_create_workspace_core_tables.sql
-- app-api/database/migrations/000006_create_workspace_roles_master.sql
 - app-api/cmd/api/main.go
 - app-api/internal/config/config.go
 - app-api/internal/bootstrap/app.go
@@ -177,8 +176,8 @@ Verified:
 - apply migration `000003_drop_auth_uuid_v4_defaults.sql` ผ่าน Docker PostgreSQL แล้ว เพื่อถอด default `gen_random_uuid()` ออกจากฐานที่เคย apply migration รุ่นก่อนหน้า
 - ปรับ migration `000003_drop_auth_uuid_v4_defaults.sql` ทั้ง Up/Down ไม่ให้พา UUID v4 default กลับมาใน dev rollback/redo flow
 - เพิ่มและ apply migration `000004_create_auth_identities.sql` เพื่อแยก account owner (`user_accounts`) ออกจาก login methods (`auth_identities`)
-- เพิ่มและ apply migration `000005_create_workspace_core_tables.sql` สำหรับ `workspaces` และ `workspace_memberships`
-- เพิ่ม migration `000006_create_workspace_roles_master.sql` เพื่อย้าย Workspace Role จาก text/check ไปเป็น master table `workspace_roles` และ FK `workspace_memberships.workspace_role_id`
+- เพิ่มและ apply migration `000005_create_workspace_core_tables.sql` สำหรับ `workspaces`, `workspace_roles` และ `workspace_memberships`
+- `workspace_memberships` ใช้ `workspace_role_id` FK ไป `workspace_roles.id` ตั้งแต่ fresh install ไม่มี column `workspace_role` แบบ text/check
 - ปรับ fresh install migration `000002_create_auth_core_tables.sql` ให้มี `auth_identities` ตั้งแต่แรก
 - PostgreSQL extensions ที่ยืนยันแล้ว:
   - `citext`
@@ -366,7 +365,6 @@ PostgreSQL connection done
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Migration 000004_create_auth_identities applied
 -> Migration 000005_create_workspace_core_tables applied
--> Migration 000006_create_workspace_roles_master applied
 -> Auth module skeleton created
 -> Auth repository: FindUserAccountByID/FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
 -> Auth service: RegisterEmailPassword implemented
