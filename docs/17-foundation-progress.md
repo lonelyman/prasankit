@@ -186,7 +186,7 @@ Verified:
   - HTTP handler/routes placeholder
 - Auth register route เริ่มใช้งานจริงแล้ว:
   - `POST /api/v1/auth/register`
-- Auth routes ที่เหลือยังตอบ `501 NOT_IMPLEMENTED` ตามที่ตั้งใจ:
+- Auth forgot/reset password route เริ่มใช้งานจริงแล้ว:
   - `POST /api/v1/auth/forgot-password`
   - `POST /api/v1/auth/reset-password`
 - Auth postgres repository implementation เริ่มแล้ว:
@@ -233,6 +233,8 @@ Verified:
 - เพิ่ม HTTP handler สำหรับ `GET /api/v1/auth/me` แล้ว โดยตรวจ Redis session cookie และ response อยู่ใต้ root key `data`
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/logout` แล้ว โดย revoke current session, ลบ Redis session และ clear cookie
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/logout-all` แล้ว โดย revoke session ทุกอุปกรณ์ของ account และ clear cookie ปัจจุบัน
+- เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/forgot-password` แล้ว โดยตอบ generic success เพื่อไม่เปิดเผย account existence
+- เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/reset-password` แล้ว โดยเปลี่ยน password และ revoke active sessions ของ account
 - เพิ่ม Redis session store adapter แล้ว เพื่อเก็บ session record จาก login
 - เพิ่ม Redis session store read/delete แล้ว เพื่อใช้ validate session และ cleanup session หมดอายุ
 - เพิ่ม Auth service flow สำหรับ email/password login แล้ว:
@@ -260,6 +262,16 @@ Verified:
   - update `auth_sessions.status = revoked`
   - เขียน `security_events` สำหรับ `auth.logout`
   - ลบ session record จาก Redis
+- เพิ่ม Auth service flow สำหรับ forgot/reset password แล้ว:
+  - rate limit reset email ต่อ IP และต่อ email
+  - สร้าง password reset token และเก็บเฉพาะ hash
+  - ส่ง reset email ผ่าน SMTP จริงไปที่ frontend URL
+  - reset password ด้วย token ที่ active และยังไม่หมดอายุ
+  - mark token เป็น used
+  - update password hash
+  - revoke active sessions ทั้งหมดของ account ด้วย reason `password_reset`
+  - ลบ Redis session records ของ active sessions ที่ถูก revoke
+  - เขียน `security_events` สำหรับ `auth.password_reset_requested` และ `auth.password_reset_success`
 - เพิ่ม test สำหรับ Auth register handler แล้ว
 - เพิ่ม test สำหรับ Auth verify-email handler แล้ว
 - เพิ่ม test สำหรับ Auth resend-verification-email handler แล้ว
@@ -276,6 +288,8 @@ Verified:
 - เพิ่ม `docs/18.4-auth-login-test-examples.md` สำหรับตัวอย่างทดสอบ login แล้ว
 - เพิ่ม `docs/18.5-auth-me-test-examples.md` สำหรับตัวอย่างทดสอบ current session/me แล้ว
 - เพิ่ม `docs/18.6-auth-logout-test-examples.md` สำหรับตัวอย่างทดสอบ logout แล้ว
+- เพิ่ม `docs/18.7-auth-logout-all-test-examples.md` สำหรับตัวอย่างทดสอบ logout-all แล้ว
+- เพิ่ม `docs/18.8-auth-password-reset-test-examples.md` สำหรับตัวอย่างทดสอบ forgot/reset password แล้ว
 
 Known note:
 
@@ -302,7 +316,7 @@ Composition note:
 - Completed API documentation strategy: เมื่อ endpoint ไหน implement เสร็จจริง ต้องเพิ่ม request/success/error examples ใน `docs/18-api-test-examples.md`
 - Fresh server bootstrap order: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
-- Auth/session backend หลักเสร็จถึง logout-all แล้ว
+- Auth/session backend หลักเสร็จถึง forgot/reset password แล้ว
 
 หมายเหตุ:
 
@@ -310,10 +324,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปเริ่ม forgot/reset password:
-
-- `POST /api/v1/auth/forgot-password`
-- `POST /api/v1/auth/reset-password`
+ขั้นถัดไปเริ่ม Workspace registration/check slug แบบช้า ๆ โดยยังต้องรักษา Tenant Context และ Permission Guard ตาม rule เดิม
 
 เริ่ม wire dependency client แบบช้า ๆ:
 

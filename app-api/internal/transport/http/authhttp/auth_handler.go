@@ -20,6 +20,8 @@ type AuthService interface {
 	CurrentAccount(ctx context.Context, input authsvc.CurrentAccountInput) (*authsvc.CurrentAccountResult, error)
 	LogoutCurrentSession(ctx context.Context, input authsvc.LogoutCurrentSessionInput) (*authsvc.LogoutCurrentSessionResult, error)
 	LogoutAllSessions(ctx context.Context, input authsvc.LogoutAllSessionsInput) (*authsvc.LogoutAllSessionsResult, error)
+	ForgotPassword(ctx context.Context, input authsvc.ForgotPasswordInput) (*authsvc.ForgotPasswordResult, error)
+	ResetPassword(ctx context.Context, input authsvc.ResetPasswordInput) (*authsvc.ResetPasswordResult, error)
 }
 
 const accountLocalKey = "auth.account"
@@ -80,6 +82,14 @@ type logoutResponse struct {
 	Status string `json:"status"`
 }
 
+type forgotPasswordRequest struct {
+	Email string `json:"email"`
+}
+type resetPasswordRequest struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
+}
+
 type accountResponse struct {
 	ID           string `json:"id"`
 	PrimaryEmail string `json:"primary_email"`
@@ -101,8 +111,8 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	auth.Post("/login", h.LoginEmailPassword)
 	auth.Post("/logout", h.Logout)
 	auth.Post("/logout-all", h.LogoutAll)
-	auth.Post("/forgot-password", h.NotImplemented)
-	auth.Post("/reset-password", h.NotImplemented)
+	auth.Post("/forgot-password", h.ForgotPassword)
+	auth.Post("/reset-password", h.ResetPassword)
 	auth.Get("/me", h.requireSession, h.Me)
 }
 
@@ -277,6 +287,36 @@ func (h Handler) LogoutAll(c fiber.Ctx) error {
 	})
 }
 
+func (h Handler) ForgotPassword(c fiber.Ctx) error {
+	if h.auth == nil {
+		return h.NotImplemented(c)
+	}
+	var req forgotPasswordRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+	_, err := h.auth.ForgotPassword(c.Context(), authsvc.ForgotPasswordInput{Email: req.Email, IPAddress: c.IP(), UserAgent: c.UserAgent()})
+	if err != nil {
+		return renderForgotPasswordError(c, err)
+	}
+	return presenter.RenderItem(c, logoutResponse{Status: "ok"})
+}
+
+func (h Handler) ResetPassword(c fiber.Ctx) error {
+	if h.auth == nil {
+		return h.NotImplemented(c)
+	}
+	var req resetPasswordRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+	_, err := h.auth.ResetPassword(c.Context(), authsvc.ResetPasswordInput{Token: req.Token, Password: req.Password, IPAddress: c.IP(), UserAgent: c.UserAgent()})
+	if err != nil {
+		return renderResetPasswordError(c, err)
+	}
+	return presenter.RenderItem(c, logoutResponse{Status: "ok"})
+}
+
 func (h Handler) requireSession(c fiber.Ctx) error {
 	if h.auth == nil {
 		return h.NotImplemented(c)
@@ -370,6 +410,36 @@ func renderLoginError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusForbidden, "EMAIL_NOT_VERIFIED", "Email is not verified")
 	case errors.Is(err, authsvc.ErrAccountInactive):
 		return presenter.RenderError(c, fiber.StatusForbidden, "ACCOUNT_INACTIVE", "Account is inactive")
+	default:
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+}
+
+func renderForgotPasswordError(c fiber.Ctx, err error) error {
+	switch {
+	case errors.Is(err, authsvc.ErrInvalidEmail):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_EMAIL", "Email is invalid")
+	case errors.Is(err, authsvc.ErrPasswordResetEmailRateLimited):
+		return presenter.RenderError(c, fiber.StatusTooManyRequests, "PASSWORD_RESET_EMAIL_RATE_LIMITED", "Too many password reset requests")
+	case errors.Is(err, authsvc.ErrPasswordResetEmailSendFailed):
+		return presenter.RenderError(c, fiber.StatusBadGateway, "PASSWORD_RESET_EMAIL_SEND_FAILED", "Password reset email could not be sent")
+	default:
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+}
+
+func renderResetPasswordError(c fiber.Ctx, err error) error {
+	switch {
+	case errors.Is(err, authsvc.ErrPasswordResetTokenRequired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PASSWORD_RESET_TOKEN_REQUIRED", "Password reset token is required")
+	case errors.Is(err, authsvc.ErrPasswordResetTokenInvalid):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PASSWORD_RESET_TOKEN_INVALID", "Password reset token is invalid")
+	case errors.Is(err, authsvc.ErrPasswordResetTokenExpired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PASSWORD_RESET_TOKEN_EXPIRED", "Password reset token is expired")
+	case errors.Is(err, authsvc.ErrPasswordResetTokenAlreadyUsed):
+		return presenter.RenderError(c, fiber.StatusConflict, "PASSWORD_RESET_TOKEN_ALREADY_USED", "Password reset token is already used")
+	case errors.Is(err, authsvc.ErrPasswordTooShort):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PASSWORD_TOO_SHORT", "Password is too short")
 	default:
 		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
 	}

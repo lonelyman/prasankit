@@ -40,6 +40,12 @@ type fakeRegistrar struct {
 	logoutAllResult *authsvc.LogoutAllSessionsResult
 	logoutAllErr    error
 	logoutAllInput  authsvc.LogoutAllSessionsInput
+	forgotResult    *authsvc.ForgotPasswordResult
+	forgotErr       error
+	forgotInput     authsvc.ForgotPasswordInput
+	resetResult     *authsvc.ResetPasswordResult
+	resetErr        error
+	resetInput      authsvc.ResetPasswordInput
 }
 
 func (r *fakeRegistrar) RegisterEmailPassword(_ context.Context, input authsvc.RegisterEmailPasswordInput) (*authsvc.RegisterEmailPasswordResult, error) {
@@ -96,6 +102,22 @@ func (r *fakeRegistrar) LogoutAllSessions(_ context.Context, input authsvc.Logou
 		return nil, r.logoutAllErr
 	}
 	return r.logoutAllResult, nil
+}
+
+func (r *fakeRegistrar) ForgotPassword(_ context.Context, input authsvc.ForgotPasswordInput) (*authsvc.ForgotPasswordResult, error) {
+	r.forgotInput = input
+	if r.forgotErr != nil {
+		return nil, r.forgotErr
+	}
+	return r.forgotResult, nil
+}
+
+func (r *fakeRegistrar) ResetPassword(_ context.Context, input authsvc.ResetPasswordInput) (*authsvc.ResetPasswordResult, error) {
+	r.resetInput = input
+	if r.resetErr != nil {
+		return nil, r.resetErr
+	}
+	return r.resetResult, nil
 }
 
 func TestRegisterEmailPassword(t *testing.T) {
@@ -785,6 +807,71 @@ func TestLogoutAllMapsSessionErrors(t *testing.T) {
 	defer resp.Body.Close()
 
 	assertAuthError(t, resp, http.StatusUnauthorized, "AUTH_SESSION_INVALID")
+}
+
+func TestForgotPassword(t *testing.T) {
+	registrar := &fakeRegistrar{
+		forgotResult: &authsvc.ForgotPasswordResult{PasswordResetEmailSent: true},
+	}
+	app := newAuthTestApp(newTestHandler(registrar))
+
+	resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/forgot-password", map[string]string{
+		"email": "owner@example.test",
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if registrar.forgotInput.Email != "owner@example.test" {
+		t.Fatalf("email = %s, want owner@example.test", registrar.forgotInput.Email)
+	}
+}
+
+func TestForgotPasswordMapsErrors(t *testing.T) {
+	app := newAuthTestApp(newTestHandler(&fakeRegistrar{forgotErr: authsvc.ErrPasswordResetEmailRateLimited}))
+
+	resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/forgot-password", map[string]string{
+		"email": "owner@example.test",
+	})
+	defer resp.Body.Close()
+
+	assertAuthError(t, resp, http.StatusTooManyRequests, "PASSWORD_RESET_EMAIL_RATE_LIMITED")
+}
+
+func TestResetPassword(t *testing.T) {
+	registrar := &fakeRegistrar{
+		resetResult: &authsvc.ResetPasswordResult{Status: "ok"},
+	}
+	app := newAuthTestApp(newTestHandler(registrar))
+
+	resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/reset-password", map[string]string{
+		"token":    "raw-reset-token",
+		"password": "new-correct-password",
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if registrar.resetInput.Token != "raw-reset-token" {
+		t.Fatalf("token = %s, want raw-reset-token", registrar.resetInput.Token)
+	}
+	if registrar.resetInput.Password != "new-correct-password" {
+		t.Fatalf("password = %s, want new-correct-password", registrar.resetInput.Password)
+	}
+}
+
+func TestResetPasswordMapsErrors(t *testing.T) {
+	app := newAuthTestApp(newTestHandler(&fakeRegistrar{resetErr: authsvc.ErrPasswordResetTokenExpired}))
+
+	resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/reset-password", map[string]string{
+		"token":    "expired-token",
+		"password": "new-correct-password",
+	})
+	defer resp.Body.Close()
+
+	assertAuthError(t, resp, http.StatusBadRequest, "PASSWORD_RESET_TOKEN_EXPIRED")
 }
 
 func newTestHandler(service AuthService) Handler {

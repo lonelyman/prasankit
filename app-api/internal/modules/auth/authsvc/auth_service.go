@@ -42,6 +42,13 @@ var ErrSessionTokenRequired = errors.New("session token is required")
 var ErrSessionNotFound = errors.New("session not found")
 var ErrSessionInvalid = errors.New("session is invalid")
 var ErrSessionExpired = errors.New("session is expired")
+var ErrPasswordResetEmailRateLimited = errors.New("password reset email rate limited")
+var ErrPasswordResetEmailSendFailed = errors.New("password reset email send failed")
+var ErrPasswordResetConfigInvalid = errors.New("password reset config is invalid")
+var ErrPasswordResetTokenRequired = errors.New("password reset token is required")
+var ErrPasswordResetTokenInvalid = errors.New("password reset token is invalid")
+var ErrPasswordResetTokenExpired = errors.New("password reset token is expired")
+var ErrPasswordResetTokenAlreadyUsed = errors.New("password reset token is already used")
 
 type PasswordHasher interface {
 	Hash(password string) (string, error)
@@ -50,6 +57,7 @@ type PasswordHasher interface {
 
 type EmailSender interface {
 	SendVerificationEmail(ctx context.Context, toEmail string, verificationURL string) error
+	SendPasswordResetEmail(ctx context.Context, toEmail string, resetURL string) error
 }
 
 type RateLimiter interface {
@@ -71,12 +79,16 @@ type SessionRecord struct {
 }
 
 type ServiceConfig struct {
-	VerificationBaseURL  string
-	VerificationTokenTTL time.Duration
-	VerificationIPLimit  int
-	VerificationIPWindow time.Duration
-	SessionSecret        string
-	SessionTTL           time.Duration
+	VerificationBaseURL   string
+	VerificationTokenTTL  time.Duration
+	VerificationIPLimit   int
+	VerificationIPWindow  time.Duration
+	SessionSecret         string
+	SessionTTL            time.Duration
+	PasswordResetBaseURL  string
+	PasswordResetTokenTTL time.Duration
+	PasswordResetIPLimit  int
+	PasswordResetIPWindow time.Duration
 }
 
 type RegisterEmailPasswordInput struct {
@@ -153,6 +165,27 @@ type LogoutAllSessionsInput struct {
 }
 
 type LogoutAllSessionsResult struct {
+	Status string
+}
+
+type ForgotPasswordInput struct {
+	Email     string
+	IPAddress string
+	UserAgent string
+}
+
+type ForgotPasswordResult struct {
+	PasswordResetEmailSent bool
+}
+
+type ResetPasswordInput struct {
+	Token     string
+	Password  string
+	IPAddress string
+	UserAgent string
+}
+
+type ResetPasswordResult struct {
 	Status string
 }
 
@@ -807,6 +840,177 @@ func (s *Service) LogoutAllSessions(ctx context.Context, input LogoutAllSessions
 	}, nil
 }
 
+func (s *Service) ForgotPassword(ctx context.Context, input ForgotPasswordInput) (*ForgotPasswordResult, error) {
+	email, err := normalizeEmail(input.Email)
+	if err != nil {
+		return nil, ErrInvalidEmail
+	}
+	if s.email == nil {
+		return nil, ErrEmailSenderRequired
+	}
+	if s.limiter == nil {
+		return nil, ErrRateLimiterRequired
+	}
+	if err := s.validatePasswordResetConfig(); err != nil {
+		return nil, err
+	}
+
+	allowed, err := s.limiter.Allow(ctx, passwordResetRateLimitKey(input.IPAddress), s.config.PasswordResetIPLimit, s.config.PasswordResetIPWindow)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrPasswordResetEmailRateLimited
+	}
+	allowed, err = s.limiter.Allow(ctx, passwordResetEmailRateLimitKey(email), s.config.PasswordResetIPLimit, s.config.PasswordResetIPWindow)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrPasswordResetEmailRateLimited
+	}
+
+	account, err := s.repository.FindUserAccountByEmail(ctx, email)
+	if errors.Is(err, auth.ErrUserAccountNotFound) {
+		return &ForgotPasswordResult{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if account.Status != auth.UserAccountStatusActive {
+		return &ForgotPasswordResult{}, nil
+	}
+	identity, err := s.repository.FindAuthIdentityByEmail(ctx, email)
+	if errors.Is(err, auth.ErrAuthIdentityNotFound) {
+		return &ForgotPasswordResult{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var resetToken string
+	err = s.repository.WithinTransaction(ctx, func(ctx context.Context, repo auth.Repository) error {
+		if err := repo.RevokeActivePasswordResetTokens(ctx, identity.ID); err != nil {
+			return err
+		}
+		tokenValue, tokenHash, err := securetoken.New()
+		if err != nil {
+			return err
+		}
+		resetToken = tokenValue
+		now := time.Now().UTC()
+		token := auth.PasswordResetToken{
+			AuthIdentityID: identity.ID,
+			TokenHash:      tokenHash,
+			CreatedAt:      now,
+			ExpiresAt:      now.Add(s.config.PasswordResetTokenTTL),
+		}
+		if err := repo.CreatePasswordResetToken(ctx, &token); err != nil {
+			return err
+		}
+		return repo.CreateSecurityEvent(ctx, &auth.SecurityEvent{
+			UserAccountID: &account.ID,
+			EventType:     "auth.password_reset_requested",
+			Severity:      auth.SecurityEventSeverityInfo,
+			IPAddress:     input.IPAddress,
+			UserAgent:     input.UserAgent,
+			MetadataJSON: map[string]any{
+				"token_id": token.ID.String(),
+			},
+			CreatedAt: now,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	resetURL, err := s.buildPasswordResetURL(resetToken)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.email.SendPasswordResetEmail(ctx, email, resetURL); err != nil {
+		return nil, errors.Join(ErrPasswordResetEmailSendFailed, err)
+	}
+	return &ForgotPasswordResult{PasswordResetEmailSent: true}, nil
+}
+
+func (s *Service) ResetPassword(ctx context.Context, input ResetPasswordInput) (*ResetPasswordResult, error) {
+	tokenValue := strings.TrimSpace(input.Token)
+	if tokenValue == "" {
+		return nil, ErrPasswordResetTokenRequired
+	}
+	if len(input.Password) < minPasswordLength {
+		return nil, ErrPasswordTooShort
+	}
+	if s.hasher == nil {
+		return nil, ErrPasswordHasherRequired
+	}
+	token, err := s.repository.FindPasswordResetTokenByHash(ctx, securetoken.Hash(tokenValue))
+	if errors.Is(err, auth.ErrPasswordResetTokenNotFound) {
+		return nil, ErrPasswordResetTokenInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+	if token.Status == auth.PasswordResetTokenStatusUsed {
+		return nil, ErrPasswordResetTokenAlreadyUsed
+	}
+	if token.Status != auth.PasswordResetTokenStatusActive {
+		return nil, ErrPasswordResetTokenInvalid
+	}
+	now := time.Now().UTC()
+	if !token.ExpiresAt.After(now) {
+		return nil, ErrPasswordResetTokenExpired
+	}
+	identity, err := s.repository.FindAuthIdentityByID(ctx, token.AuthIdentityID)
+	if errors.Is(err, auth.ErrAuthIdentityNotFound) {
+		return nil, ErrPasswordResetTokenInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+	hash, err := s.hasher.Hash(input.Password)
+	if err != nil {
+		return nil, err
+	}
+	var activeSessions []auth.AuthSession
+	err = s.repository.WithinTransaction(ctx, func(ctx context.Context, repo auth.Repository) error {
+		if err := repo.MarkPasswordResetTokenUsed(ctx, token.ID, now); err != nil {
+			return err
+		}
+		if err := repo.UpdateAuthIdentityPassword(ctx, identity.ID, hash, now); err != nil {
+			return err
+		}
+		var err error
+		activeSessions, err = repo.ListActiveAuthSessionsByUserAccountID(ctx, identity.UserAccountID)
+		if err != nil {
+			return err
+		}
+		if err := repo.RevokeActiveAuthSessionsByUserAccountID(ctx, identity.UserAccountID, now, "password_reset"); err != nil {
+			return err
+		}
+		return repo.CreateSecurityEvent(ctx, &auth.SecurityEvent{
+			UserAccountID: &identity.UserAccountID,
+			EventType:     "auth.password_reset_success",
+			Severity:      auth.SecurityEventSeverityInfo,
+			IPAddress:     input.IPAddress,
+			UserAgent:     input.UserAgent,
+			MetadataJSON: map[string]any{
+				"identity_id": identity.ID.String(),
+			},
+			CreatedAt: now,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if s.sessions != nil {
+		for _, session := range activeSessions {
+			_ = s.sessions.Delete(ctx, session.SessionKeyHash)
+		}
+	}
+	return &ResetPasswordResult{Status: "ok"}, nil
+}
+
 func (s *Service) validateVerificationConfig() error {
 	if s.config.VerificationBaseURL == "" {
 		return ErrVerificationConfigInvalid
@@ -829,6 +1033,13 @@ func (s *Service) validateSessionConfig() error {
 	}
 	if s.config.SessionTTL <= 0 {
 		return ErrSessionConfigInvalid
+	}
+	return nil
+}
+
+func (s *Service) validatePasswordResetConfig() error {
+	if s.config.PasswordResetBaseURL == "" || s.config.PasswordResetTokenTTL <= 0 || s.config.PasswordResetIPLimit < 1 || s.config.PasswordResetIPWindow <= 0 {
+		return ErrPasswordResetConfigInvalid
 	}
 	return nil
 }
@@ -878,6 +1089,28 @@ func verificationRateLimitKey(ipAddress string) string {
 
 func verificationEmailRateLimitKey(email string) string {
 	return "rate:auth:verify_email:email:" + strings.ToLower(strings.TrimSpace(email))
+}
+
+func passwordResetRateLimitKey(ipAddress string) string {
+	if parsed := net.ParseIP(strings.TrimSpace(ipAddress)); parsed != nil {
+		return "rate:auth:password_reset:ip:" + parsed.String()
+	}
+	return "rate:auth:password_reset:ip:unknown"
+}
+
+func passwordResetEmailRateLimitKey(email string) string {
+	return "rate:auth:password_reset:email:" + strings.ToLower(strings.TrimSpace(email))
+}
+
+func (s *Service) buildPasswordResetURL(token string) (string, error) {
+	resetURL, err := url.Parse(s.config.PasswordResetBaseURL)
+	if err != nil {
+		return "", err
+	}
+	query := resetURL.Query()
+	query.Set("token", token)
+	resetURL.RawQuery = query.Encode()
+	return resetURL.String(), nil
 }
 
 func hashSessionKey(token string, secret string) string {

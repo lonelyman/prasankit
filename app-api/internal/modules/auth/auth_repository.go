@@ -11,9 +11,11 @@ import (
 var ErrUserAccountNotFound = errors.New("user account not found")
 var ErrAuthIdentityNotFound = errors.New("auth identity not found")
 var ErrEmailVerificationTokenNotFound = errors.New("email verification token not found")
+var ErrPasswordResetTokenNotFound = errors.New("password reset token not found")
 var ErrAuthSessionNotFound = errors.New("auth session not found")
 var ErrAuthSessionExpiresAtRequired = errors.New("auth session expires_at is required")
 var ErrEmailVerificationTokenExpiresAtRequired = errors.New("email verification token expires_at is required")
+var ErrPasswordResetTokenExpiresAtRequired = errors.New("password reset token expires_at is required")
 var ErrEmailAlreadyRegistered = errors.New("email is already registered")
 
 type Repository interface {
@@ -23,12 +25,17 @@ type Repository interface {
 	FindAuthIdentityByID(ctx context.Context, id uuid.UUID) (*AuthIdentity, error)
 	FindAuthIdentityByEmail(ctx context.Context, email string) (*AuthIdentity, error)
 	FindEmailVerificationTokenByHash(ctx context.Context, tokenHash string) (*EmailVerificationToken, error)
+	FindPasswordResetTokenByHash(ctx context.Context, tokenHash string) (*PasswordResetToken, error)
 	CreateUserAccount(ctx context.Context, account *UserAccount) error
 	CreateAuthIdentity(ctx context.Context, identity *AuthIdentity) error
 	RevokeActiveEmailVerificationTokens(ctx context.Context, authIdentityID uuid.UUID) error
 	CreateEmailVerificationToken(ctx context.Context, token *EmailVerificationToken) error
+	RevokeActivePasswordResetTokens(ctx context.Context, authIdentityID uuid.UUID) error
+	CreatePasswordResetToken(ctx context.Context, token *PasswordResetToken) error
 	MarkEmailVerificationTokenUsed(ctx context.Context, id uuid.UUID, usedAt time.Time) error
+	MarkPasswordResetTokenUsed(ctx context.Context, id uuid.UUID, usedAt time.Time) error
 	MarkAuthIdentityEmailVerified(ctx context.Context, id uuid.UUID, verifiedAt time.Time) error
+	UpdateAuthIdentityPassword(ctx context.Context, id uuid.UUID, passwordHash string, changedAt time.Time) error
 	ActivateUserAccount(ctx context.Context, id uuid.UUID, updatedAt time.Time) error
 	UpdateUserAccountLoginSuccess(ctx context.Context, id uuid.UUID, loggedInAt time.Time) error
 	MarkAuthIdentityLastUsed(ctx context.Context, id uuid.UUID, lastUsedAt time.Time) error

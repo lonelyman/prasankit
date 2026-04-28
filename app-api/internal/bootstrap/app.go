@@ -62,12 +62,16 @@ func InitializeApp(cfg config.Config) (*App, error) {
 		ratelimit.New(redisClient),
 		sessionstore.New(redisClient),
 		authsvc.ServiceConfig{
-			VerificationBaseURL:  cfg.Mail.VerifyBaseURL,
-			VerificationTokenTTL: cfg.Mail.VerifyTokenTTL,
-			VerificationIPLimit:  cfg.Mail.VerifyIPLimit,
-			VerificationIPWindow: cfg.Mail.VerifyIPWindow,
-			SessionSecret:        cfg.Session.Secret,
-			SessionTTL:           cfg.Session.TTL,
+			VerificationBaseURL:   cfg.Mail.VerifyBaseURL,
+			VerificationTokenTTL:  cfg.Mail.VerifyTokenTTL,
+			VerificationIPLimit:   cfg.Mail.VerifyIPLimit,
+			VerificationIPWindow:  cfg.Mail.VerifyIPWindow,
+			SessionSecret:         cfg.Session.Secret,
+			SessionTTL:            cfg.Session.TTL,
+			PasswordResetBaseURL:  cfg.Mail.ResetBaseURL,
+			PasswordResetTokenTTL: cfg.Mail.ResetTokenTTL,
+			PasswordResetIPLimit:  cfg.Mail.ResetIPLimit,
+			PasswordResetIPWindow: cfg.Mail.ResetIPWindow,
 		},
 	)
 	authHandler := authhttp.NewHandler(authService, authhttp.CookieConfig{

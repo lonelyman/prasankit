@@ -95,6 +95,7 @@ Read these before writing code:
 - docs/18.5-auth-me-test-examples.md
 - docs/18.6-auth-logout-test-examples.md
 - docs/18.7-auth-logout-all-test-examples.md
+- docs/18.8-auth-password-reset-test-examples.md
 - docs/99-current-handoff.md
 
 ## Important Rule

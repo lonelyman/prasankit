@@ -59,6 +59,11 @@ type MailConfig struct {
 	VerifyIPLimit      int
 	VerifyIPWindow     time.Duration
 	VerifyEmailSubject string
+	ResetBaseURL       string
+	ResetTokenTTL      time.Duration
+	ResetIPLimit       int
+	ResetIPWindow      time.Duration
+	ResetEmailSubject  string
 }
 
 type SessionConfig struct {
@@ -356,6 +361,30 @@ func loadMailConfig() (MailConfig, error) {
 		return MailConfig{}, err
 	}
 
+	resetBaseURL, err := requiredEnv("MAIL_RESET_BASE_URL")
+	if err != nil {
+		return MailConfig{}, err
+	}
+	if _, err := url.ParseRequestURI(resetBaseURL); err != nil {
+		return MailConfig{}, fmt.Errorf("invalid MAIL_RESET_BASE_URL: %w", err)
+	}
+	resetTokenTTL, err := durationEnv("MAIL_RESET_TOKEN_TTL")
+	if err != nil {
+		return MailConfig{}, err
+	}
+	resetIPLimit, err := positiveIntEnv("MAIL_RESET_IP_LIMIT")
+	if err != nil {
+		return MailConfig{}, err
+	}
+	resetIPWindow, err := durationEnv("MAIL_RESET_IP_WINDOW")
+	if err != nil {
+		return MailConfig{}, err
+	}
+	resetEmailSubject, err := requiredEnv("MAIL_RESET_EMAIL_SUBJECT")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
 	return MailConfig{
 		SMTPHost:           smtpHost,
 		SMTPPort:           smtpPort,
@@ -368,7 +397,42 @@ func loadMailConfig() (MailConfig, error) {
 		VerifyIPLimit:      verifyIPLimit,
 		VerifyIPWindow:     verifyIPWindow,
 		VerifyEmailSubject: verifyEmailSubject,
+		ResetBaseURL:       resetBaseURL,
+		ResetTokenTTL:      resetTokenTTL,
+		ResetIPLimit:       resetIPLimit,
+		ResetIPWindow:      resetIPWindow,
+		ResetEmailSubject:  resetEmailSubject,
 	}, nil
+}
+
+func durationEnv(key string) (time.Duration, error) {
+	value, err := requiredEnv(key)
+	if err != nil {
+		return 0, err
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	if duration <= 0 {
+		return 0, fmt.Errorf("invalid %s: must be greater than 0", key)
+	}
+	return duration, nil
+}
+
+func positiveIntEnv(key string) (int, error) {
+	value, err := requiredEnv(key)
+	if err != nil {
+		return 0, err
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	if parsed < 1 {
+		return 0, fmt.Errorf("invalid %s: must be greater than 0", key)
+	}
+	return parsed, nil
 }
 
 func loadSessionConfig() (SessionConfig, error) {

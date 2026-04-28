@@ -72,6 +72,20 @@ func (emailVerificationTokenRow) TableName() string {
 	return "auth_email_verification_tokens"
 }
 
+type passwordResetTokenRow struct {
+	ID             uuid.UUID  `gorm:"column:id;type:uuid"`
+	AuthIdentityID uuid.UUID  `gorm:"column:auth_identity_id"`
+	TokenHash      string     `gorm:"column:token_hash"`
+	Status         string     `gorm:"column:status"`
+	CreatedAt      time.Time  `gorm:"column:created_at"`
+	ExpiresAt      time.Time  `gorm:"column:expires_at"`
+	UsedAt         *time.Time `gorm:"column:used_at"`
+}
+
+func (passwordResetTokenRow) TableName() string {
+	return "auth_password_reset_tokens"
+}
+
 type authSessionRow struct {
 	ID             uuid.UUID     `gorm:"column:id;type:uuid"`
 	UserAccountID  uuid.UUID     `gorm:"column:user_account_id"`
@@ -226,6 +240,21 @@ func (r *Repository) FindEmailVerificationTokenByHash(ctx context.Context, token
 	return row.toDomain(), nil
 }
 
+func (r *Repository) FindPasswordResetTokenByHash(ctx context.Context, tokenHash string) (*auth.PasswordResetToken, error) {
+	var row passwordResetTokenRow
+	err := r.db.WithContext(ctx).
+		Where("token_hash = ?", tokenHash).
+		First(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, auth.ErrPasswordResetTokenNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return row.toDomain(), nil
+}
+
 func (r *Repository) CreateUserAccount(ctx context.Context, account *auth.UserAccount) error {
 	if err := ensureUUID(&account.ID); err != nil {
 		return err
@@ -348,6 +377,46 @@ func (r *Repository) CreateEmailVerificationToken(ctx context.Context, token *au
 	return nil
 }
 
+func (r *Repository) RevokeActivePasswordResetTokens(ctx context.Context, authIdentityID uuid.UUID) error {
+	return r.db.WithContext(ctx).
+		Model(&passwordResetTokenRow{}).
+		Where("auth_identity_id = ?", authIdentityID).
+		Where("status = ?", string(auth.PasswordResetTokenStatusActive)).
+		Update("status", string(auth.PasswordResetTokenStatusRevoked)).
+		Error
+}
+
+func (r *Repository) CreatePasswordResetToken(ctx context.Context, token *auth.PasswordResetToken) error {
+	if err := ensureUUID(&token.ID); err != nil {
+		return err
+	}
+	if token.Status == "" {
+		token.Status = auth.PasswordResetTokenStatusActive
+	}
+	if token.CreatedAt.IsZero() {
+		token.CreatedAt = time.Now().UTC()
+	}
+	if token.ExpiresAt.IsZero() {
+		return auth.ErrPasswordResetTokenExpiresAtRequired
+	}
+
+	row := passwordResetTokenRow{
+		ID:             token.ID,
+		AuthIdentityID: token.AuthIdentityID,
+		TokenHash:      token.TokenHash,
+		Status:         string(token.Status),
+		CreatedAt:      token.CreatedAt,
+		ExpiresAt:      token.ExpiresAt,
+		UsedAt:         token.UsedAt,
+	}
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return err
+	}
+	token.ID = row.ID
+	token.CreatedAt = row.CreatedAt
+	return nil
+}
+
 func (r *Repository) MarkEmailVerificationTokenUsed(ctx context.Context, id uuid.UUID, usedAt time.Time) error {
 	result := r.db.WithContext(ctx).
 		Model(&emailVerificationTokenRow{}).
@@ -366,6 +435,24 @@ func (r *Repository) MarkEmailVerificationTokenUsed(ctx context.Context, id uuid
 	return nil
 }
 
+func (r *Repository) MarkPasswordResetTokenUsed(ctx context.Context, id uuid.UUID, usedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&passwordResetTokenRow{}).
+		Where("id = ?", id).
+		Where("status = ?", string(auth.PasswordResetTokenStatusActive)).
+		Updates(map[string]any{
+			"status":  string(auth.PasswordResetTokenStatusUsed),
+			"used_at": usedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return auth.ErrPasswordResetTokenNotFound
+	}
+	return nil
+}
+
 func (r *Repository) MarkAuthIdentityEmailVerified(ctx context.Context, id uuid.UUID, verifiedAt time.Time) error {
 	result := r.db.WithContext(ctx).
 		Model(&authIdentityRow{}).
@@ -374,6 +461,25 @@ func (r *Repository) MarkAuthIdentityEmailVerified(ctx context.Context, id uuid.
 		Updates(map[string]any{
 			"email_verified_at": verifiedAt,
 			"updated_at":        verifiedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return auth.ErrAuthIdentityNotFound
+	}
+	return nil
+}
+
+func (r *Repository) UpdateAuthIdentityPassword(ctx context.Context, id uuid.UUID, passwordHash string, changedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&authIdentityRow{}).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"password_hash":       passwordHash,
+			"password_changed_at": changedAt,
+			"updated_at":          changedAt,
 		})
 	if result.Error != nil {
 		return result.Error
@@ -688,6 +794,18 @@ func (r emailVerificationTokenRow) toDomain() *auth.EmailVerificationToken {
 		AuthIdentityID: r.AuthIdentityID,
 		TokenHash:      r.TokenHash,
 		Status:         auth.EmailVerificationTokenStatus(r.Status),
+		CreatedAt:      r.CreatedAt,
+		ExpiresAt:      r.ExpiresAt,
+		UsedAt:         r.UsedAt,
+	}
+}
+
+func (r passwordResetTokenRow) toDomain() *auth.PasswordResetToken {
+	return &auth.PasswordResetToken{
+		ID:             r.ID,
+		AuthIdentityID: r.AuthIdentityID,
+		TokenHash:      r.TokenHash,
+		Status:         auth.PasswordResetTokenStatus(r.Status),
 		CreatedAt:      r.CreatedAt,
 		ExpiresAt:      r.ExpiresAt,
 		UsedAt:         r.UsedAt,

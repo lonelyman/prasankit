@@ -59,6 +59,8 @@ Foundation
 │  ├─ 18.4-auth-login-test-examples.md
 │  ├─ 18.5-auth-me-test-examples.md
 │  ├─ 18.6-auth-logout-test-examples.md
+│  ├─ 18.7-auth-logout-all-test-examples.md
+│  ├─ 18.8-auth-password-reset-test-examples.md
 ├─ .env.example
 ├─ Makefile
 ├─ docker-compose.yml
@@ -201,11 +203,10 @@ app-api/
   - domain entity
   - repository interface
   - service constructor
-  - postgres adapter placeholder
-  - HTTP handler/routes placeholder
+  - postgres adapter
+  - HTTP handler/routes
 - เพิ่ม Auth register route จริงแล้ว:
   - `POST /api/v1/auth/register`
-- เพิ่ม Auth routes ที่ยังไม่ทำแบบ placeholder ที่ตอบ `501 NOT_IMPLEMENTED`
 - Implement Auth repository method แรก:
   - `FindUserAccountByID`
   - `FindUserAccountByEmail`
@@ -243,6 +244,8 @@ app-api/
 - Wire `LoginEmailPassword` เข้า HTTP handler `POST /api/v1/auth/login` แล้ว
 - Wire `CurrentAccount` เข้า HTTP handler `GET /api/v1/auth/me` แล้ว
 - Wire `LogoutCurrentSession` เข้า HTTP handler `POST /api/v1/auth/logout` แล้ว
+- Wire `LogoutAllSessions` เข้า HTTP handler `POST /api/v1/auth/logout-all` แล้ว
+- Wire forgot/reset password เข้า HTTP handler `POST /api/v1/auth/forgot-password` และ `POST /api/v1/auth/reset-password` แล้ว
 - เพิ่ม Redis session store สำหรับเก็บ session record หลัง login
 - เพิ่ม Redis session store สำหรับอ่าน session record และ delete session record แล้ว
 - เพิ่ม Auth service flow สำหรับ `LoginEmailPassword`:
@@ -272,6 +275,16 @@ app-api/
   - create `security_events` สำหรับ `auth.logout`
   - ลบ session record จาก Redis
   - clear httpOnly cookie ใน handler
+- เพิ่ม Auth service flow สำหรับ forgot/reset password:
+  - rate limit reset email ต่อ IP และต่อ email
+  - สร้าง password reset token และเก็บเฉพาะ hash
+  - ส่ง reset email ผ่าน SMTP จริงไปที่ frontend URL ตาม `MAIL_RESET_BASE_URL`
+  - reset password ด้วย token ที่ active และยังไม่หมดอายุ
+  - mark token เป็น `used`
+  - update password hash
+  - revoke active sessions ทั้งหมดของ account ด้วย reason `password_reset`
+  - ลบ Redis session records ของ active sessions ที่ถูก revoke
+  - create `security_events` สำหรับ `auth.password_reset_requested` และ `auth.password_reset_success`
 - เปลี่ยน `docker-compose.yml` ให้ API container อ่าน runtime env จาก `.env` แทน `.env.example`
 - เพิ่ม root Make targets:
   - `make env-init`
@@ -308,7 +321,7 @@ app-api/
 - Auth repository integration test ผ่านกับ fresh install database
 - รัน `goose-redo` สำหรับ `000003_drop_auth_uuid_v4_defaults.sql` แล้วตรวจ primary key defaults ยังเป็น `<null>` ทั้งหมด
 - Auth repository integration test ผ่านหลังเพิ่ม `CreateSecurityEvent`
-- Auth placeholder routes ที่ test ผ่าน:
+- Auth forgot/reset password handler test ผ่าน:
   - `POST /api/v1/auth/forgot-password`
   - `POST /api/v1/auth/reset-password`
 - Auth repository integration test ผ่านกับ Docker PostgreSQL:
@@ -438,6 +451,8 @@ config
 - `GET /api/v1/auth/me` ตรวจ session จาก cookie/Redis แล้วคืน account กลางเท่านั้น; workspace context จะเติมตอนเริ่ม Workspace/Tenant flow
 - `POST /api/v1/auth/logout` revoke เฉพาะ session ปัจจุบัน; session อื่นยังอยู่เพื่อรองรับ multi-device และ `logout-all`
 - `POST /api/v1/auth/logout-all` revoke session ทุกอุปกรณ์ของ account เดียวกัน
+- `POST /api/v1/auth/forgot-password` ตอบ generic success เพื่อไม่เปิดเผยว่า email มี account หรือไม่
+- `POST /api/v1/auth/reset-password` เปลี่ยน password แล้ว revoke active sessions ทั้งหมดของ account
 - Auth service เขียน business flow ก่อน handler: handler แค่ parse/response, service รับผิดชอบ validation/use case, repository รับผิดชอบ persistence
 - เมื่อ endpoint ไหน implement เสร็จจริง ต้องเพิ่มรายการลง `docs/18-api-test-examples.md`; ถ้าเนื้อหายาวให้แยกเป็น `docs/18.x-...-test-examples.md`
 - สำหรับย้ายขึ้น server ใหม่ ให้รัน `make env-init`, แก้ค่า `.env`, แล้วรัน `make db-migrate` ก่อน start/rebuild API สำหรับ real traffic
@@ -472,13 +487,15 @@ PostgreSQL connection done
 -> Auth HTTP: POST /api/v1/auth/logout wired
 -> Auth service: LogoutAllSessions implemented
 -> Auth HTTP: POST /api/v1/auth/logout-all wired
--> ต่อไปเริ่ม forgot/reset password
+-> Auth service: ForgotPassword/ResetPassword implemented
+-> Auth HTTP: POST /api/v1/auth/forgot-password wired
+-> Auth HTTP: POST /api/v1/auth/reset-password wired
+-> ต่อไปเริ่ม Workspace registration/check slug
 ```
 
 ## Do Not Do Yet
 
-- อย่าเริ่ม Workspace ก่อน Auth foundation พร้อม
-- อย่าเริ่ม Workspace
+- อย่าเริ่ม Workspace แบบข้าม Tenant Context/Permission Guard
 - อย่าเริ่ม Project
 - อย่าเริ่ม Task
 - อย่าเพิ่ม Finance

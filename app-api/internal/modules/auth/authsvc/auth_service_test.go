@@ -31,29 +31,31 @@ func (h fakeHasher) Compare(string, string) error {
 }
 
 type fakeRepository struct {
-	existingAccount   *auth.UserAccount
-	findErr           error
-	transactionCalled bool
-	account           *auth.UserAccount
-	identity          *auth.AuthIdentity
-	emailToken        *auth.EmailVerificationToken
-	tokenByHash       *auth.EmailVerificationToken
-	findTokenErr      error
-	verifiedIdentity  uuid.UUID
-	activatedAccount  uuid.UUID
-	usedToken         uuid.UUID
-	revokedIdentity   uuid.UUID
-	loginSuccessUser  uuid.UUID
-	lastUsedIdentity  uuid.UUID
-	authSession       *auth.AuthSession
-	activeSession     *auth.AuthSession
-	activeSessions    []auth.AuthSession
-	revokedSession    string
-	revokeReason      string
-	revokedUser       uuid.UUID
-	loginAttempts     []*auth.LoginAttempt
-	securityEvent     *auth.SecurityEvent
-	securityEvents    []*auth.SecurityEvent
+	existingAccount    *auth.UserAccount
+	findErr            error
+	transactionCalled  bool
+	account            *auth.UserAccount
+	identity           *auth.AuthIdentity
+	emailToken         *auth.EmailVerificationToken
+	passwordResetToken *auth.PasswordResetToken
+	tokenByHash        *auth.EmailVerificationToken
+	resetTokenByHash   *auth.PasswordResetToken
+	findTokenErr       error
+	verifiedIdentity   uuid.UUID
+	activatedAccount   uuid.UUID
+	usedToken          uuid.UUID
+	revokedIdentity    uuid.UUID
+	loginSuccessUser   uuid.UUID
+	lastUsedIdentity   uuid.UUID
+	authSession        *auth.AuthSession
+	activeSession      *auth.AuthSession
+	activeSessions     []auth.AuthSession
+	revokedSession     string
+	revokeReason       string
+	revokedUser        uuid.UUID
+	loginAttempts      []*auth.LoginAttempt
+	securityEvent      *auth.SecurityEvent
+	securityEvents     []*auth.SecurityEvent
 }
 
 func (r *fakeRepository) WithinTransaction(ctx context.Context, fn func(context.Context, auth.Repository) error) error {
@@ -105,6 +107,13 @@ func (r *fakeRepository) FindEmailVerificationTokenByHash(context.Context, strin
 	return nil, auth.ErrEmailVerificationTokenNotFound
 }
 
+func (r *fakeRepository) FindPasswordResetTokenByHash(context.Context, string) (*auth.PasswordResetToken, error) {
+	if r.resetTokenByHash != nil {
+		return r.resetTokenByHash, nil
+	}
+	return nil, auth.ErrPasswordResetTokenNotFound
+}
+
 func (r *fakeRepository) CreateUserAccount(_ context.Context, account *auth.UserAccount) error {
 	account.ID = uuid.Must(uuid.NewV7())
 	r.account = account
@@ -128,6 +137,16 @@ func (r *fakeRepository) CreateEmailVerificationToken(_ context.Context, token *
 	return nil
 }
 
+func (r *fakeRepository) RevokeActivePasswordResetTokens(context.Context, uuid.UUID) error {
+	return nil
+}
+
+func (r *fakeRepository) CreatePasswordResetToken(_ context.Context, token *auth.PasswordResetToken) error {
+	token.ID = uuid.Must(uuid.NewV7())
+	r.passwordResetToken = token
+	return nil
+}
+
 func (r *fakeRepository) MarkEmailVerificationTokenUsed(_ context.Context, id uuid.UUID, usedAt time.Time) error {
 	if r.tokenByHash == nil || r.tokenByHash.ID != id || r.tokenByHash.Status != auth.EmailVerificationTokenStatusActive {
 		return auth.ErrEmailVerificationTokenNotFound
@@ -138,12 +157,30 @@ func (r *fakeRepository) MarkEmailVerificationTokenUsed(_ context.Context, id uu
 	return nil
 }
 
+func (r *fakeRepository) MarkPasswordResetTokenUsed(_ context.Context, id uuid.UUID, usedAt time.Time) error {
+	if r.resetTokenByHash == nil || r.resetTokenByHash.ID != id {
+		return auth.ErrPasswordResetTokenNotFound
+	}
+	r.resetTokenByHash.Status = auth.PasswordResetTokenStatusUsed
+	r.resetTokenByHash.UsedAt = &usedAt
+	return nil
+}
+
 func (r *fakeRepository) MarkAuthIdentityEmailVerified(_ context.Context, id uuid.UUID, verifiedAt time.Time) error {
 	if r.identity == nil || r.identity.ID != id {
 		return auth.ErrAuthIdentityNotFound
 	}
 	r.verifiedIdentity = id
 	r.identity.EmailVerifiedAt = &verifiedAt
+	return nil
+}
+
+func (r *fakeRepository) UpdateAuthIdentityPassword(_ context.Context, id uuid.UUID, passwordHash string, changedAt time.Time) error {
+	if r.identity == nil || r.identity.ID != id {
+		return auth.ErrAuthIdentityNotFound
+	}
+	r.identity.PasswordHash = passwordHash
+	r.identity.PasswordChangedAt = &changedAt
 	return nil
 }
 
@@ -259,6 +296,12 @@ func (s *fakeEmailSender) SendVerificationEmail(_ context.Context, toEmail strin
 	return s.err
 }
 
+func (s *fakeEmailSender) SendPasswordResetEmail(_ context.Context, toEmail string, resetURL string) error {
+	s.toEmail = toEmail
+	s.verificationURL = resetURL
+	return s.err
+}
+
 type fakeRateLimiter struct {
 	allowed bool
 	key     string
@@ -315,12 +358,16 @@ func newTestService(repo *fakeRepository, email *fakeEmailSender, limiter *fakeR
 		limiter = &fakeRateLimiter{allowed: true}
 	}
 	return NewService(repo, fakeHasher{hash: "hashed-password"}, email, limiter, &fakeSessionStore{}, ServiceConfig{
-		VerificationBaseURL:  "https://app.example.test/auth/verify-email",
-		VerificationTokenTTL: 30 * time.Minute,
-		VerificationIPLimit:  5,
-		VerificationIPWindow: 10 * time.Minute,
-		SessionSecret:        "test-session-secret",
-		SessionTTL:           24 * time.Hour,
+		VerificationBaseURL:   "https://app.example.test/auth/verify-email",
+		VerificationTokenTTL:  30 * time.Minute,
+		VerificationIPLimit:   5,
+		VerificationIPWindow:  10 * time.Minute,
+		SessionSecret:         "test-session-secret",
+		SessionTTL:            24 * time.Hour,
+		PasswordResetBaseURL:  "https://app.example.test/auth/reset-password",
+		PasswordResetTokenTTL: 30 * time.Minute,
+		PasswordResetIPLimit:  5,
+		PasswordResetIPWindow: 10 * time.Minute,
 	})
 }
 
@@ -746,6 +793,130 @@ func TestResendVerificationEmailReturnsEmailSendFailure(t *testing.T) {
 	})
 	if !errors.Is(err, ErrVerificationEmailSendFailed) {
 		t.Fatalf("err = %v, want ErrVerificationEmailSendFailed", err)
+	}
+}
+
+func TestForgotPassword(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	identityID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		existingAccount: &auth.UserAccount{
+			ID:           accountID,
+			PrimaryEmail: "owner@example.test",
+			Status:       auth.UserAccountStatusActive,
+		},
+		identity: &auth.AuthIdentity{
+			ID:            identityID,
+			UserAccountID: accountID,
+			Email:         "owner@example.test",
+		},
+	}
+	emailSender := &fakeEmailSender{}
+	service := newTestService(repo, emailSender, nil)
+
+	result, err := service.ForgotPassword(context.Background(), ForgotPasswordInput{
+		Email:     " Owner@Example.Test ",
+		IPAddress: "127.0.0.1",
+		UserAgent: "service unit test",
+	})
+	if err != nil {
+		t.Fatalf("ForgotPassword: %v", err)
+	}
+	if !result.PasswordResetEmailSent {
+		t.Fatal("PasswordResetEmailSent = false, want true")
+	}
+	if repo.passwordResetToken == nil {
+		t.Fatal("password reset token was not created")
+	}
+	if repo.passwordResetToken.AuthIdentityID != identityID {
+		t.Fatalf("token.AuthIdentityID = %s, want %s", repo.passwordResetToken.AuthIdentityID, identityID)
+	}
+	if emailSender.toEmail != "owner@example.test" {
+		t.Fatalf("email to = %s, want owner@example.test", emailSender.toEmail)
+	}
+	if !strings.HasPrefix(emailSender.verificationURL, "https://app.example.test/auth/reset-password?token=") {
+		t.Fatalf("reset URL = %s", emailSender.verificationURL)
+	}
+	if len(repo.securityEvents) != 1 || repo.securityEvents[0].EventType != "auth.password_reset_requested" {
+		t.Fatalf("security events = %#v, want auth.password_reset_requested", repo.securityEvents)
+	}
+}
+
+func TestResetPassword(t *testing.T) {
+	now := time.Now().UTC()
+	accountID := uuid.Must(uuid.NewV7())
+	identityID := uuid.Must(uuid.NewV7())
+	tokenID := uuid.Must(uuid.NewV7())
+	tokenValue := "raw-reset-token"
+	repo := &fakeRepository{
+		identity: &auth.AuthIdentity{
+			ID:            identityID,
+			UserAccountID: accountID,
+			Email:         "owner@example.test",
+			PasswordHash:  "old-hash",
+		},
+		resetTokenByHash: &auth.PasswordResetToken{
+			ID:             tokenID,
+			AuthIdentityID: identityID,
+			TokenHash:      securetoken.Hash(tokenValue),
+			Status:         auth.PasswordResetTokenStatusActive,
+			CreatedAt:      now.Add(-time.Minute),
+			ExpiresAt:      now.Add(30 * time.Minute),
+		},
+		activeSessions: []auth.AuthSession{
+			{
+				ID:             uuid.Must(uuid.NewV7()),
+				UserAccountID:  accountID,
+				SessionKeyHash: "active-session-hash",
+				Status:         auth.AuthSessionStatusActive,
+				CreatedAt:      now.Add(-time.Hour),
+				ExpiresAt:      now.Add(24 * time.Hour),
+			},
+		},
+	}
+	sessions := &fakeSessionStore{}
+	service := NewService(repo, fakeHasher{hash: "hashed-password"}, &fakeEmailSender{}, &fakeRateLimiter{allowed: true}, sessions, ServiceConfig{
+		VerificationBaseURL:   "https://app.example.test/auth/verify-email",
+		VerificationTokenTTL:  30 * time.Minute,
+		VerificationIPLimit:   5,
+		VerificationIPWindow:  10 * time.Minute,
+		SessionSecret:         "test-session-secret",
+		SessionTTL:            24 * time.Hour,
+		PasswordResetBaseURL:  "https://app.example.test/auth/reset-password",
+		PasswordResetTokenTTL: 30 * time.Minute,
+		PasswordResetIPLimit:  5,
+		PasswordResetIPWindow: 10 * time.Minute,
+	})
+
+	result, err := service.ResetPassword(context.Background(), ResetPasswordInput{
+		Token:     tokenValue,
+		Password:  "new-correct-password",
+		IPAddress: "127.0.0.1",
+		UserAgent: "service unit test",
+	})
+	if err != nil {
+		t.Fatalf("ResetPassword: %v", err)
+	}
+	if result.Status != "ok" {
+		t.Fatalf("status = %s, want ok", result.Status)
+	}
+	if repo.resetTokenByHash.Status != auth.PasswordResetTokenStatusUsed {
+		t.Fatalf("token status = %s, want used", repo.resetTokenByHash.Status)
+	}
+	if repo.identity.PasswordHash != "hashed-password" {
+		t.Fatalf("password hash = %s, want hashed-password", repo.identity.PasswordHash)
+	}
+	if repo.revokedUser != accountID {
+		t.Fatalf("revoked user = %s, want %s", repo.revokedUser, accountID)
+	}
+	if repo.revokeReason != "password_reset" {
+		t.Fatalf("revoke reason = %s, want password_reset", repo.revokeReason)
+	}
+	if sessions.deletedHash != "active-session-hash" {
+		t.Fatalf("deleted session hash = %s, want active-session-hash", sessions.deletedHash)
+	}
+	if len(repo.securityEvents) != 1 || repo.securityEvents[0].EventType != "auth.password_reset_success" {
+		t.Fatalf("security events = %#v, want auth.password_reset_success", repo.securityEvents)
 	}
 }
 

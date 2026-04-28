@@ -48,6 +48,8 @@ docker compose ps
 | GET | `/api/v1/auth/me` | Done, validates Redis session cookie, see `docs/18.5-auth-me-test-examples.md` |
 | POST | `/api/v1/auth/logout` | Done, revokes current session and clears cookie, see `docs/18.6-auth-logout-test-examples.md` |
 | POST | `/api/v1/auth/logout-all` | Done, revokes all account sessions, see `docs/18.7-auth-logout-all-test-examples.md` |
+| POST | `/api/v1/auth/forgot-password` | Done, see `docs/18.8-auth-password-reset-test-examples.md` |
+| POST | `/api/v1/auth/reset-password` | Done, see `docs/18.8-auth-password-reset-test-examples.md` |
 
 ## Health
 
@@ -165,12 +167,8 @@ HTTP/1.1 503 Service Unavailable
 | `docs/18.5-auth-me-test-examples.md` | `GET /api/v1/auth/me` |
 | `docs/18.6-auth-logout-test-examples.md` | `POST /api/v1/auth/logout` |
 | `docs/18.7-auth-logout-all-test-examples.md` | `POST /api/v1/auth/logout-all` |
+| `docs/18.8-auth-password-reset-test-examples.md` | `POST /api/v1/auth/forgot-password`, `POST /api/v1/auth/reset-password` |
 
 ## Not Done Yet
 
-Auth routes ที่ยังเป็น placeholder:
-
-| Method | Endpoint | Current Response |
-| --- | --- | --- |
-| POST | `/api/v1/auth/forgot-password` | `501 NOT_IMPLEMENTED` |
-| POST | `/api/v1/auth/reset-password` | `501 NOT_IMPLEMENTED` |
+ยังไม่มี Auth route ที่เป็น placeholder ในชุด backend auth foundation ปัจจุบัน

@@ -82,6 +82,25 @@ type EmailVerificationToken struct {
 	UsedAt         *time.Time
 }
 
+type PasswordResetTokenStatus string
+
+const (
+	PasswordResetTokenStatusActive  PasswordResetTokenStatus = "active"
+	PasswordResetTokenStatusUsed    PasswordResetTokenStatus = "used"
+	PasswordResetTokenStatusExpired PasswordResetTokenStatus = "expired"
+	PasswordResetTokenStatusRevoked PasswordResetTokenStatus = "revoked"
+)
+
+type PasswordResetToken struct {
+	ID             uuid.UUID
+	AuthIdentityID uuid.UUID
+	TokenHash      string
+	Status         PasswordResetTokenStatus
+	CreatedAt      time.Time
+	ExpiresAt      time.Time
+	UsedAt         *time.Time
+}
+
 type AuthSessionStatus string
 
 const (
