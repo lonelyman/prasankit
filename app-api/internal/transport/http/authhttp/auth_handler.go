@@ -14,6 +14,7 @@ import (
 type AuthService interface {
 	RegisterEmailPassword(ctx context.Context, input authsvc.RegisterEmailPasswordInput) (*authsvc.RegisterEmailPasswordResult, error)
 	VerifyEmail(ctx context.Context, input authsvc.VerifyEmailInput) (*authsvc.VerifyEmailResult, error)
+	ResendVerificationEmail(ctx context.Context, input authsvc.ResendVerificationEmailInput) (*authsvc.ResendVerificationEmailResult, error)
 }
 
 type Handler struct {
@@ -38,6 +39,14 @@ type verifyEmailResponse struct {
 	Account accountResponse `json:"account"`
 }
 
+type resendVerificationEmailRequest struct {
+	Email string `json:"email"`
+}
+
+type resendVerificationEmailResponse struct {
+	Status string `json:"status"`
+}
+
 type accountResponse struct {
 	ID           string `json:"id"`
 	PrimaryEmail string `json:"primary_email"`
@@ -54,6 +63,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	auth := router.Group("/auth")
 	auth.Post("/register", h.RegisterEmailPassword)
 	auth.Post("/verify-email", h.VerifyEmail)
+	auth.Post("/resend-verification-email", h.ResendVerificationEmail)
 	auth.Post("/login", h.NotImplemented)
 	auth.Post("/logout", h.NotImplemented)
 	auth.Post("/logout-all", h.NotImplemented)
@@ -120,8 +130,45 @@ func (h Handler) VerifyEmail(c fiber.Ctx) error {
 	})
 }
 
+func (h Handler) ResendVerificationEmail(c fiber.Ctx) error {
+	if h.auth == nil {
+		return h.NotImplemented(c)
+	}
+
+	var req resendVerificationEmailRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+
+	_, err := h.auth.ResendVerificationEmail(c.Context(), authsvc.ResendVerificationEmailInput{
+		Email:     req.Email,
+		IPAddress: c.IP(),
+		UserAgent: c.UserAgent(),
+	})
+	if err != nil {
+		return renderResendVerificationEmailError(c, err)
+	}
+
+	return presenter.RenderItem(c, resendVerificationEmailResponse{
+		Status: "ok",
+	})
+}
+
 func (h Handler) NotImplemented(c fiber.Ctx) error {
 	return presenter.RenderError(c, fiber.StatusNotImplemented, "NOT_IMPLEMENTED", "Auth endpoint is not implemented yet")
+}
+
+func renderResendVerificationEmailError(c fiber.Ctx, err error) error {
+	switch {
+	case errors.Is(err, authsvc.ErrInvalidEmail):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_EMAIL", "Email is invalid")
+	case errors.Is(err, authsvc.ErrVerificationEmailRateLimited):
+		return presenter.RenderError(c, fiber.StatusTooManyRequests, "VERIFICATION_EMAIL_RATE_LIMITED", "Too many verification email requests")
+	case errors.Is(err, authsvc.ErrVerificationEmailSendFailed):
+		return presenter.RenderError(c, fiber.StatusBadGateway, "VERIFICATION_EMAIL_SEND_FAILED", "Verification email could not be sent")
+	default:
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
 }
 
 func renderRegisterError(c fiber.Ctx, err error) error {

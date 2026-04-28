@@ -19,6 +19,7 @@ type Repository interface {
 	WithinTransaction(ctx context.Context, fn func(ctx context.Context, repo Repository) error) error
 	FindUserAccountByEmail(ctx context.Context, email string) (*UserAccount, error)
 	FindAuthIdentityByID(ctx context.Context, id uuid.UUID) (*AuthIdentity, error)
+	FindAuthIdentityByEmail(ctx context.Context, email string) (*AuthIdentity, error)
 	FindEmailVerificationTokenByHash(ctx context.Context, tokenHash string) (*EmailVerificationToken, error)
 	CreateUserAccount(ctx context.Context, account *UserAccount) error
 	CreateAuthIdentity(ctx context.Context, identity *AuthIdentity) error

@@ -37,6 +37,7 @@ type fakeRepository struct {
 	verifiedIdentity  uuid.UUID
 	activatedAccount  uuid.UUID
 	usedToken         uuid.UUID
+	revokedIdentity   uuid.UUID
 	securityEvent     *auth.SecurityEvent
 	securityEvents    []*auth.SecurityEvent
 }
@@ -58,6 +59,13 @@ func (r *fakeRepository) FindUserAccountByEmail(context.Context, string) (*auth.
 
 func (r *fakeRepository) FindAuthIdentityByID(_ context.Context, id uuid.UUID) (*auth.AuthIdentity, error) {
 	if r.identity == nil || r.identity.ID != id {
+		return nil, auth.ErrAuthIdentityNotFound
+	}
+	return r.identity, nil
+}
+
+func (r *fakeRepository) FindAuthIdentityByEmail(_ context.Context, email string) (*auth.AuthIdentity, error) {
+	if r.identity == nil || r.identity.Email != email {
 		return nil, auth.ErrAuthIdentityNotFound
 	}
 	return r.identity, nil
@@ -85,7 +93,8 @@ func (r *fakeRepository) CreateAuthIdentity(_ context.Context, identity *auth.Au
 	return nil
 }
 
-func (r *fakeRepository) RevokeActiveEmailVerificationTokens(context.Context, uuid.UUID) error {
+func (r *fakeRepository) RevokeActiveEmailVerificationTokens(_ context.Context, id uuid.UUID) error {
+	r.revokedIdentity = id
 	return nil
 }
 
@@ -470,5 +479,136 @@ func TestVerifyEmailRejectsUsedToken(t *testing.T) {
 	_, err := service.VerifyEmail(context.Background(), VerifyEmailInput{Token: token})
 	if !errors.Is(err, ErrVerificationTokenAlreadyUsed) {
 		t.Fatalf("err = %v, want ErrVerificationTokenAlreadyUsed", err)
+	}
+}
+
+func TestResendVerificationEmail(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	identityID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		existingAccount: &auth.UserAccount{
+			ID:           accountID,
+			PrimaryEmail: "owner@example.test",
+			Status:       auth.UserAccountStatusPendingVerification,
+		},
+		identity: &auth.AuthIdentity{
+			ID:            identityID,
+			UserAccountID: accountID,
+			Email:         "owner@example.test",
+		},
+	}
+	emailSender := &fakeEmailSender{}
+	limiter := &fakeRateLimiter{allowed: true}
+	service := newTestService(repo, emailSender, limiter)
+
+	result, err := service.ResendVerificationEmail(context.Background(), ResendVerificationEmailInput{
+		Email:     " Owner@Example.Test ",
+		IPAddress: "127.0.0.1",
+		UserAgent: "service unit test",
+	})
+	if err != nil {
+		t.Fatalf("ResendVerificationEmail: %v", err)
+	}
+	if !result.VerificationEmailSent {
+		t.Fatal("VerificationEmailSent = false, want true")
+	}
+	if !repo.transactionCalled {
+		t.Fatal("transaction was not used")
+	}
+	if repo.revokedIdentity != identityID {
+		t.Fatalf("revoked identity = %s, want %s", repo.revokedIdentity, identityID)
+	}
+	if repo.emailToken == nil {
+		t.Fatal("email verification token was not created")
+	}
+	if repo.emailToken.AuthIdentityID != identityID {
+		t.Fatalf("token.AuthIdentityID = %s, want %s", repo.emailToken.AuthIdentityID, identityID)
+	}
+	if emailSender.toEmail != "owner@example.test" {
+		t.Fatalf("email to = %s, want owner@example.test", emailSender.toEmail)
+	}
+	if !strings.HasPrefix(emailSender.verificationURL, "https://app.example.test/auth/verify-email?token=") {
+		t.Fatalf("verification URL = %s", emailSender.verificationURL)
+	}
+	if len(repo.securityEvents) != 1 {
+		t.Fatalf("security events count = %d, want 1", len(repo.securityEvents))
+	}
+	if repo.securityEvents[0].EventType != "auth.email_verification_resent" {
+		t.Fatalf("event type = %s, want auth.email_verification_resent", repo.securityEvents[0].EventType)
+	}
+}
+
+func TestResendVerificationEmailDoesNotRevealMissingOrActiveAccounts(t *testing.T) {
+	service := newTestService(&fakeRepository{}, nil, nil)
+
+	result, err := service.ResendVerificationEmail(context.Background(), ResendVerificationEmailInput{
+		Email: "missing@example.test",
+	})
+	if err != nil {
+		t.Fatalf("ResendVerificationEmail missing account: %v", err)
+	}
+	if result.VerificationEmailSent {
+		t.Fatal("VerificationEmailSent = true, want false for missing account")
+	}
+
+	service = newTestService(&fakeRepository{
+		existingAccount: &auth.UserAccount{
+			ID:           uuid.Must(uuid.NewV7()),
+			PrimaryEmail: "active@example.test",
+			Status:       auth.UserAccountStatusActive,
+		},
+	}, nil, nil)
+
+	result, err = service.ResendVerificationEmail(context.Background(), ResendVerificationEmailInput{
+		Email: "active@example.test",
+	})
+	if err != nil {
+		t.Fatalf("ResendVerificationEmail active account: %v", err)
+	}
+	if result.VerificationEmailSent {
+		t.Fatal("VerificationEmailSent = true, want false for active account")
+	}
+}
+
+func TestResendVerificationEmailRejectsInvalidInputAndRateLimit(t *testing.T) {
+	service := newTestService(&fakeRepository{}, nil, nil)
+
+	_, err := service.ResendVerificationEmail(context.Background(), ResendVerificationEmailInput{
+		Email: "not-an-email",
+	})
+	if !errors.Is(err, ErrInvalidEmail) {
+		t.Fatalf("err = %v, want ErrInvalidEmail", err)
+	}
+
+	service = newTestService(&fakeRepository{}, nil, &fakeRateLimiter{allowed: false})
+	_, err = service.ResendVerificationEmail(context.Background(), ResendVerificationEmailInput{
+		Email: "owner@example.test",
+	})
+	if !errors.Is(err, ErrVerificationEmailRateLimited) {
+		t.Fatalf("err = %v, want ErrVerificationEmailRateLimited", err)
+	}
+}
+
+func TestResendVerificationEmailReturnsEmailSendFailure(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	identityID := uuid.Must(uuid.NewV7())
+	service := newTestService(&fakeRepository{
+		existingAccount: &auth.UserAccount{
+			ID:           accountID,
+			PrimaryEmail: "owner@example.test",
+			Status:       auth.UserAccountStatusPendingVerification,
+		},
+		identity: &auth.AuthIdentity{
+			ID:            identityID,
+			UserAccountID: accountID,
+			Email:         "owner@example.test",
+		},
+	}, &fakeEmailSender{err: errors.New("smtp down")}, nil)
+
+	_, err := service.ResendVerificationEmail(context.Background(), ResendVerificationEmailInput{
+		Email: "owner@example.test",
+	})
+	if !errors.Is(err, ErrVerificationEmailSendFailed) {
+		t.Fatalf("err = %v, want ErrVerificationEmailSendFailed", err)
 	}
 }

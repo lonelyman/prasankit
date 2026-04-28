@@ -43,6 +43,7 @@ docker compose ps
 | GET | `/api/v1/health/ready` | Done |
 | POST | `/api/v1/auth/register` | Done, requires SMTP env, see `docs/18.1-auth-register-test-examples.md` |
 | POST | `/api/v1/auth/verify-email` | Done, see `docs/18.2-auth-verify-email-test-examples.md` |
+| POST | `/api/v1/auth/resend-verification-email` | Done, see `docs/18.3-auth-resend-verification-email-test-examples.md` |
 
 ## Health
 
@@ -155,6 +156,7 @@ HTTP/1.1 503 Service Unavailable
 | --- | --- |
 | `docs/18.1-auth-register-test-examples.md` | `POST /api/v1/auth/register` |
 | `docs/18.2-auth-verify-email-test-examples.md` | `POST /api/v1/auth/verify-email` |
+| `docs/18.3-auth-resend-verification-email-test-examples.md` | `POST /api/v1/auth/resend-verification-email` |
 
 ## Not Done Yet
 

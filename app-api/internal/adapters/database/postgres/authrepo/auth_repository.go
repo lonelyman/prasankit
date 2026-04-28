@@ -174,6 +174,25 @@ func (r *Repository) FindAuthIdentityByID(ctx context.Context, id uuid.UUID) (*a
 	return row.toDomain(), nil
 }
 
+func (r *Repository) FindAuthIdentityByEmail(ctx context.Context, email string) (*auth.AuthIdentity, error) {
+	var row authIdentityRow
+	err := r.db.WithContext(ctx).
+		Where("identity_type = ?", string(auth.AuthIdentityTypeEmailPassword)).
+		Where("provider = ?", string(auth.AuthProviderEmail)).
+		Where("email = ?", email).
+		Where("deleted_at IS NULL").
+		First(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, auth.ErrAuthIdentityNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return row.toDomain(), nil
+}
+
 func (r *Repository) FindEmailVerificationTokenByHash(ctx context.Context, tokenHash string) (*auth.EmailVerificationToken, error) {
 	var row emailVerificationTokenRow
 	err := r.db.WithContext(ctx).

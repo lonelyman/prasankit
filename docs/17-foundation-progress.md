@@ -229,8 +229,10 @@ Verified:
 - เพิ่ม unit test สำหรับ Auth registration service แล้ว
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/register` แล้ว โดย response สำเร็จเป็น `201 Created` ใต้ root key `data`
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/verify-email` แล้ว โดย response สำเร็จอยู่ใต้ root key `data`
+- เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/resend-verification-email` แล้ว โดย response เป็น generic success ใต้ root key `data`
 - เพิ่ม test สำหรับ Auth register handler แล้ว
 - เพิ่ม test สำหรับ Auth verify-email handler แล้ว
+- เพิ่ม test สำหรับ Auth resend-verification-email handler แล้ว
 - `GOTOOLCHAIN=auto go test ./...` ผ่านใน app-api หลัง wire register handler
 - Auth repository integration test ผ่านกับ Docker PostgreSQL หลังเพิ่ม duplicate email mapping
 - `docker compose up -d --build prasankit-api` ผ่านหลัง wire register handler
@@ -240,6 +242,7 @@ Verified:
 - เพิ่ม `docs/18.0-auth-flow-status.md` เพื่อบันทึกว่า Auth backend ทำถึงไหน อะไรยังเป็น manual/temporary และต้องกลับมาแก้ตรงไหนเมื่อเริ่ม frontend
 - เพิ่ม `docs/18.1-auth-register-test-examples.md` และอัปเดตตัวอย่าง register ให้รวม verification email/rate limit/SMTP failure แล้ว
 - เพิ่ม `docs/18.2-auth-verify-email-test-examples.md` สำหรับตัวอย่างทดสอบ verify email แล้ว
+- เพิ่ม `docs/18.3-auth-resend-verification-email-test-examples.md` สำหรับตัวอย่างทดสอบ resend verification email แล้ว
 
 Known note:
 
@@ -292,6 +295,7 @@ PostgreSQL connection done
 -> Auth service: RegisterEmailPassword implemented
 -> Auth HTTP: POST /api/v1/auth/register wired
 -> Auth HTTP: POST /api/v1/auth/verify-email wired
+-> Auth HTTP: POST /api/v1/auth/resend-verification-email wired
 ```
 
 ขั้นถัดไปเริ่ม login/session flow โดยยังคง session-based auth + Redis + httpOnly Cookie

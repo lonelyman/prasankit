@@ -55,6 +55,7 @@ Foundation
 │  ├─ 18.0-auth-flow-status.md
 │  ├─ 18.1-auth-register-test-examples.md
 │  ├─ 18.2-auth-verify-email-test-examples.md
+│  ├─ 18.3-auth-resend-verification-email-test-examples.md
 ├─ .env.example
 ├─ Makefile
 ├─ docker-compose.yml
@@ -152,6 +153,7 @@ app-api/
 - สร้าง `docs/18.0-auth-flow-status.md` สำหรับบันทึกสถานะ Auth flow จริงและจุดที่ต้องกลับมาแก้
 - สร้าง `docs/18.1-auth-register-test-examples.md` สำหรับตัวอย่างทดสอบ `POST /api/v1/auth/register`
 - สร้าง `docs/18.2-auth-verify-email-test-examples.md` สำหรับตัวอย่างทดสอบ `POST /api/v1/auth/verify-email`
+- สร้าง `docs/18.3-auth-resend-verification-email-test-examples.md` สำหรับตัวอย่างทดสอบ `POST /api/v1/auth/resend-verification-email`
 - สร้าง `.env.example`
 - สร้าง root `Makefile` สำหรับ dev bootstrap
 - สร้าง `docker-compose.yml`
@@ -226,6 +228,7 @@ app-api/
   - create `security_events` สำหรับ `auth.email_verification_sent`
 - Wire `RegisterEmailPassword` เข้า HTTP handler `POST /api/v1/auth/register` แล้ว
 - Wire `VerifyEmail` เข้า HTTP handler `POST /api/v1/auth/verify-email` แล้ว
+- Wire `ResendVerificationEmail` เข้า HTTP handler `POST /api/v1/auth/resend-verification-email` แล้ว
 - เปลี่ยน `docker-compose.yml` ให้ API container อ่าน runtime env จาก `.env` แทน `.env.example`
 - เพิ่ม root Make targets:
   - `make env-init`
@@ -279,14 +282,17 @@ PRASANKIT_TEST_DB_DSN='postgres://prasankit:change_me@localhost:15432/prasankit?
 - Auth service unit test ผ่าน รวมถึง register success, invalid input, duplicate email และ missing password hasher
 - Auth service unit test ผ่านสำหรับ verification token, SMTP send, rate limit และ email send failure
 - Auth service unit test ผ่านสำหรับ verify email success, missing token, invalid token, expired token และ used token
+- Auth service unit test ผ่านสำหรับ resend verification email success, missing/active account generic success, invalid email, rate limit และ email send failure
 - Auth register handler unit test ผ่าน รวมถึง success, invalid JSON, validation error, duplicate email, rate limit, email send failure และ unexpected error
 - Auth verify-email handler unit test ผ่าน รวมถึง success, invalid JSON, required token, invalid token, expired token, used token และ unexpected error
+- Auth resend-verification-email handler unit test ผ่าน รวมถึง success, invalid JSON, invalid email, rate limit, email send failure และ unexpected error
 - Docker smoke test `POST /api/v1/auth/register` ผ่าน ได้ `201 Created` และ response อยู่ใต้ root key `data`
 - Docker smoke test สมัคร email ซ้ำผ่าน ได้ `409 Conflict` และ error code `EMAIL_ALREADY_REGISTERED`
 - เพิ่มตัวอย่างทดสอบ endpoint ที่เสร็จแล้วใน `docs/18-api-test-examples.md`
 - แยกตัวอย่าง `POST /api/v1/auth/register` ไปไว้ใน `docs/18.1-auth-register-test-examples.md`
 - อัปเดต `docs/18.1-auth-register-test-examples.md` ให้รวม SMTP env, verification email, rate limit และ SMTP failure แล้ว
 - เพิ่มตัวอย่าง `POST /api/v1/auth/verify-email` ใน `docs/18.2-auth-verify-email-test-examples.md`
+- เพิ่มตัวอย่าง `POST /api/v1/auth/resend-verification-email` ใน `docs/18.3-auth-resend-verification-email-test-examples.md`
 - `GOTOOLCHAIN=auto go test ./...` ผ่านใน `app-api`
 - PostgreSQL extensions ที่ apply แล้ว:
   - `citext`
@@ -405,6 +411,7 @@ PostgreSQL connection done
 -> Auth HTTP: POST /api/v1/auth/register wired
 -> Auth register now creates verification token and sends verification email via real SMTP
 -> Auth HTTP: POST /api/v1/auth/verify-email wired
+-> Auth HTTP: POST /api/v1/auth/resend-verification-email wired
 -> ต่อไปเริ่ม login/session flow
 ```
 

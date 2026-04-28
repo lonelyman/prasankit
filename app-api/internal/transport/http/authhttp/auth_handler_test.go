@@ -23,6 +23,9 @@ type fakeRegistrar struct {
 	verifyResult   *authsvc.VerifyEmailResult
 	verifyErr      error
 	verifyInput    authsvc.VerifyEmailInput
+	resendResult   *authsvc.ResendVerificationEmailResult
+	resendErr      error
+	resendInput    authsvc.ResendVerificationEmailInput
 }
 
 func (r *fakeRegistrar) RegisterEmailPassword(_ context.Context, input authsvc.RegisterEmailPasswordInput) (*authsvc.RegisterEmailPasswordResult, error) {
@@ -39,6 +42,14 @@ func (r *fakeRegistrar) VerifyEmail(_ context.Context, input authsvc.VerifyEmail
 		return nil, r.verifyErr
 	}
 	return r.verifyResult, nil
+}
+
+func (r *fakeRegistrar) ResendVerificationEmail(_ context.Context, input authsvc.ResendVerificationEmailInput) (*authsvc.ResendVerificationEmailResult, error) {
+	r.resendInput = input
+	if r.resendErr != nil {
+		return nil, r.resendErr
+	}
+	return r.resendResult, nil
 }
 
 func TestRegisterEmailPassword(t *testing.T) {
@@ -265,6 +276,97 @@ func TestVerifyEmailMapsServiceErrors(t *testing.T) {
 
 			resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/verify-email", map[string]string{
 				"token": "verify-token",
+			})
+			defer resp.Body.Close()
+
+			assertAuthError(t, resp, tt.wantStatus, tt.wantCode)
+		})
+	}
+}
+
+func TestResendVerificationEmail(t *testing.T) {
+	registrar := &fakeRegistrar{
+		resendResult: &authsvc.ResendVerificationEmailResult{
+			VerificationEmailSent: true,
+		},
+	}
+	app := newAuthTestApp(NewHandler(registrar))
+
+	resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/resend-verification-email", map[string]string{
+		"email": "owner@example.test",
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if registrar.resendInput.Email != "owner@example.test" {
+		t.Fatalf("input.Email = %s, want owner@example.test", registrar.resendInput.Email)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	if data["status"] != "ok" {
+		t.Fatalf("data.status = %v, want ok", data["status"])
+	}
+}
+
+func TestResendVerificationEmailRejectsInvalidJSON(t *testing.T) {
+	app := newAuthTestApp(NewHandler(&fakeRegistrar{}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/resend-verification-email", bytes.NewBufferString("{"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertAuthError(t, resp, http.StatusBadRequest, "INVALID_REQUEST")
+}
+
+func TestResendVerificationEmailMapsServiceErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "invalid email",
+			err:        authsvc.ErrInvalidEmail,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "INVALID_EMAIL",
+		},
+		{
+			name:       "rate limited",
+			err:        authsvc.ErrVerificationEmailRateLimited,
+			wantStatus: http.StatusTooManyRequests,
+			wantCode:   "VERIFICATION_EMAIL_RATE_LIMITED",
+		},
+		{
+			name:       "email send failed",
+			err:        authsvc.ErrVerificationEmailSendFailed,
+			wantStatus: http.StatusBadGateway,
+			wantCode:   "VERIFICATION_EMAIL_SEND_FAILED",
+		},
+		{
+			name:       "unexpected error",
+			err:        errors.New("database down"),
+			wantStatus: http.StatusInternalServerError,
+			wantCode:   "INTERNAL_SERVER_ERROR",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := newAuthTestApp(NewHandler(&fakeRegistrar{resendErr: tt.err}))
+
+			resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/resend-verification-email", map[string]string{
+				"email": "owner@example.test",
 			})
 			defer resp.Body.Close()
 

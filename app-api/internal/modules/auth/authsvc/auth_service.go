@@ -69,6 +69,16 @@ type VerifyEmailResult struct {
 	Account auth.UserAccount
 }
 
+type ResendVerificationEmailInput struct {
+	Email     string
+	IPAddress string
+	UserAgent string
+}
+
+type ResendVerificationEmailResult struct {
+	VerificationEmailSent bool
+}
+
 type Service struct {
 	repository auth.Repository
 	hasher     PasswordHasher
@@ -291,6 +301,112 @@ func (s *Service) VerifyEmail(ctx context.Context, input VerifyEmailInput) (*Ver
 	}, nil
 }
 
+func (s *Service) ResendVerificationEmail(ctx context.Context, input ResendVerificationEmailInput) (*ResendVerificationEmailResult, error) {
+	email, err := normalizeEmail(input.Email)
+	if err != nil {
+		return nil, err
+	}
+	if s.email == nil {
+		return nil, ErrEmailSenderRequired
+	}
+	if s.limiter == nil {
+		return nil, ErrRateLimiterRequired
+	}
+	if err := s.validateVerificationConfig(); err != nil {
+		return nil, err
+	}
+
+	allowed, err := s.limiter.Allow(ctx, verificationRateLimitKey(input.IPAddress), s.config.VerificationIPLimit, s.config.VerificationIPWindow)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrVerificationEmailRateLimited
+	}
+
+	allowed, err = s.limiter.Allow(ctx, verificationEmailRateLimitKey(email), s.config.VerificationIPLimit, s.config.VerificationIPWindow)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrVerificationEmailRateLimited
+	}
+
+	account, err := s.repository.FindUserAccountByEmail(ctx, email)
+	if errors.Is(err, auth.ErrUserAccountNotFound) {
+		return &ResendVerificationEmailResult{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if account.Status == auth.UserAccountStatusActive {
+		return &ResendVerificationEmailResult{}, nil
+	}
+
+	identity, err := s.repository.FindAuthIdentityByEmail(ctx, email)
+	if errors.Is(err, auth.ErrAuthIdentityNotFound) {
+		return &ResendVerificationEmailResult{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if identity.EmailVerifiedAt != nil {
+		return &ResendVerificationEmailResult{}, nil
+	}
+
+	var verificationToken string
+	var emailToken auth.EmailVerificationToken
+	err = s.repository.WithinTransaction(ctx, func(ctx context.Context, repo auth.Repository) error {
+		if err := repo.RevokeActiveEmailVerificationTokens(ctx, identity.ID); err != nil {
+			return err
+		}
+
+		tokenValue, tokenHash, err := securetoken.New()
+		if err != nil {
+			return err
+		}
+		verificationToken = tokenValue
+		now := time.Now().UTC()
+		emailToken = auth.EmailVerificationToken{
+			AuthIdentityID: identity.ID,
+			TokenHash:      tokenHash,
+			ExpiresAt:      now.Add(s.config.VerificationTokenTTL),
+			CreatedAt:      now,
+		}
+		if err := repo.CreateEmailVerificationToken(ctx, &emailToken); err != nil {
+			return err
+		}
+
+		return repo.CreateSecurityEvent(ctx, &auth.SecurityEvent{
+			UserAccountID: &account.ID,
+			EventType:     "auth.email_verification_resent",
+			Severity:      auth.SecurityEventSeverityInfo,
+			IPAddress:     input.IPAddress,
+			UserAgent:     input.UserAgent,
+			MetadataJSON: map[string]any{
+				"identity_id":                   identity.ID.String(),
+				"email_verification_token_id":   emailToken.ID.String(),
+				"email_verification_expires_at": emailToken.ExpiresAt.Format(time.RFC3339),
+			},
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	verificationURL, err := s.buildVerificationURL(verificationToken)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.email.SendVerificationEmail(ctx, email, verificationURL); err != nil {
+		return nil, errors.Join(ErrVerificationEmailSendFailed, err)
+	}
+
+	return &ResendVerificationEmailResult{
+		VerificationEmailSent: true,
+	}, nil
+}
+
 func (s *Service) validateVerificationConfig() error {
 	if s.config.VerificationBaseURL == "" {
 		return ErrVerificationConfigInvalid
@@ -323,6 +439,10 @@ func verificationRateLimitKey(ipAddress string) string {
 		return "rate:auth:verify_email:ip:" + parsed.String()
 	}
 	return "rate:auth:verify_email:ip:unknown"
+}
+
+func verificationEmailRateLimitKey(email string) string {
+	return "rate:auth:verify_email:email:" + strings.ToLower(strings.TrimSpace(email))
 }
 
 func normalizeEmail(value string) (string, error) {

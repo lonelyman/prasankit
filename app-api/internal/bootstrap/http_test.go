@@ -218,6 +218,7 @@ func TestAuthRoutesReturnNotImplemented(t *testing.T) {
 		{method: http.MethodPost, path: "/api/v1/auth/logout-all"},
 		{method: http.MethodPost, path: "/api/v1/auth/forgot-password"},
 		{method: http.MethodPost, path: "/api/v1/auth/reset-password"},
+		{method: http.MethodPost, path: "/api/v1/auth/resend-verification-email"},
 		{method: http.MethodGet, path: "/api/v1/auth/me"},
 	}
 
