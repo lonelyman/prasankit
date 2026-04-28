@@ -63,6 +63,41 @@ func (membershipRow) TableName() string {
 	return "workspace_memberships"
 }
 
+type workspaceMembershipListRow struct {
+	WorkspaceID                    uuid.UUID  `gorm:"column:workspace_id"`
+	WorkspaceTenantID              uuid.UUID  `gorm:"column:workspace_tenant_id"`
+	WorkspaceName                  string     `gorm:"column:workspace_name"`
+	WorkspaceSlug                  string     `gorm:"column:workspace_slug"`
+	WorkspaceMode                  string     `gorm:"column:workspace_mode"`
+	WorkspaceStatus                string     `gorm:"column:workspace_status"`
+	WorkspaceContactEmail          string     `gorm:"column:workspace_contact_email"`
+	WorkspaceOwnerUserAccountID    uuid.UUID  `gorm:"column:workspace_owner_user_account_id"`
+	WorkspaceEmailVerifiedRequired bool       `gorm:"column:workspace_email_verified_required"`
+	WorkspaceCreatedAt             time.Time  `gorm:"column:workspace_created_at"`
+	WorkspaceCreatedBy             uuid.UUID  `gorm:"column:workspace_created_by"`
+	WorkspaceUpdatedAt             time.Time  `gorm:"column:workspace_updated_at"`
+	WorkspaceUpdatedBy             *uuid.UUID `gorm:"column:workspace_updated_by"`
+	WorkspacePendingDeletionAt     *time.Time `gorm:"column:workspace_pending_deletion_at"`
+	WorkspaceDeletedAt             *time.Time `gorm:"column:workspace_deleted_at"`
+	WorkspaceDeletedBy             *uuid.UUID `gorm:"column:workspace_deleted_by"`
+	WorkspaceHardDeletedAt         *time.Time `gorm:"column:workspace_hard_deleted_at"`
+	MembershipID                   uuid.UUID  `gorm:"column:membership_id"`
+	MembershipTenantID             uuid.UUID  `gorm:"column:membership_tenant_id"`
+	MembershipWorkspaceID          uuid.UUID  `gorm:"column:membership_workspace_id"`
+	MembershipProfileID            *uuid.UUID `gorm:"column:membership_profile_id"`
+	MembershipUserAccountID        *uuid.UUID `gorm:"column:membership_user_account_id"`
+	MembershipWorkspaceRole        string     `gorm:"column:membership_workspace_role"`
+	MembershipStatus               string     `gorm:"column:membership_status"`
+	MembershipStatusReason         string     `gorm:"column:membership_status_reason"`
+	MembershipJoinedAt             *time.Time `gorm:"column:membership_joined_at"`
+	MembershipRemovedAt            *time.Time `gorm:"column:membership_removed_at"`
+	MembershipSuspendedAt          *time.Time `gorm:"column:membership_suspended_at"`
+	MembershipCreatedAt            time.Time  `gorm:"column:membership_created_at"`
+	MembershipCreatedBy            *uuid.UUID `gorm:"column:membership_created_by"`
+	MembershipUpdatedAt            time.Time  `gorm:"column:membership_updated_at"`
+	MembershipUpdatedBy            *uuid.UUID `gorm:"column:membership_updated_by"`
+}
+
 func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -201,6 +236,75 @@ func (r *Repository) FindActiveMembership(ctx context.Context, tenantID uuid.UUI
 	return row.toDomain(), nil
 }
 
+func (r *Repository) ListWorkspacesByUserAccountID(ctx context.Context, userAccountID uuid.UUID, limit int, offset int) ([]workspace.WorkspaceWithMembership, int, error) {
+	var total int64
+	countQuery := r.db.WithContext(ctx).
+		Table("workspace_memberships AS wm").
+		Joins("JOIN workspaces AS w ON w.id = wm.workspace_id AND w.tenant_id = wm.tenant_id").
+		Where("wm.user_account_id = ?", userAccountID).
+		Where("wm.status = ?", string(workspace.MembershipStatusActive)).
+		Where("w.deleted_at IS NULL")
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var rows []workspaceMembershipListRow
+	err := r.db.WithContext(ctx).
+		Table("workspace_memberships AS wm").
+		Select(`
+			w.id AS workspace_id,
+			w.tenant_id AS workspace_tenant_id,
+			w.workspace_name AS workspace_name,
+			w.slug AS workspace_slug,
+			w.mode AS workspace_mode,
+			w.status AS workspace_status,
+			w.contact_email AS workspace_contact_email,
+			w.owner_user_account_id AS workspace_owner_user_account_id,
+			w.email_verified_required AS workspace_email_verified_required,
+			w.created_at AS workspace_created_at,
+			w.created_by AS workspace_created_by,
+			w.updated_at AS workspace_updated_at,
+			w.updated_by AS workspace_updated_by,
+			w.pending_deletion_at AS workspace_pending_deletion_at,
+			w.deleted_at AS workspace_deleted_at,
+			w.deleted_by AS workspace_deleted_by,
+			w.hard_deleted_at AS workspace_hard_deleted_at,
+			wm.id AS membership_id,
+			wm.tenant_id AS membership_tenant_id,
+			wm.workspace_id AS membership_workspace_id,
+			wm.profile_id AS membership_profile_id,
+			wm.user_account_id AS membership_user_account_id,
+			wm.workspace_role AS membership_workspace_role,
+			wm.status AS membership_status,
+			wm.status_reason AS membership_status_reason,
+			wm.joined_at AS membership_joined_at,
+			wm.removed_at AS membership_removed_at,
+			wm.suspended_at AS membership_suspended_at,
+			wm.created_at AS membership_created_at,
+			wm.created_by AS membership_created_by,
+			wm.updated_at AS membership_updated_at,
+			wm.updated_by AS membership_updated_by
+		`).
+		Joins("JOIN workspaces AS w ON w.id = wm.workspace_id AND w.tenant_id = wm.tenant_id").
+		Where("wm.user_account_id = ?", userAccountID).
+		Where("wm.status = ?", string(workspace.MembershipStatusActive)).
+		Where("w.deleted_at IS NULL").
+		Order("w.created_at ASC, w.id ASC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]workspace.WorkspaceWithMembership, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, row.toDomain())
+	}
+	return items, int(total), nil
+}
+
 func ensureUUID(id *uuid.UUID) error {
 	if *id != uuid.Nil {
 		return nil
@@ -262,5 +366,46 @@ func (r membershipRow) toDomain() *workspace.Membership {
 		CreatedBy:     r.CreatedBy,
 		UpdatedAt:     r.UpdatedAt,
 		UpdatedBy:     r.UpdatedBy,
+	}
+}
+
+func (r workspaceMembershipListRow) toDomain() workspace.WorkspaceWithMembership {
+	return workspace.WorkspaceWithMembership{
+		Workspace: workspace.Workspace{
+			ID:                    r.WorkspaceID,
+			TenantID:              r.WorkspaceTenantID,
+			Name:                  r.WorkspaceName,
+			Slug:                  r.WorkspaceSlug,
+			Mode:                  workspace.WorkspaceMode(r.WorkspaceMode),
+			Status:                workspace.WorkspaceStatus(r.WorkspaceStatus),
+			ContactEmail:          r.WorkspaceContactEmail,
+			OwnerUserAccountID:    r.WorkspaceOwnerUserAccountID,
+			EmailVerifiedRequired: r.WorkspaceEmailVerifiedRequired,
+			CreatedAt:             r.WorkspaceCreatedAt,
+			CreatedBy:             r.WorkspaceCreatedBy,
+			UpdatedAt:             r.WorkspaceUpdatedAt,
+			UpdatedBy:             r.WorkspaceUpdatedBy,
+			PendingDeletionAt:     r.WorkspacePendingDeletionAt,
+			DeletedAt:             r.WorkspaceDeletedAt,
+			DeletedBy:             r.WorkspaceDeletedBy,
+			HardDeletedAt:         r.WorkspaceHardDeletedAt,
+		},
+		Membership: workspace.Membership{
+			ID:            r.MembershipID,
+			TenantID:      r.MembershipTenantID,
+			WorkspaceID:   r.MembershipWorkspaceID,
+			ProfileID:     r.MembershipProfileID,
+			UserAccountID: r.MembershipUserAccountID,
+			Role:          workspace.WorkspaceRole(r.MembershipWorkspaceRole),
+			Status:        workspace.MembershipStatus(r.MembershipStatus),
+			StatusReason:  r.MembershipStatusReason,
+			JoinedAt:      r.MembershipJoinedAt,
+			RemovedAt:     r.MembershipRemovedAt,
+			SuspendedAt:   r.MembershipSuspendedAt,
+			CreatedAt:     r.MembershipCreatedAt,
+			CreatedBy:     r.MembershipCreatedBy,
+			UpdatedAt:     r.MembershipUpdatedAt,
+			UpdatedBy:     r.MembershipUpdatedBy,
+		},
 	}
 }

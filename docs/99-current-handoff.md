@@ -250,6 +250,7 @@ app-api/
 - Wire Workspace registration ก้อนแรกเข้า HTTP handler แล้ว:
   - `GET /api/v1/workspaces/check-slug`
   - `POST /api/v1/workspaces/register`
+  - `GET /api/v1/workspaces/me`
 - เพิ่ม Redis session store สำหรับเก็บ session record หลัง login
 - เพิ่ม Redis session store สำหรับอ่าน session record และ delete session record แล้ว
 - เพิ่ม Auth service flow สำหรับ `LoginEmailPassword`:
@@ -297,6 +298,12 @@ app-api/
   - สร้าง workspace พร้อม `tenant_id` จาก backend
   - สร้าง owner membership ให้ account ใน session
   - response ไม่ส่ง `tenant_id` ให้ frontend ใช้คุมสิทธิ์
+- เพิ่ม Workspace list flow:
+  - `GET /api/v1/workspaces/me`
+  - ใช้ account จาก session cookie
+  - list เฉพาะ active membership ของ user
+  - response เป็น `data.items` และ `data.pagination`
+  - response ไม่ส่ง `tenant_id`
 - เปลี่ยน `docker-compose.yml` ให้ API container อ่าน runtime env จาก `.env` แทน `.env.example`
 - เพิ่ม root Make targets:
   - `make env-init`
@@ -505,7 +512,8 @@ PostgreSQL connection done
 -> Auth HTTP: POST /api/v1/auth/reset-password wired
 -> Workspace HTTP: GET /api/v1/workspaces/check-slug wired
 -> Workspace HTTP: POST /api/v1/workspaces/register wired
--> ต่อไปเริ่ม GET /api/v1/workspaces/me และ Tenant Context resolver
+-> Workspace HTTP: GET /api/v1/workspaces/me wired
+-> ต่อไปเริ่ม Tenant Context resolver
 ```
 
 ## Do Not Do Yet

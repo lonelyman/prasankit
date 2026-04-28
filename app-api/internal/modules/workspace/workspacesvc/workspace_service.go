@@ -77,6 +77,17 @@ type RegisterWorkspaceResult struct {
 	Membership workspace.Membership
 }
 
+type ListMyWorkspacesInput struct {
+	Account auth.UserAccount
+	Limit   int
+	Offset  int
+}
+
+type ListMyWorkspacesResult struct {
+	Items []workspace.WorkspaceWithMembership
+	Total int
+}
+
 type Service struct {
 	repository workspace.Repository
 }
@@ -197,6 +208,35 @@ func (s *Service) RegisterWorkspace(ctx context.Context, input RegisterWorkspace
 	return &RegisterWorkspaceResult{
 		Workspace:  workspaceRecord,
 		Membership: membershipRecord,
+	}, nil
+}
+
+func (s *Service) ListMyWorkspaces(ctx context.Context, input ListMyWorkspacesInput) (*ListMyWorkspacesResult, error) {
+	if input.Account.ID == uuid.Nil {
+		return nil, ErrAccountRequired
+	}
+	if input.Account.Status != auth.UserAccountStatusActive {
+		return nil, ErrAccountInactive
+	}
+	limit := input.Limit
+	if limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := input.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	items, total, err := s.repository.ListWorkspacesByUserAccountID(ctx, input.Account.ID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &ListMyWorkspacesResult{
+		Items: items,
+		Total: total,
 	}, nil
 }
 

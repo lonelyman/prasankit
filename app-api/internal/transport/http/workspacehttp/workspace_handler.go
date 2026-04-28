@@ -19,6 +19,7 @@ const accountLocalKey = "workspace.account"
 type WorkspaceService interface {
 	CheckSlug(ctx context.Context, input workspacesvc.CheckSlugInput) (*workspacesvc.CheckSlugResult, error)
 	RegisterWorkspace(ctx context.Context, input workspacesvc.RegisterWorkspaceInput) (*workspacesvc.RegisterWorkspaceResult, error)
+	ListMyWorkspaces(ctx context.Context, input workspacesvc.ListMyWorkspacesInput) (*workspacesvc.ListMyWorkspacesResult, error)
 }
 
 type SessionService interface {
@@ -71,6 +72,11 @@ type membershipResponse struct {
 	Status      string `json:"status"`
 }
 
+type myWorkspaceResponse struct {
+	Workspace  workspaceResponse  `json:"workspace"`
+	Membership membershipResponse `json:"membership"`
+}
+
 func NewHandler(workspaceService WorkspaceService, sessionService SessionService, cookie CookieConfig) Handler {
 	return Handler{
 		workspace: workspaceService,
@@ -82,6 +88,7 @@ func NewHandler(workspaceService WorkspaceService, sessionService SessionService
 func (h Handler) RegisterRoutes(router fiber.Router) {
 	workspaces := router.Group("/workspaces")
 	workspaces.Get("/check-slug", h.CheckSlug)
+	workspaces.Get("/me", h.requireSession, h.MyWorkspaces)
 	workspaces.Post("/register", h.requireSession, h.RegisterWorkspace)
 }
 
@@ -133,6 +140,37 @@ func (h Handler) RegisterWorkspace(c fiber.Ctx) error {
 		Workspace:  toWorkspaceResponse(result.Workspace),
 		Membership: toMembershipResponse(result.Membership),
 	}, fiber.StatusCreated)
+}
+
+func (h Handler) MyWorkspaces(c fiber.Ctx) error {
+	if h.workspace == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, ok := c.Locals(accountLocalKey).(auth.UserAccount)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	query := presenter.ParseOffsetQuery(c)
+	result, err := h.workspace.ListMyWorkspaces(c.Context(), workspacesvc.ListMyWorkspacesInput{
+		Account: account,
+		Limit:   query.Limit,
+		Offset:  query.Offset,
+	})
+	if err != nil {
+		return renderWorkspaceError(c, err)
+	}
+
+	items := make([]myWorkspaceResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, myWorkspaceResponse{
+			Workspace:  toWorkspaceResponse(item.Workspace),
+			Membership: toMembershipResponse(item.Membership),
+		})
+	}
+
+	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
 }
 
 func (h Handler) requireSession(c fiber.Ctx) error {

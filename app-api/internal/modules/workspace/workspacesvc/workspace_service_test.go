@@ -15,6 +15,8 @@ type fakeRepository struct {
 	existingWorkspace *workspace.Workspace
 	workspace         *workspace.Workspace
 	membership        *workspace.Membership
+	listItems         []workspace.WorkspaceWithMembership
+	listTotal         int
 	transactionCalled bool
 }
 
@@ -45,6 +47,10 @@ func (r *fakeRepository) CreateMembership(_ context.Context, value *workspace.Me
 
 func (r *fakeRepository) FindActiveMembership(context.Context, uuid.UUID, uuid.UUID) (*workspace.Membership, error) {
 	return nil, workspace.ErrMembershipNotFound
+}
+
+func (r *fakeRepository) ListWorkspacesByUserAccountID(context.Context, uuid.UUID, int, int) ([]workspace.WorkspaceWithMembership, int, error) {
+	return r.listItems, r.listTotal, nil
 }
 
 func TestCheckSlug(t *testing.T) {
@@ -172,5 +178,51 @@ func TestRegisterWorkspaceRejectsTakenSlug(t *testing.T) {
 	})
 	if !errors.Is(err, ErrWorkspaceSlugTaken) {
 		t.Fatalf("err = %v, want ErrWorkspaceSlugTaken", err)
+	}
+}
+
+func TestListMyWorkspaces(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		listItems: []workspace.WorkspaceWithMembership{
+			{
+				Workspace: workspace.Workspace{
+					ID:     workspaceID,
+					Name:   "Team One",
+					Slug:   "team-one",
+					Status: workspace.WorkspaceStatusActive,
+				},
+				Membership: workspace.Membership{
+					ID:          uuid.Must(uuid.NewV7()),
+					WorkspaceID: workspaceID,
+					Role:        workspace.WorkspaceRoleOwner,
+					Status:      workspace.MembershipStatusActive,
+				},
+			},
+		},
+		listTotal: 1,
+	}
+	service := NewService(repo)
+
+	result, err := service.ListMyWorkspaces(context.Background(), ListMyWorkspacesInput{
+		Account: auth.UserAccount{
+			ID:     accountID,
+			Status: auth.UserAccountStatusActive,
+		},
+		Limit:  10,
+		Offset: 0,
+	})
+	if err != nil {
+		t.Fatalf("ListMyWorkspaces: %v", err)
+	}
+	if result.Total != 1 {
+		t.Fatalf("total = %d, want 1", result.Total)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(result.Items))
+	}
+	if result.Items[0].Workspace.Slug != "team-one" {
+		t.Fatalf("workspace slug = %s, want team-one", result.Items[0].Workspace.Slug)
 	}
 }

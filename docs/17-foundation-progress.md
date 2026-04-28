@@ -307,6 +307,7 @@ Verified:
 - เพิ่ม Workspace module ก้อนแรกแล้ว:
   - `GET /api/v1/workspaces/check-slug`
   - `POST /api/v1/workspaces/register`
+  - `GET /api/v1/workspaces/me`
   - สร้าง `tenant_id` จาก backend เอง
   - สร้าง owner membership จาก account ใน session
   - response ไม่ส่ง `tenant_id` ให้ frontend ใช้คุมสิทธิ์
@@ -337,7 +338,7 @@ Composition note:
 - Fresh server bootstrap order: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
 - Auth/session backend หลักเสร็จถึง forgot/reset password แล้ว
-- Workspace registration backend ก้อนแรกเสร็จถึง check slug/register workspace แล้ว
+- Workspace registration backend ก้อนแรกเสร็จถึง check slug/register/list my workspaces แล้ว
 
 หมายเหตุ:
 
@@ -345,7 +346,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปเริ่ม `GET /api/v1/workspaces/me` และ Tenant Context resolver แบบช้า ๆ โดยยังต้องรักษา Tenant Context และ Permission Guard ตาม rule เดิม
+ขั้นถัดไปเริ่ม Tenant Context resolver แบบช้า ๆ โดยยังต้องรักษา Tenant Context และ Permission Guard ตาม rule เดิม
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -380,4 +381,5 @@ PostgreSQL connection done
 -> Auth HTTP: POST /api/v1/auth/reset-password wired
 -> Workspace HTTP: GET /api/v1/workspaces/check-slug wired
 -> Workspace HTTP: POST /api/v1/workspaces/register wired
+-> Workspace HTTP: GET /api/v1/workspaces/me wired
 ```

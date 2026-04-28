@@ -26,6 +26,9 @@ type fakeWorkspaceService struct {
 	registerResult *workspacesvc.RegisterWorkspaceResult
 	registerErr    error
 	registerInput  workspacesvc.RegisterWorkspaceInput
+	listResult     *workspacesvc.ListMyWorkspacesResult
+	listErr        error
+	listInput      workspacesvc.ListMyWorkspacesInput
 }
 
 func (s *fakeWorkspaceService) CheckSlug(_ context.Context, input workspacesvc.CheckSlugInput) (*workspacesvc.CheckSlugResult, error) {
@@ -42,6 +45,14 @@ func (s *fakeWorkspaceService) RegisterWorkspace(_ context.Context, input worksp
 		return nil, s.registerErr
 	}
 	return s.registerResult, nil
+}
+
+func (s *fakeWorkspaceService) ListMyWorkspaces(_ context.Context, input workspacesvc.ListMyWorkspacesInput) (*workspacesvc.ListMyWorkspacesResult, error) {
+	s.listInput = input
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return s.listResult, nil
 }
 
 type fakeSessionService struct {
@@ -166,6 +177,84 @@ func TestRegisterWorkspaceRequiresSession(t *testing.T) {
 	defer resp.Body.Close()
 
 	assertWorkspaceError(t, resp, http.StatusUnauthorized, "AUTH_SESSION_REQUIRED")
+}
+
+func TestMyWorkspaces(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.Must(uuid.NewV7())
+	tenantID := uuid.Must(uuid.NewV7())
+	service := &fakeWorkspaceService{
+		listResult: &workspacesvc.ListMyWorkspacesResult{
+			Total: 1,
+			Items: []workspace.WorkspaceWithMembership{
+				{
+					Workspace: workspace.Workspace{
+						ID:           workspaceID,
+						TenantID:     tenantID,
+						Name:         "Team One",
+						Slug:         "team-one",
+						Mode:         workspace.WorkspaceModeDemo,
+						Status:       workspace.WorkspaceStatusActive,
+						ContactEmail: "owner@example.test",
+					},
+					Membership: workspace.Membership{
+						ID:          uuid.Must(uuid.NewV7()),
+						WorkspaceID: workspaceID,
+						Role:        workspace.WorkspaceRoleOwner,
+						Status:      workspace.MembershipStatusActive,
+					},
+				},
+			},
+		},
+	}
+	session := &fakeSessionService{
+		result: &authsvc.CurrentAccountResult{
+			Account: auth.UserAccount{
+				ID:     accountID,
+				Status: auth.UserAccountStatusActive,
+			},
+		},
+	}
+	app := newWorkspaceTestApp(newTestHandler(service, session))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/me?page=1&limit=10", nil)
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.listInput.Account.ID != accountID {
+		t.Fatalf("account id = %s, want %s", service.listInput.Account.ID, accountID)
+	}
+	if service.listInput.Limit != 10 || service.listInput.Offset != 0 {
+		t.Fatalf("pagination = limit %d offset %d, want 10/0", service.listInput.Limit, service.listInput.Offset)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	items := data["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	item := items[0].(map[string]any)
+	workspaceData := item["workspace"].(map[string]any)
+	if _, ok := workspaceData["tenant_id"]; ok {
+		t.Fatalf("response must not expose tenant_id: %#v", workspaceData)
+	}
+	if workspaceData["slug"] != "team-one" {
+		t.Fatalf("workspace.slug = %v, want team-one", workspaceData["slug"])
+	}
+	if _, ok := data["pagination"]; !ok {
+		t.Fatalf("pagination missing: %#v", data)
+	}
 }
 
 func TestRegisterWorkspaceMapsValidationErrors(t *testing.T) {

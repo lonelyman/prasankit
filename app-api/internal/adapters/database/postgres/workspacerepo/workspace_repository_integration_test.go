@@ -113,6 +113,26 @@ func TestRepositoryIntegration(t *testing.T) {
 		t.Fatalf("membership ID = %s, want %s", foundMembership.ID, membership.ID)
 	}
 
+	items, total, err := repo.ListWorkspacesByUserAccountID(ctx, accountID, 10, 0)
+	if err != nil {
+		t.Fatalf("list workspaces by user account id: %v", err)
+	}
+	if total < 1 {
+		t.Fatalf("total = %d, want at least 1", total)
+	}
+	foundListItem := false
+	for _, item := range items {
+		if item.Workspace.ID == workspaceRecord.ID && item.Membership.ID == membership.ID {
+			foundListItem = true
+			if item.Workspace.TenantID != workspaceRecord.TenantID {
+				t.Fatalf("list item tenant ID = %s, want %s", item.Workspace.TenantID, workspaceRecord.TenantID)
+			}
+		}
+	}
+	if !foundListItem {
+		t.Fatalf("created workspace/membership not found in list: %#v", items)
+	}
+
 	duplicate := *workspaceRecord
 	duplicate.ID = uuid.Nil
 	duplicate.TenantID = uuid.Nil

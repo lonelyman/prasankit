@@ -76,3 +76,8 @@ type Membership struct {
 	UpdatedAt     time.Time
 	UpdatedBy     *uuid.UUID
 }
+
+type WorkspaceWithMembership struct {
+	Workspace  Workspace
+	Membership Membership
+}
