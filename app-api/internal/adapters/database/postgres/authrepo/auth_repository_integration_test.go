@@ -118,6 +118,115 @@ func TestRepositoryIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("create auth identity rejects duplicate email", func(t *testing.T) {
+		email := "duplicate-identity-" + uuid.NewString() + "@example.test"
+		firstAccount := &auth.UserAccount{
+			PrimaryEmail: email,
+		}
+		if err := repo.CreateUserAccount(ctx, firstAccount); err != nil {
+			t.Fatalf("create first user account: %v", err)
+		}
+		secondAccount := &auth.UserAccount{
+			PrimaryEmail: email,
+		}
+		if err := repo.CreateUserAccount(ctx, secondAccount); err != nil {
+			t.Fatalf("create second user account: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = db.Exec(`DELETE FROM auth_identities WHERE email = ?`, email).Error
+			_ = db.Exec(`DELETE FROM user_accounts WHERE id IN ?`, []uuid.UUID{firstAccount.ID, secondAccount.ID}).Error
+		})
+
+		firstIdentity := &auth.AuthIdentity{
+			UserAccountID: firstAccount.ID,
+			Email:         email,
+			PasswordHash:  "test-password-hash",
+		}
+		if err := repo.CreateAuthIdentity(ctx, firstIdentity); err != nil {
+			t.Fatalf("create first auth identity: %v", err)
+		}
+
+		secondIdentity := &auth.AuthIdentity{
+			UserAccountID: secondAccount.ID,
+			Email:         email,
+			PasswordHash:  "test-password-hash",
+		}
+		err := repo.CreateAuthIdentity(ctx, secondIdentity)
+		if !errors.Is(err, auth.ErrEmailAlreadyRegistered) {
+			t.Fatalf("err = %v, want ErrEmailAlreadyRegistered", err)
+		}
+	})
+
+	t.Run("create and revoke email verification token", func(t *testing.T) {
+		email := "verify-token-" + uuid.NewString() + "@example.test"
+		account := &auth.UserAccount{
+			PrimaryEmail: email,
+		}
+		if err := repo.CreateUserAccount(ctx, account); err != nil {
+			t.Fatalf("create user account: %v", err)
+		}
+		identity := &auth.AuthIdentity{
+			UserAccountID: account.ID,
+			Email:         email,
+			PasswordHash:  "test-password-hash",
+		}
+		if err := repo.CreateAuthIdentity(ctx, identity); err != nil {
+			t.Fatalf("create auth identity: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = db.Exec(`DELETE FROM auth_email_verification_tokens WHERE auth_identity_id = ?`, identity.ID).Error
+			_ = db.Exec(`DELETE FROM auth_identities WHERE email = ?`, email).Error
+			_ = db.Exec(`DELETE FROM user_accounts WHERE id = ?`, account.ID).Error
+		})
+
+		token := &auth.EmailVerificationToken{
+			AuthIdentityID: identity.ID,
+			TokenHash:      "verify-token-hash-" + uuid.NewString(),
+			ExpiresAt:      time.Now().UTC().Add(30 * time.Minute),
+		}
+		if err := repo.CreateEmailVerificationToken(ctx, token); err != nil {
+			t.Fatalf("create email verification token: %v", err)
+		}
+
+		if token.ID == uuid.Nil {
+			t.Fatal("token.ID was not set")
+		}
+		if token.ID.Version() != 7 {
+			t.Fatalf("token.ID version = %d, want 7", token.ID.Version())
+		}
+		if token.Status != auth.EmailVerificationTokenStatusActive {
+			t.Fatalf("token.Status = %s, want %s", token.Status, auth.EmailVerificationTokenStatusActive)
+		}
+
+		if err := repo.RevokeActiveEmailVerificationTokens(ctx, identity.ID); err != nil {
+			t.Fatalf("revoke active email verification tokens: %v", err)
+		}
+
+		var status string
+		if err := db.Table("auth_email_verification_tokens").
+			Select("status").
+			Where("id = ?", token.ID).
+			Scan(&status).
+			Error; err != nil {
+			t.Fatalf("query token status: %v", err)
+		}
+		if status != string(auth.EmailVerificationTokenStatusRevoked) {
+			t.Fatalf("token status = %s, want %s", status, auth.EmailVerificationTokenStatusRevoked)
+		}
+	})
+
+	t.Run("create email verification token requires expires_at", func(t *testing.T) {
+		token := &auth.EmailVerificationToken{
+			AuthIdentityID: uuid.New(),
+			TokenHash:      "verify-token-hash-" + uuid.NewString(),
+		}
+
+		err := repo.CreateEmailVerificationToken(ctx, token)
+		if !errors.Is(err, auth.ErrEmailVerificationTokenExpiresAtRequired) {
+			t.Fatalf("err = %v, want ErrEmailVerificationTokenExpiresAtRequired", err)
+		}
+	})
+
 	t.Run("find user account by email", func(t *testing.T) {
 		email := "repo-test-" + uuid.NewString() + "@example.test"
 		_, err := repo.FindUserAccountByEmail(ctx, email)

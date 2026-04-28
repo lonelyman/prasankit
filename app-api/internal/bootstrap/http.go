@@ -14,7 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func NewHTTPApp(postgres *sql.DB, redisClient *redis.Client, storageClient *minio.Client) *fiber.App {
+func NewHTTPApp(postgres *sql.DB, redisClient *redis.Client, storageClient *minio.Client, authHandler authhttp.Handler) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:      "prasankit-api",
 		ErrorHandler: middlewares.ErrorHandler,
@@ -31,7 +31,7 @@ func NewHTTPApp(postgres *sql.DB, redisClient *redis.Client, storageClient *mini
 		},
 	})
 
-	httptransport.RegisterRoutes(app, healthHandler, authhttp.NewHandler())
+	httptransport.RegisterRoutes(app, healthHandler, authHandler)
 
 	return app
 }

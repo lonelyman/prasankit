@@ -9,7 +9,13 @@ import (
 	"syscall"
 	"time"
 
+	"prasankit-api/internal/adapters/cache/redis/ratelimit"
+	"prasankit-api/internal/adapters/database/postgres/authrepo"
+	"prasankit-api/internal/adapters/email/smtpemail"
 	"prasankit-api/internal/config"
+	"prasankit-api/internal/modules/auth/authsvc"
+	"prasankit-api/internal/transport/http/authhttp"
+	"prasankit-api/pkg/passwordhash"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/minio/minio-go/v7"
@@ -47,9 +53,24 @@ func InitializeApp(cfg config.Config) (*App, error) {
 		return nil, err
 	}
 
+	authRepository := authrepo.NewRepository(postgresDB)
+	authService := authsvc.NewService(
+		authRepository,
+		passwordhash.NewBcryptHasher(0),
+		smtpemail.NewSender(cfg.Mail),
+		ratelimit.New(redisClient),
+		authsvc.ServiceConfig{
+			VerificationBaseURL:  cfg.Mail.VerifyBaseURL,
+			VerificationTokenTTL: cfg.Mail.VerifyTokenTTL,
+			VerificationIPLimit:  cfg.Mail.VerifyIPLimit,
+			VerificationIPWindow: cfg.Mail.VerifyIPWindow,
+		},
+	)
+	authHandler := authhttp.NewHandler(authService)
+
 	return &App{
 		config:      cfg,
-		httpApp:     NewHTTPApp(postgresSQLDB, redisClient, storageClient),
+		httpApp:     NewHTTPApp(postgresSQLDB, redisClient, storageClient, authHandler),
 		postgres:    postgresDB,
 		postgresSQL: postgresSQLDB,
 		redis:       redisClient,

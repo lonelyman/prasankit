@@ -3,6 +3,7 @@ package authrepo
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"prasankit-api/internal/modules/auth"
@@ -10,6 +11,7 @@ import (
 	"prasankit-api/pkg/ids"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -54,6 +56,20 @@ type authIdentityRow struct {
 
 func (authIdentityRow) TableName() string {
 	return "auth_identities"
+}
+
+type emailVerificationTokenRow struct {
+	ID             uuid.UUID  `gorm:"column:id;type:uuid"`
+	AuthIdentityID uuid.UUID  `gorm:"column:auth_identity_id"`
+	TokenHash      string     `gorm:"column:token_hash"`
+	Status         string     `gorm:"column:status"`
+	CreatedAt      time.Time  `gorm:"column:created_at"`
+	ExpiresAt      time.Time  `gorm:"column:expires_at"`
+	UsedAt         *time.Time `gorm:"column:used_at"`
+}
+
+func (emailVerificationTokenRow) TableName() string {
+	return "auth_email_verification_tokens"
 }
 
 type authSessionRow struct {
@@ -110,6 +126,12 @@ func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{
 		db: db,
 	}
+}
+
+func (r *Repository) WithinTransaction(ctx context.Context, fn func(context.Context, auth.Repository) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return fn(ctx, NewRepository(tx))
+	})
 }
 
 func (r *Repository) FindUserAccountByEmail(ctx context.Context, email string) (*auth.UserAccount, error) {
@@ -206,12 +228,54 @@ func (r *Repository) CreateAuthIdentity(ctx context.Context, identity *auth.Auth
 	}
 
 	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
-		return err
+		return mapCreateAuthIdentityError(err)
 	}
 
 	identity.ID = row.ID
 	identity.CreatedAt = row.CreatedAt
 	identity.UpdatedAt = row.UpdatedAt
+	return nil
+}
+
+func (r *Repository) RevokeActiveEmailVerificationTokens(ctx context.Context, authIdentityID uuid.UUID) error {
+	return r.db.WithContext(ctx).
+		Model(&emailVerificationTokenRow{}).
+		Where("auth_identity_id = ?", authIdentityID).
+		Where("status = ?", string(auth.EmailVerificationTokenStatusActive)).
+		Update("status", string(auth.EmailVerificationTokenStatusRevoked)).
+		Error
+}
+
+func (r *Repository) CreateEmailVerificationToken(ctx context.Context, token *auth.EmailVerificationToken) error {
+	if err := ensureUUID(&token.ID); err != nil {
+		return err
+	}
+	if token.Status == "" {
+		token.Status = auth.EmailVerificationTokenStatusActive
+	}
+	if token.CreatedAt.IsZero() {
+		token.CreatedAt = time.Now().UTC()
+	}
+	if token.ExpiresAt.IsZero() {
+		return auth.ErrEmailVerificationTokenExpiresAtRequired
+	}
+
+	row := emailVerificationTokenRow{
+		ID:             token.ID,
+		AuthIdentityID: token.AuthIdentityID,
+		TokenHash:      token.TokenHash,
+		Status:         string(token.Status),
+		CreatedAt:      token.CreatedAt,
+		ExpiresAt:      token.ExpiresAt,
+		UsedAt:         token.UsedAt,
+	}
+
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return err
+	}
+
+	token.ID = row.ID
+	token.CreatedAt = row.CreatedAt
 	return nil
 }
 
@@ -333,6 +397,24 @@ func stringPtrOrNil(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func mapCreateAuthIdentityError(err error) error {
+	if isUniqueViolation(err, "uq_auth_identities_email_password_active") {
+		return auth.ErrEmailAlreadyRegistered
+	}
+	return err
+}
+
+func isUniqueViolation(err error, constraintName string) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return strings.Contains(err.Error(), `unique constraint "`+constraintName+`"`)
+	}
+	if pgErr.Code != "23505" {
+		return false
+	}
+	return pgErr.ConstraintName == constraintName || strings.Contains(err.Error(), `unique constraint "`+constraintName+`"`)
 }
 
 func (r userAccountRow) toDomain() *auth.UserAccount {

@@ -29,7 +29,7 @@ Foundation
 
 - Backend folder: `app-api/`
 - Frontend folder: `app-web/`
-- Git remote: `https://github.com/lonelyman/prasankit.git`
+- Git remote: `git@github.com:lonelyman/prasankit.git`
 - Working branch: `dev`; merge into `main` manually after review/protection checks
 - Backend stack: Go + Fiber v3
 - Auth strategy: Session-based Auth + Redis + httpOnly Cookie
@@ -41,6 +41,7 @@ Foundation
 - `tenant_id` ต้องมาจาก backend Tenant Context เท่านั้น
 - Reverse proxy: Traefik
 - Run through Docker Compose เป็นหลัก
+- Current local changes are not committed or pushed; user explicitly said not to push until ordered.
 
 ## Current Structure
 
@@ -50,6 +51,8 @@ Foundation
 ├─ app-web/
 ├─ deploy/
 ├─ docs/
+│  ├─ 18-api-test-examples.md
+│  ├─ 18.1-auth-register-test-examples.md
 ├─ .env.example
 ├─ Makefile
 ├─ docker-compose.yml
@@ -90,18 +93,27 @@ app-api/
    │     ├─ auth_entity.go
    │     ├─ auth_repository.go
    │     └─ authsvc/
-   │        └─ auth_service.go
+   │        ├─ auth_service.go
+   │        └─ auth_service_test.go
    ├─ adapters/
-   │  └─ database/
-   │     └─ postgres/
-   │        └─ authrepo/
-   │           ├─ auth_repository.go
-   │           └─ auth_repository_integration_test.go
+   │  ├─ cache/
+   │  │  └─ redis/
+   │  │     └─ ratelimit/
+   │  │        └─ limiter.go
+   │  ├─ database/
+   │  │  └─ postgres/
+   │  │     └─ authrepo/
+   │  │        ├─ auth_repository.go
+   │  │        └─ auth_repository_integration_test.go
+   │  └─ email/
+   │     └─ smtpemail/
+   │        └─ sender.go
    └─ transport/
       └─ http/
          ├─ router.go
          ├─ authhttp/
-         │  └─ auth_handler.go
+         │  ├─ auth_handler.go
+         │  └─ auth_handler_test.go
          ├─ health/
          │  └─ health_handler.go
          ├─ middlewares/
@@ -113,9 +125,15 @@ app-api/
    ├─ dbtypes/
    │  ├─ jsonb.go
    │  └─ jsonb_test.go
-   └─ ids/
-      ├─ ids.go
-      └─ ids_test.go
+   ├─ ids/
+   │  ├─ ids.go
+   │  └─ ids_test.go
+   ├─ passwordhash/
+   │  ├─ bcrypt.go
+   │  └─ bcrypt_test.go
+   └─ securetoken/
+      ├─ token.go
+      └─ token_test.go
 ```
 
 ## Done
@@ -128,6 +146,8 @@ app-api/
 - สร้าง `docs/15-mvp0-build-plan.md`
 - สร้าง `docs/16-foundation-file-plan.md`
 - สร้าง `docs/17-foundation-progress.md`
+- สร้าง `docs/18-api-test-examples.md` สำหรับตัวอย่างทดสอบ API ที่เสร็จจริง
+- สร้าง `docs/18.1-auth-register-test-examples.md` สำหรับตัวอย่างทดสอบ `POST /api/v1/auth/register`
 - สร้าง `.env.example`
 - สร้าง root `Makefile` สำหรับ dev bootstrap
 - สร้าง `docker-compose.yml`
@@ -169,7 +189,9 @@ app-api/
   - service constructor
   - postgres adapter placeholder
   - HTTP handler/routes placeholder
-- เพิ่ม Auth routes แบบ placeholder ที่ตอบ `501 NOT_IMPLEMENTED`
+- เพิ่ม Auth register route จริงแล้ว:
+  - `POST /api/v1/auth/register`
+- เพิ่ม Auth routes ที่เหลือแบบ placeholder ที่ตอบ `501 NOT_IMPLEMENTED`
 - Implement Auth repository method แรก:
   - `FindUserAccountByEmail`
   - `CreateUserAccount` โดยใช้ UUID v7 จาก Go application, set status default และ set `created_at`/`updated_at` ใน app
@@ -180,6 +202,25 @@ app-api/
 - เพิ่ม Auth repository integration test ที่ใช้ `PRASANKIT_TEST_DB_DSN`
 - เพิ่ม `app-api/pkg/ids` เป็น UUID v7 generator กลาง
 - เพิ่ม `app-api/pkg/dbtypes.JSONB` เป็น JSONB type กลางสำหรับ GORM row model
+- เพิ่ม `app-api/pkg/passwordhash` เป็น bcrypt password hasher กลาง
+- เพิ่ม `app-api/pkg/securetoken` สำหรับสร้าง token ลับและเก็บเฉพาะ hash ใน database
+- เพิ่ม SMTP email sender adapter สำหรับส่ง verification email จริง
+- เพิ่ม Redis rate limiter adapter สำหรับคุมจำนวน verification email ต่อ IP
+- เพิ่ม transaction boundary ใน Auth repository interface และ PostgreSQL adapter ผ่าน `WithinTransaction`
+- เพิ่มการ map PostgreSQL unique violation ของ `auth_identities` เป็น `auth.ErrEmailAlreadyRegistered` เพื่อกัน race ตอนสมัคร email ซ้ำ
+- เริ่ม Auth service flow สำหรับ `RegisterEmailPassword`:
+  - normalize email
+  - validate password length ขั้นต่ำ
+  - reject duplicate email
+  - rate limit verification email ต่อ IP
+  - hash password ด้วย bcrypt
+  - create `user_accounts`
+  - create `auth_identities` แบบ `email_password/email`
+  - create `auth_email_verification_tokens`
+  - send verification email ผ่าน SMTP จริง
+  - create `security_events` สำหรับ `auth.account_registered`
+  - create `security_events` สำหรับ `auth.email_verification_sent`
+- Wire `RegisterEmailPassword` เข้า HTTP handler `POST /api/v1/auth/register` แล้ว
 - เปลี่ยน `docker-compose.yml` ให้ API container อ่าน runtime env จาก `.env` แทน `.env.example`
 - เพิ่ม root Make targets:
   - `make env-init`
@@ -217,7 +258,6 @@ app-api/
 - รัน `goose-redo` สำหรับ `000003_drop_auth_uuid_v4_defaults.sql` แล้วตรวจ primary key defaults ยังเป็น `<null>` ทั้งหมด
 - Auth repository integration test ผ่านหลังเพิ่ม `CreateSecurityEvent`
 - Auth placeholder routes ที่ test ผ่าน:
-  - `POST /api/v1/auth/register`
   - `POST /api/v1/auth/verify-email`
   - `POST /api/v1/auth/login`
   - `POST /api/v1/auth/logout`
@@ -230,6 +270,16 @@ app-api/
 ```bash
 PRASANKIT_TEST_DB_DSN='postgres://prasankit:change_me@localhost:15432/prasankit?sslmode=disable' GOTOOLCHAIN=auto go test ./internal/adapters/database/postgres/authrepo -run TestRepositoryIntegration -count=1
 ```
+
+- Auth service unit test ผ่าน รวมถึง register success, invalid input, duplicate email และ missing password hasher
+- Auth service unit test ผ่านสำหรับ verification token, SMTP send, rate limit และ email send failure
+- Auth register handler unit test ผ่าน รวมถึง success, invalid JSON, validation error, duplicate email, rate limit, email send failure และ unexpected error
+- Docker smoke test `POST /api/v1/auth/register` ผ่าน ได้ `201 Created` และ response อยู่ใต้ root key `data`
+- Docker smoke test สมัคร email ซ้ำผ่าน ได้ `409 Conflict` และ error code `EMAIL_ALREADY_REGISTERED`
+- เพิ่มตัวอย่างทดสอบ endpoint ที่เสร็จแล้วใน `docs/18-api-test-examples.md`
+- แยกตัวอย่าง `POST /api/v1/auth/register` ไปไว้ใน `docs/18.1-auth-register-test-examples.md`
+- อัปเดต `docs/18.1-auth-register-test-examples.md` ให้รวม SMTP env, verification email, rate limit และ SMTP failure แล้ว
+- `GOTOOLCHAIN=auto go test ./...` ผ่านใน `app-api`
 - PostgreSQL extensions ที่ apply แล้ว:
   - `citext`
   - `pgcrypto`
@@ -276,6 +326,7 @@ PRASANKIT_TEST_DB_DSN='postgres://prasankit:change_me@localhost:15432/prasankit?
 - เพิ่ม `POSTGRES_SSL_MODE=disable` ใน local env เพื่อให้ config ยังเป็น fail-fast และไม่ default เงียบ
 - Docker rebuild ล่าสุดเคยเจอ Docker Hub TLS handshake timeout แต่ container เดิมยัง healthy
 - Redis เคย start fail เพราะรัน Compose โดยไม่มี `.env` ทำให้ `${REDIS_PASSWORD}` ว่าง; แก้ flow แล้วด้วย `make env-init`
+- หลังเพิ่ม SMTP จริง ต้องเติม `MAIL_*` env ใน `.env` ก่อน rebuild/start API ไม่เช่นนั้น config จะ fail-fast
 - Fresh server bootstrap order ต้องเป็น: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - `.env.example` เป็น template เท่านั้น ส่วน runtime จริงให้ใช้ `.env` ผ่าน `make env-init`
 
@@ -320,6 +371,10 @@ config
 - JSONB fields ใน repository row model ให้ใช้ `pkg/dbtypes.JSONB` ก่อน ไม่ใช้ raw SQL/Exec เฉพาะกิจถ้า GORM `Create` ทำได้
 - Timestamp สำคัญให้ repository/service set ใน Go ก่อน insert ไม่พึ่ง DB default เป็น behavior หลัก
 - Auth identity แยกจาก account: `user_accounts` เป็น account owner, `auth_identities` เป็นช่องทาง login; social login ในอนาคตต้องใช้ `provider + provider_user_id`
+- Password hashing ใช้ `pkg/passwordhash` เป็น adapter กลาง; handler/repository ไม่ hash password เอง
+- Email verification ใช้ SMTP จริงจาก env, เก็บเฉพาะ token hash ใน `auth_email_verification_tokens`, และคุมจำนวนส่งด้วย Redis rate limit
+- Auth service เขียน business flow ก่อน handler: handler แค่ parse/response, service รับผิดชอบ validation/use case, repository รับผิดชอบ persistence
+- เมื่อ endpoint ไหน implement เสร็จจริง ต้องเพิ่มรายการลง `docs/18-api-test-examples.md`; ถ้าเนื้อหายาวให้แยกเป็น `docs/18.x-...-test-examples.md`
 - สำหรับย้ายขึ้น server ใหม่ ให้รัน `make env-init`, แก้ค่า `.env`, แล้วรัน `make db-migrate` ก่อน start/rebuild API สำหรับ real traffic
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
 
@@ -338,7 +393,10 @@ PostgreSQL connection done
 -> Migration 000004_create_auth_identities applied
 -> Auth module skeleton created
 -> Auth repository: FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
--> ต่อไปเริ่ม Auth service flow แบบเล็ก ๆ สำหรับ register/login
+-> Auth service: RegisterEmailPassword implemented
+-> Auth HTTP: POST /api/v1/auth/register wired
+-> Auth register now creates verification token and sends verification email via real SMTP
+-> ต่อไปทำ POST /api/v1/auth/verify-email
 ```
 
 ## Do Not Do Yet

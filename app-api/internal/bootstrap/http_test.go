@@ -267,7 +267,7 @@ func newTestHTTPApp(checks map[string]healthCheck) *fiber.App {
 		ErrorHandler: middlewares.ErrorHandler,
 	})
 
-	httptransport.RegisterRoutes(app, health.NewHandler(checkFuncs), authhttp.NewHandler())
+	httptransport.RegisterRoutes(app, health.NewHandler(checkFuncs), authhttp.NewHandler(nil))
 	return app
 }
 

@@ -15,6 +15,7 @@ type Config struct {
 	Postgres PostgresConfig
 	Redis    RedisConfig
 	Storage  StorageConfig
+	Mail     MailConfig
 }
 
 type PostgresConfig struct {
@@ -44,6 +45,20 @@ type StorageConfig struct {
 	PresignTTL     time.Duration
 }
 
+type MailConfig struct {
+	SMTPHost           string
+	SMTPPort           string
+	SMTPUsername       string
+	SMTPPassword       string
+	FromAddress        string
+	FromName           string
+	VerifyBaseURL      string
+	VerifyTokenTTL     time.Duration
+	VerifyIPLimit      int
+	VerifyIPWindow     time.Duration
+	VerifyEmailSubject string
+}
+
 func Load() (Config, error) {
 	apiEnv, err := requiredEnv("API_ENV")
 	if err != nil {
@@ -70,12 +85,18 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	mail, err := loadMailConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		APIEnv:   apiEnv,
 		APIPort:  apiPort,
 		Postgres: postgres,
 		Redis:    redis,
 		Storage:  storage,
+		Mail:     mail,
 	}, nil
 }
 
@@ -233,6 +254,95 @@ func loadPostgresConfig() (PostgresConfig, error) {
 		Password: password,
 		Name:     name,
 		SSLMode:  sslMode,
+	}, nil
+}
+
+func loadMailConfig() (MailConfig, error) {
+	smtpHost, err := requiredEnv("MAIL_SMTP_HOST")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
+	smtpPort, err := requiredEnv("MAIL_SMTP_PORT")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
+	smtpUsername, err := requiredEnv("MAIL_SMTP_USERNAME")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
+	smtpPassword, err := requiredEnv("MAIL_SMTP_PASSWORD")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
+	fromAddress, err := requiredEnv("MAIL_FROM_ADDRESS")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
+	fromName, err := requiredEnv("MAIL_FROM_NAME")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
+	verifyBaseURL, err := requiredEnv("MAIL_VERIFY_BASE_URL")
+	if err != nil {
+		return MailConfig{}, err
+	}
+	if _, err := url.ParseRequestURI(verifyBaseURL); err != nil {
+		return MailConfig{}, fmt.Errorf("invalid MAIL_VERIFY_BASE_URL: %w", err)
+	}
+
+	verifyTokenTTLValue, err := requiredEnv("MAIL_VERIFY_TOKEN_TTL")
+	if err != nil {
+		return MailConfig{}, err
+	}
+	verifyTokenTTL, err := time.ParseDuration(verifyTokenTTLValue)
+	if err != nil {
+		return MailConfig{}, fmt.Errorf("invalid MAIL_VERIFY_TOKEN_TTL: %w", err)
+	}
+
+	verifyIPLimitValue, err := requiredEnv("MAIL_VERIFY_IP_LIMIT")
+	if err != nil {
+		return MailConfig{}, err
+	}
+	verifyIPLimit, err := strconv.Atoi(verifyIPLimitValue)
+	if err != nil {
+		return MailConfig{}, fmt.Errorf("invalid MAIL_VERIFY_IP_LIMIT: %w", err)
+	}
+	if verifyIPLimit < 1 {
+		return MailConfig{}, fmt.Errorf("invalid MAIL_VERIFY_IP_LIMIT: must be greater than 0")
+	}
+
+	verifyIPWindowValue, err := requiredEnv("MAIL_VERIFY_IP_WINDOW")
+	if err != nil {
+		return MailConfig{}, err
+	}
+	verifyIPWindow, err := time.ParseDuration(verifyIPWindowValue)
+	if err != nil {
+		return MailConfig{}, fmt.Errorf("invalid MAIL_VERIFY_IP_WINDOW: %w", err)
+	}
+
+	verifyEmailSubject, err := requiredEnv("MAIL_VERIFY_EMAIL_SUBJECT")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
+	return MailConfig{
+		SMTPHost:           smtpHost,
+		SMTPPort:           smtpPort,
+		SMTPUsername:       smtpUsername,
+		SMTPPassword:       smtpPassword,
+		FromAddress:        fromAddress,
+		FromName:           fromName,
+		VerifyBaseURL:      verifyBaseURL,
+		VerifyTokenTTL:     verifyTokenTTL,
+		VerifyIPLimit:      verifyIPLimit,
+		VerifyIPWindow:     verifyIPWindow,
+		VerifyEmailSubject: verifyEmailSubject,
 	}, nil
 }
 

@@ -41,6 +41,8 @@ make dev-up
 
 This starts PostgreSQL, Redis, and MinIO, runs goose migrations, starts the API, then checks `/api/v1/health/ready`.
 
+Completed API test examples start at `docs/18-api-test-examples.md`; large endpoint examples are split into `docs/18.x-...` files.
+
 For a new server, use the same order:
 
 ```text
@@ -48,6 +50,8 @@ env -> infrastructure -> migrations -> API -> health check
 ```
 
 `.env.example` is only a template. Runtime services read `.env`, which is intentionally ignored by git.
+
+Auth register sends verification email through real SMTP. Set the `MAIL_*` values in `.env` before testing `POST /api/v1/auth/register`.
 
 ## Architecture Rules
 
@@ -82,6 +86,8 @@ Read these before writing code:
 - docs/15-mvp0-build-plan.md
 - docs/16-foundation-file-plan.md
 - docs/17-foundation-progress.md
+- docs/18-api-test-examples.md
+- docs/18.1-auth-register-test-examples.md
 - docs/99-current-handoff.md
 
 ## Important Rule

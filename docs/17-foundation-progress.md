@@ -61,8 +61,11 @@ Foundation Step 2: Backend Skeleton
 - app-api/internal/bootstrap/http.go
 - app-api/internal/bootstrap/redis.go
 - app-api/internal/bootstrap/storage.go
+- app-api/internal/adapters/cache/redis/ratelimit/limiter.go
+- app-api/internal/adapters/email/smtpemail/sender.go
 - app-api/internal/transport/http/router.go
 - app-api/internal/transport/http/authhttp/auth_handler.go
+- app-api/internal/transport/http/authhttp/auth_handler_test.go
 - app-api/internal/transport/http/health/health_handler.go
 - app-api/internal/transport/http/presenter/presenter.go
 - app-api/internal/transport/http/middlewares/error_handler.go
@@ -70,6 +73,7 @@ Foundation Step 2: Backend Skeleton
 - app-api/internal/modules/auth/auth_entity.go
 - app-api/internal/modules/auth/auth_repository.go
 - app-api/internal/modules/auth/authsvc/auth_service.go
+- app-api/internal/modules/auth/authsvc/auth_service_test.go
 - app-api/internal/adapters/database/postgres/authrepo/auth_repository.go
 - app-api/internal/adapters/database/postgres/authrepo/auth_repository_integration_test.go
 - app-api/internal/bootstrap/http_test.go
@@ -77,6 +81,10 @@ Foundation Step 2: Backend Skeleton
 - app-api/pkg/ids/ids_test.go
 - app-api/pkg/dbtypes/jsonb.go
 - app-api/pkg/dbtypes/jsonb_test.go
+- app-api/pkg/passwordhash/bcrypt.go
+- app-api/pkg/passwordhash/bcrypt_test.go
+- app-api/pkg/securetoken/token.go
+- app-api/pkg/securetoken/token_test.go
 
 เป้าหมาย:
 
@@ -175,8 +183,9 @@ Verified:
   - service constructor
   - postgres adapter placeholder
   - HTTP handler/routes placeholder
-- Auth routes ตอบ `501 NOT_IMPLEMENTED` ตามที่ตั้งใจ:
+- Auth register route เริ่มใช้งานจริงแล้ว:
   - `POST /api/v1/auth/register`
+- Auth routes ที่เหลือยังตอบ `501 NOT_IMPLEMENTED` ตามที่ตั้งใจ:
   - `POST /api/v1/auth/verify-email`
   - `POST /api/v1/auth/login`
   - `POST /api/v1/auth/logout`
@@ -199,12 +208,41 @@ Verified:
 - รัน `goose-redo` สำหรับ `000003_drop_auth_uuid_v4_defaults.sql` แล้วตรวจ primary key defaults ยังเป็น `<null>` ทั้งหมด
 - เพิ่ม `pkg/ids` เป็น UUID v7 generator กลางสำหรับ primary keys
 - เพิ่ม `pkg/dbtypes.JSONB` เป็น JSONB type กลางสำหรับ GORM row model เพื่อลดการใช้ raw SQL/Exec แบบเฉพาะกิจ
+- เพิ่ม `pkg/passwordhash` เป็น bcrypt password hasher กลาง โดยใช้ cost default 12
+- เพิ่ม `pkg/securetoken` สำหรับสร้าง token ลับและเก็บเฉพาะ hash ใน database
+- เพิ่ม SMTP email sender adapter สำหรับส่ง verification email จริง
+- เพิ่ม Redis rate limiter adapter สำหรับคุมจำนวน verification email ต่อ IP
+- เพิ่ม transaction boundary ใน Auth repository interface และ PostgreSQL adapter ผ่าน `WithinTransaction`
+- เพิ่มการ map PostgreSQL unique violation ของ `auth_identities` เป็น `auth.ErrEmailAlreadyRegistered` เพื่อกัน race ตอนสมัคร email ซ้ำ
+- เริ่ม Auth service flow สำหรับ email/password registration แล้ว:
+  - normalize email
+  - validate password length ขั้นต่ำ
+  - reject duplicate email
+  - rate limit verification email ต่อ IP
+  - hash password ด้วย bcrypt
+  - create `user_accounts`
+  - create `auth_identities` แบบ `email_password/email`
+  - create `auth_email_verification_tokens`
+  - send verification email ผ่าน SMTP จริง
+  - create `security_events` สำหรับ `auth.account_registered`
+  - create `security_events` สำหรับ `auth.email_verification_sent`
+- เพิ่ม unit test สำหรับ Auth registration service แล้ว
+- เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/register` แล้ว โดย response สำเร็จเป็น `201 Created` ใต้ root key `data`
+- เพิ่ม test สำหรับ Auth register handler แล้ว
+- `GOTOOLCHAIN=auto go test ./...` ผ่านใน app-api หลัง wire register handler
+- Auth repository integration test ผ่านกับ Docker PostgreSQL หลังเพิ่ม duplicate email mapping
+- `docker compose up -d --build prasankit-api` ผ่านหลัง wire register handler
+- Docker smoke test `POST /api/v1/auth/register` ผ่าน ได้ `201 Created`
+- Docker smoke test สมัคร email ซ้ำผ่าน ได้ `409 Conflict` และ error code `EMAIL_ALREADY_REGISTERED`
+- เพิ่ม `docs/18-api-test-examples.md` เป็นเอกสารตัวอย่างทดสอบ endpoint ที่เสร็จจริง
+- เพิ่ม `docs/18.1-auth-register-test-examples.md` และอัปเดตตัวอย่าง register ให้รวม verification email/rate limit/SMTP failure แล้ว
 
 Known note:
 
 - ถ้ารัน Compose โดยไม่มี `.env` ค่า `${REDIS_PASSWORD}` จะว่าง ทำให้ Redis start fail ได้
 - ตอนนี้แก้ด้วย `make env-init` เพื่อสร้าง `.env` local ที่ถูก `.gitignore`
 - `.env.example` เป็น template เท่านั้น ส่วน runtime จริงให้ใช้ `.env` ผ่าน `make env-init`
+- หลังเพิ่ม SMTP จริง ต้องเติม `MAIL_*` env ใน `.env` ก่อน rebuild/start API ไม่เช่นนั้น config จะ fail-fast
 
 Composition note:
 
@@ -219,6 +257,9 @@ Composition note:
 - JSONB strategy: ใช้ `pkg/dbtypes.JSONB` ใน repository row model เมื่อ field เป็น PostgreSQL `JSONB`
 - Timestamp strategy: repository/service ต้อง set timestamp สำคัญใน Go ก่อน insert ไม่พึ่ง DB default เป็น behavior หลัก
 - Auth identity strategy: `user_accounts` เป็น account กลาง ส่วน `auth_identities` เป็นช่องทาง login; social login ในอนาคตต้องใช้ `provider + provider_user_id`
+- Password hashing strategy: ใช้ bcrypt ผ่าน `pkg/passwordhash` เป็น adapter กลาง ไม่ hash password ใน handler หรือ repository โดยตรง
+- Email verification strategy: ส่งผ่าน SMTP จริงจาก env, เก็บเฉพาะ token hash ใน `auth_email_verification_tokens`, และคุมจำนวนส่งด้วย Redis rate limit
+- Completed API documentation strategy: เมื่อ endpoint ไหน implement เสร็จจริง ต้องเพิ่ม request/success/error examples ใน `docs/18-api-test-examples.md`
 - Fresh server bootstrap order: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
 
@@ -244,6 +285,8 @@ PostgreSQL connection done
 -> Migration 000004_create_auth_identities applied
 -> Auth module skeleton created
 -> Auth repository: FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
+-> Auth service: RegisterEmailPassword implemented
+-> Auth HTTP: POST /api/v1/auth/register wired
 ```
 
-ขั้นถัดไปเริ่ม Auth service flow แบบเล็ก ๆ สำหรับ register/login โดยยังคง session-based auth + Redis + httpOnly Cookie
+ขั้นถัดไปเริ่ม login/session flow โดยยังคง session-based auth + Redis + httpOnly Cookie

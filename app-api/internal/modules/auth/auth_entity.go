@@ -63,6 +63,25 @@ type AuthIdentity struct {
 	DeletedAt         *time.Time
 }
 
+type EmailVerificationTokenStatus string
+
+const (
+	EmailVerificationTokenStatusActive  EmailVerificationTokenStatus = "active"
+	EmailVerificationTokenStatusUsed    EmailVerificationTokenStatus = "used"
+	EmailVerificationTokenStatusExpired EmailVerificationTokenStatus = "expired"
+	EmailVerificationTokenStatusRevoked EmailVerificationTokenStatus = "revoked"
+)
+
+type EmailVerificationToken struct {
+	ID             uuid.UUID
+	AuthIdentityID uuid.UUID
+	TokenHash      string
+	Status         EmailVerificationTokenStatus
+	CreatedAt      time.Time
+	ExpiresAt      time.Time
+	UsedAt         *time.Time
+}
+
 type AuthSessionStatus string
 
 const (
