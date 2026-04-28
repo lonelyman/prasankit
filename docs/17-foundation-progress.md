@@ -187,7 +187,6 @@ Verified:
 - Auth register route เริ่มใช้งานจริงแล้ว:
   - `POST /api/v1/auth/register`
 - Auth routes ที่เหลือยังตอบ `501 NOT_IMPLEMENTED` ตามที่ตั้งใจ:
-  - `POST /api/v1/auth/logout-all`
   - `POST /api/v1/auth/forgot-password`
   - `POST /api/v1/auth/reset-password`
 - Auth postgres repository implementation เริ่มแล้ว:
@@ -233,6 +232,7 @@ Verified:
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/login` แล้ว โดย set httpOnly cookie และ response อยู่ใต้ root key `data`
 - เพิ่ม HTTP handler สำหรับ `GET /api/v1/auth/me` แล้ว โดยตรวจ Redis session cookie และ response อยู่ใต้ root key `data`
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/logout` แล้ว โดย revoke current session, ลบ Redis session และ clear cookie
+- เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/logout-all` แล้ว โดย revoke session ทุกอุปกรณ์ของ account และ clear cookie ปัจจุบัน
 - เพิ่ม Redis session store adapter แล้ว เพื่อเก็บ session record จาก login
 - เพิ่ม Redis session store read/delete แล้ว เพื่อใช้ validate session และ cleanup session หมดอายุ
 - เพิ่ม Auth service flow สำหรับ email/password login แล้ว:
@@ -302,7 +302,7 @@ Composition note:
 - Completed API documentation strategy: เมื่อ endpoint ไหน implement เสร็จจริง ต้องเพิ่ม request/success/error examples ใน `docs/18-api-test-examples.md`
 - Fresh server bootstrap order: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
-- Login/session backend, `GET /api/v1/auth/me` และ `POST /api/v1/auth/logout` เสร็จแล้ว แต่ logout-all ยังไม่เสร็จ
+- Auth/session backend หลักเสร็จถึง logout-all แล้ว
 
 หมายเหตุ:
 
@@ -310,12 +310,10 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปเริ่ม logout-all/session revoke ทั้ง account:
+ขั้นถัดไปเริ่ม forgot/reset password:
 
-- `POST /api/v1/auth/logout-all`
-- revoke Redis sessions ของ account เดียวกัน
-- update `auth_sessions.status = revoked` ทุก session active ของ account
-- clear current httpOnly cookie
+- `POST /api/v1/auth/forgot-password`
+- `POST /api/v1/auth/reset-password`
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -342,4 +340,6 @@ PostgreSQL connection done
 -> Auth HTTP: GET /api/v1/auth/me wired
 -> Auth service: LogoutCurrentSession implemented
 -> Auth HTTP: POST /api/v1/auth/logout wired
+-> Auth service: LogoutAllSessions implemented
+-> Auth HTTP: POST /api/v1/auth/logout-all wired
 ```

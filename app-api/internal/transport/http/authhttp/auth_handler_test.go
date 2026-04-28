@@ -19,24 +19,27 @@ import (
 )
 
 type fakeRegistrar struct {
-	registerResult *authsvc.RegisterEmailPasswordResult
-	registerErr    error
-	registerInput  authsvc.RegisterEmailPasswordInput
-	verifyResult   *authsvc.VerifyEmailResult
-	verifyErr      error
-	verifyInput    authsvc.VerifyEmailInput
-	resendResult   *authsvc.ResendVerificationEmailResult
-	resendErr      error
-	resendInput    authsvc.ResendVerificationEmailInput
-	loginResult    *authsvc.LoginEmailPasswordResult
-	loginErr       error
-	loginInput     authsvc.LoginEmailPasswordInput
-	currentResult  *authsvc.CurrentAccountResult
-	currentErr     error
-	currentInput   authsvc.CurrentAccountInput
-	logoutResult   *authsvc.LogoutCurrentSessionResult
-	logoutErr      error
-	logoutInput    authsvc.LogoutCurrentSessionInput
+	registerResult  *authsvc.RegisterEmailPasswordResult
+	registerErr     error
+	registerInput   authsvc.RegisterEmailPasswordInput
+	verifyResult    *authsvc.VerifyEmailResult
+	verifyErr       error
+	verifyInput     authsvc.VerifyEmailInput
+	resendResult    *authsvc.ResendVerificationEmailResult
+	resendErr       error
+	resendInput     authsvc.ResendVerificationEmailInput
+	loginResult     *authsvc.LoginEmailPasswordResult
+	loginErr        error
+	loginInput      authsvc.LoginEmailPasswordInput
+	currentResult   *authsvc.CurrentAccountResult
+	currentErr      error
+	currentInput    authsvc.CurrentAccountInput
+	logoutResult    *authsvc.LogoutCurrentSessionResult
+	logoutErr       error
+	logoutInput     authsvc.LogoutCurrentSessionInput
+	logoutAllResult *authsvc.LogoutAllSessionsResult
+	logoutAllErr    error
+	logoutAllInput  authsvc.LogoutAllSessionsInput
 }
 
 func (r *fakeRegistrar) RegisterEmailPassword(_ context.Context, input authsvc.RegisterEmailPasswordInput) (*authsvc.RegisterEmailPasswordResult, error) {
@@ -85,6 +88,14 @@ func (r *fakeRegistrar) LogoutCurrentSession(_ context.Context, input authsvc.Lo
 		return nil, r.logoutErr
 	}
 	return r.logoutResult, nil
+}
+
+func (r *fakeRegistrar) LogoutAllSessions(_ context.Context, input authsvc.LogoutAllSessionsInput) (*authsvc.LogoutAllSessionsResult, error) {
+	r.logoutAllInput = input
+	if r.logoutAllErr != nil {
+		return nil, r.logoutAllErr
+	}
+	return r.logoutAllResult, nil
 }
 
 func TestRegisterEmailPassword(t *testing.T) {
@@ -734,6 +745,46 @@ func TestLogoutMapsSessionErrors(t *testing.T) {
 			assertAuthError(t, resp, tt.wantStatus, tt.wantCode)
 		})
 	}
+}
+
+func TestLogoutAll(t *testing.T) {
+	registrar := &fakeRegistrar{
+		logoutAllResult: &authsvc.LogoutAllSessionsResult{Status: "ok"},
+	}
+	app := newAuthTestApp(newTestHandler(registrar))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout-all", nil)
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if registrar.logoutAllInput.SessionToken != "raw-session-token" {
+		t.Fatalf("session token = %s, want raw-session-token", registrar.logoutAllInput.SessionToken)
+	}
+	cookies := resp.Cookies()
+	if len(cookies) != 1 || cookies[0].Name != "prasankit_session" || cookies[0].MaxAge != -1 {
+		t.Fatalf("clear cookie invalid: %#v", cookies)
+	}
+}
+
+func TestLogoutAllMapsSessionErrors(t *testing.T) {
+	app := newAuthTestApp(newTestHandler(&fakeRegistrar{logoutAllErr: authsvc.ErrSessionInvalid}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout-all", nil)
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertAuthError(t, resp, http.StatusUnauthorized, "AUTH_SESSION_INVALID")
 }
 
 func newTestHandler(service AuthService) Handler {

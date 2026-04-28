@@ -33,8 +33,10 @@ type Repository interface {
 	UpdateUserAccountLoginSuccess(ctx context.Context, id uuid.UUID, loggedInAt time.Time) error
 	MarkAuthIdentityLastUsed(ctx context.Context, id uuid.UUID, lastUsedAt time.Time) error
 	FindActiveAuthSessionByHash(ctx context.Context, sessionKeyHash string) (*AuthSession, error)
+	ListActiveAuthSessionsByUserAccountID(ctx context.Context, userAccountID uuid.UUID) ([]AuthSession, error)
 	CreateAuthSession(ctx context.Context, session *AuthSession) error
 	RevokeAuthSessionByHash(ctx context.Context, sessionKeyHash string, revokedAt time.Time, reason string) error
+	RevokeActiveAuthSessionsByUserAccountID(ctx context.Context, userAccountID uuid.UUID, revokedAt time.Time, reason string) error
 	CreateLoginAttempt(ctx context.Context, attempt *LoginAttempt) error
 	CreateSecurityEvent(ctx context.Context, event *SecurityEvent) error
 }

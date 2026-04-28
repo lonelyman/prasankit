@@ -309,7 +309,6 @@ app-api/
 - รัน `goose-redo` สำหรับ `000003_drop_auth_uuid_v4_defaults.sql` แล้วตรวจ primary key defaults ยังเป็น `<null>` ทั้งหมด
 - Auth repository integration test ผ่านหลังเพิ่ม `CreateSecurityEvent`
 - Auth placeholder routes ที่ test ผ่าน:
-  - `POST /api/v1/auth/logout-all`
   - `POST /api/v1/auth/forgot-password`
   - `POST /api/v1/auth/reset-password`
 - Auth repository integration test ผ่านกับ Docker PostgreSQL:
@@ -438,6 +437,7 @@ config
 - Login ใช้ Redis session store + httpOnly cookie; raw session token ไม่ถูกส่งใน response body และไม่เก็บตรง ๆ ใน database
 - `GET /api/v1/auth/me` ตรวจ session จาก cookie/Redis แล้วคืน account กลางเท่านั้น; workspace context จะเติมตอนเริ่ม Workspace/Tenant flow
 - `POST /api/v1/auth/logout` revoke เฉพาะ session ปัจจุบัน; session อื่นยังอยู่เพื่อรองรับ multi-device และ `logout-all`
+- `POST /api/v1/auth/logout-all` revoke session ทุกอุปกรณ์ของ account เดียวกัน
 - Auth service เขียน business flow ก่อน handler: handler แค่ parse/response, service รับผิดชอบ validation/use case, repository รับผิดชอบ persistence
 - เมื่อ endpoint ไหน implement เสร็จจริง ต้องเพิ่มรายการลง `docs/18-api-test-examples.md`; ถ้าเนื้อหายาวให้แยกเป็น `docs/18.x-...-test-examples.md`
 - สำหรับย้ายขึ้น server ใหม่ ให้รัน `make env-init`, แก้ค่า `.env`, แล้วรัน `make db-migrate` ก่อน start/rebuild API สำหรับ real traffic
@@ -470,7 +470,9 @@ PostgreSQL connection done
 -> Auth HTTP: GET /api/v1/auth/me wired
 -> Auth service: LogoutCurrentSession implemented
 -> Auth HTTP: POST /api/v1/auth/logout wired
--> ต่อไปเริ่ม logout-all/session revoke ทุกอุปกรณ์
+-> Auth service: LogoutAllSessions implemented
+-> Auth HTTP: POST /api/v1/auth/logout-all wired
+-> ต่อไปเริ่ม forgot/reset password
 ```
 
 ## Do Not Do Yet

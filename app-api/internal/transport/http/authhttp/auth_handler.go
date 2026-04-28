@@ -19,6 +19,7 @@ type AuthService interface {
 	LoginEmailPassword(ctx context.Context, input authsvc.LoginEmailPasswordInput) (*authsvc.LoginEmailPasswordResult, error)
 	CurrentAccount(ctx context.Context, input authsvc.CurrentAccountInput) (*authsvc.CurrentAccountResult, error)
 	LogoutCurrentSession(ctx context.Context, input authsvc.LogoutCurrentSessionInput) (*authsvc.LogoutCurrentSessionResult, error)
+	LogoutAllSessions(ctx context.Context, input authsvc.LogoutAllSessionsInput) (*authsvc.LogoutAllSessionsResult, error)
 }
 
 const accountLocalKey = "auth.account"
@@ -99,7 +100,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	auth.Post("/resend-verification-email", h.ResendVerificationEmail)
 	auth.Post("/login", h.LoginEmailPassword)
 	auth.Post("/logout", h.Logout)
-	auth.Post("/logout-all", h.NotImplemented)
+	auth.Post("/logout-all", h.LogoutAll)
 	auth.Post("/forgot-password", h.NotImplemented)
 	auth.Post("/reset-password", h.NotImplemented)
 	auth.Get("/me", h.requireSession, h.Me)
@@ -240,6 +241,27 @@ func (h Handler) Logout(c fiber.Ctx) error {
 	}
 
 	_, err := h.auth.LogoutCurrentSession(c.Context(), authsvc.LogoutCurrentSessionInput{
+		SessionToken: c.Cookies(h.cookieName()),
+		IPAddress:    c.IP(),
+		UserAgent:    c.UserAgent(),
+	})
+	if err != nil {
+		return renderSessionError(c, err)
+	}
+
+	h.clearSessionCookie(c)
+
+	return presenter.RenderItem(c, logoutResponse{
+		Status: "ok",
+	})
+}
+
+func (h Handler) LogoutAll(c fiber.Ctx) error {
+	if h.auth == nil {
+		return h.NotImplemented(c)
+	}
+
+	_, err := h.auth.LogoutAllSessions(c.Context(), authsvc.LogoutAllSessionsInput{
 		SessionToken: c.Cookies(h.cookieName()),
 		IPAddress:    c.IP(),
 		UserAgent:    c.UserAgent(),

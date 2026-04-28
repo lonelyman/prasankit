@@ -146,6 +146,16 @@ type LogoutCurrentSessionResult struct {
 	Status string
 }
 
+type LogoutAllSessionsInput struct {
+	SessionToken string
+	IPAddress    string
+	UserAgent    string
+}
+
+type LogoutAllSessionsResult struct {
+	Status string
+}
+
 type Service struct {
 	repository auth.Repository
 	hasher     PasswordHasher
@@ -727,6 +737,72 @@ func (s *Service) LogoutCurrentSession(ctx context.Context, input LogoutCurrentS
 	}
 
 	return &LogoutCurrentSessionResult{
+		Status: "ok",
+	}, nil
+}
+
+func (s *Service) LogoutAllSessions(ctx context.Context, input LogoutAllSessionsInput) (*LogoutAllSessionsResult, error) {
+	sessionToken := strings.TrimSpace(input.SessionToken)
+	if sessionToken == "" {
+		return nil, ErrSessionTokenRequired
+	}
+	if s.sessions == nil {
+		return nil, ErrSessionStoreRequired
+	}
+	if err := s.validateSessionConfig(); err != nil {
+		return nil, err
+	}
+
+	sessionKeyHash := hashSessionKey(sessionToken, s.config.SessionSecret)
+	current, err := s.sessions.Get(ctx, sessionKeyHash)
+	if errors.Is(err, ErrSessionNotFound) {
+		return nil, ErrSessionInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	dbSession, err := s.repository.FindActiveAuthSessionByHash(ctx, current.SessionKeyHash)
+	if errors.Is(err, auth.ErrAuthSessionNotFound) {
+		_ = s.sessions.Delete(ctx, current.SessionKeyHash)
+		return nil, ErrSessionInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	activeSessions, err := s.repository.ListActiveAuthSessionsByUserAccountID(ctx, dbSession.UserAccountID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	err = s.repository.WithinTransaction(ctx, func(ctx context.Context, repo auth.Repository) error {
+		if err := repo.RevokeActiveAuthSessionsByUserAccountID(ctx, dbSession.UserAccountID, now, "user_logout_all"); err != nil {
+			return err
+		}
+		return repo.CreateSecurityEvent(ctx, &auth.SecurityEvent{
+			UserAccountID: &dbSession.UserAccountID,
+			EventType:     "auth.logout_all",
+			Severity:      auth.SecurityEventSeverityInfo,
+			IPAddress:     input.IPAddress,
+			UserAgent:     input.UserAgent,
+			MetadataJSON: map[string]any{
+				"current_session_id": dbSession.ID.String(),
+				"revoked_count":      len(activeSessions),
+			},
+			CreatedAt: now,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, session := range activeSessions {
+		_ = s.sessions.Delete(ctx, session.SessionKeyHash)
+	}
+
+	return &LogoutAllSessionsResult{
 		Status: "ok",
 	}, nil
 }

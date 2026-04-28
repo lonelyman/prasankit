@@ -47,8 +47,10 @@ type fakeRepository struct {
 	lastUsedIdentity  uuid.UUID
 	authSession       *auth.AuthSession
 	activeSession     *auth.AuthSession
+	activeSessions    []auth.AuthSession
 	revokedSession    string
 	revokeReason      string
+	revokedUser       uuid.UUID
 	loginAttempts     []*auth.LoginAttempt
 	securityEvent     *auth.SecurityEvent
 	securityEvents    []*auth.SecurityEvent
@@ -173,10 +175,28 @@ func (r *fakeRepository) MarkAuthIdentityLastUsed(_ context.Context, id uuid.UUI
 }
 
 func (r *fakeRepository) FindActiveAuthSessionByHash(_ context.Context, sessionKeyHash string) (*auth.AuthSession, error) {
+	for i := range r.activeSessions {
+		if r.activeSessions[i].SessionKeyHash == sessionKeyHash && r.activeSessions[i].Status == auth.AuthSessionStatusActive {
+			return &r.activeSessions[i], nil
+		}
+	}
 	if r.activeSession != nil && r.activeSession.SessionKeyHash == sessionKeyHash && r.activeSession.Status == auth.AuthSessionStatusActive {
 		return r.activeSession, nil
 	}
 	return nil, auth.ErrAuthSessionNotFound
+}
+
+func (r *fakeRepository) ListActiveAuthSessionsByUserAccountID(_ context.Context, userAccountID uuid.UUID) ([]auth.AuthSession, error) {
+	var sessions []auth.AuthSession
+	for _, session := range r.activeSessions {
+		if session.UserAccountID == userAccountID && session.Status == auth.AuthSessionStatusActive {
+			sessions = append(sessions, session)
+		}
+	}
+	if r.activeSession != nil && r.activeSession.UserAccountID == userAccountID && r.activeSession.Status == auth.AuthSessionStatusActive {
+		sessions = append(sessions, *r.activeSession)
+	}
+	return sessions, nil
 }
 
 func (r *fakeRepository) CreateAuthSession(_ context.Context, session *auth.AuthSession) error {
@@ -194,6 +214,24 @@ func (r *fakeRepository) RevokeAuthSessionByHash(_ context.Context, sessionKeyHa
 	r.activeSession.Status = auth.AuthSessionStatusRevoked
 	r.activeSession.RevokedAt = &revokedAt
 	r.activeSession.RevokedReason = reason
+	return nil
+}
+
+func (r *fakeRepository) RevokeActiveAuthSessionsByUserAccountID(_ context.Context, userAccountID uuid.UUID, revokedAt time.Time, reason string) error {
+	r.revokedUser = userAccountID
+	r.revokeReason = reason
+	for i := range r.activeSessions {
+		if r.activeSessions[i].UserAccountID == userAccountID && r.activeSessions[i].Status == auth.AuthSessionStatusActive {
+			r.activeSessions[i].Status = auth.AuthSessionStatusRevoked
+			r.activeSessions[i].RevokedAt = &revokedAt
+			r.activeSessions[i].RevokedReason = reason
+		}
+	}
+	if r.activeSession != nil && r.activeSession.UserAccountID == userAccountID && r.activeSession.Status == auth.AuthSessionStatusActive {
+		r.activeSession.Status = auth.AuthSessionStatusRevoked
+		r.activeSession.RevokedAt = &revokedAt
+		r.activeSession.RevokedReason = reason
+	}
 	return nil
 }
 
@@ -1084,5 +1122,70 @@ func TestLogoutCurrentSessionRejectsMissingAndInvalidSession(t *testing.T) {
 	_, err = service.LogoutCurrentSession(context.Background(), LogoutCurrentSessionInput{SessionToken: "missing-session"})
 	if !errors.Is(err, ErrSessionInvalid) {
 		t.Fatalf("err = %v, want ErrSessionInvalid", err)
+	}
+}
+
+func TestLogoutAllSessions(t *testing.T) {
+	sessionToken := "raw-session-token"
+	sessionKeyHash := hashSessionKey(sessionToken, "test-session-secret")
+	accountID := uuid.Must(uuid.NewV7())
+	currentSessionID := uuid.Must(uuid.NewV7())
+	otherSessionHash := "other-session-hash"
+	sessions := &fakeSessionStore{
+		session: SessionRecord{
+			SessionID:      currentSessionID,
+			UserAccountID:  accountID,
+			SessionKeyHash: sessionKeyHash,
+			CreatedAt:      time.Now().UTC().Add(-time.Minute),
+			ExpiresAt:      time.Now().UTC().Add(24 * time.Hour),
+		},
+	}
+	repo := &fakeRepository{
+		activeSessions: []auth.AuthSession{
+			{
+				ID:             currentSessionID,
+				UserAccountID:  accountID,
+				SessionKeyHash: sessionKeyHash,
+				Status:         auth.AuthSessionStatusActive,
+				CreatedAt:      sessions.session.CreatedAt,
+				ExpiresAt:      sessions.session.ExpiresAt,
+			},
+			{
+				ID:             uuid.Must(uuid.NewV7()),
+				UserAccountID:  accountID,
+				SessionKeyHash: otherSessionHash,
+				Status:         auth.AuthSessionStatusActive,
+				CreatedAt:      time.Now().UTC().Add(-time.Hour),
+				ExpiresAt:      time.Now().UTC().Add(24 * time.Hour),
+			},
+		},
+	}
+	service := NewService(repo, fakeHasher{}, &fakeEmailSender{}, &fakeRateLimiter{}, sessions, ServiceConfig{
+		SessionSecret: "test-session-secret",
+		SessionTTL:    24 * time.Hour,
+	})
+
+	result, err := service.LogoutAllSessions(context.Background(), LogoutAllSessionsInput{
+		SessionToken: sessionToken,
+		IPAddress:    "127.0.0.1",
+		UserAgent:    "service unit test",
+	})
+	if err != nil {
+		t.Fatalf("LogoutAllSessions: %v", err)
+	}
+	if result.Status != "ok" {
+		t.Fatalf("status = %s, want ok", result.Status)
+	}
+	if repo.revokedUser != accountID {
+		t.Fatalf("revoked user = %s, want %s", repo.revokedUser, accountID)
+	}
+	if repo.revokeReason != "user_logout_all" {
+		t.Fatalf("revoke reason = %s, want user_logout_all", repo.revokeReason)
+	}
+	if sessions.deletedHash != otherSessionHash {
+		t.Fatalf("last deleted hash = %s, want %s", sessions.deletedHash, otherSessionHash)
+	}
+	if len(repo.securityEvents) != 1 || repo.securityEvents[0].EventType != "auth.logout_all" {
+		t.Fatalf("security events = %#v, want auth.logout_all", repo.securityEvents)
 	}
 }

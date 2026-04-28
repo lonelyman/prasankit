@@ -457,6 +457,24 @@ func (r *Repository) FindActiveAuthSessionByHash(ctx context.Context, sessionKey
 	return row.toDomain(), nil
 }
 
+func (r *Repository) ListActiveAuthSessionsByUserAccountID(ctx context.Context, userAccountID uuid.UUID) ([]auth.AuthSession, error) {
+	var rows []authSessionRow
+	err := r.db.WithContext(ctx).
+		Where("user_account_id = ?", userAccountID).
+		Where("status = ?", string(auth.AuthSessionStatusActive)).
+		Find(&rows).
+		Error
+	if err != nil {
+		return nil, err
+	}
+
+	sessions := make([]auth.AuthSession, 0, len(rows))
+	for _, row := range rows {
+		sessions = append(sessions, *row.toDomain())
+	}
+	return sessions, nil
+}
+
 func (r *Repository) CreateAuthSession(ctx context.Context, session *auth.AuthSession) error {
 	if err := ensureUUID(&session.ID); err != nil {
 		return err
@@ -516,6 +534,19 @@ func (r *Repository) RevokeAuthSessionByHash(ctx context.Context, sessionKeyHash
 		return auth.ErrAuthSessionNotFound
 	}
 	return nil
+}
+
+func (r *Repository) RevokeActiveAuthSessionsByUserAccountID(ctx context.Context, userAccountID uuid.UUID, revokedAt time.Time, reason string) error {
+	return r.db.WithContext(ctx).
+		Model(&authSessionRow{}).
+		Where("user_account_id = ?", userAccountID).
+		Where("status = ?", string(auth.AuthSessionStatusActive)).
+		Updates(map[string]any{
+			"status":         string(auth.AuthSessionStatusRevoked),
+			"revoked_at":     revokedAt,
+			"revoked_reason": reason,
+		}).
+		Error
 }
 
 func (r *Repository) CreateLoginAttempt(ctx context.Context, attempt *auth.LoginAttempt) error {
