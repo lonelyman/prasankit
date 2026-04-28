@@ -17,6 +17,7 @@ var ErrEmailAlreadyRegistered = errors.New("email is already registered")
 
 type Repository interface {
 	WithinTransaction(ctx context.Context, fn func(ctx context.Context, repo Repository) error) error
+	FindUserAccountByID(ctx context.Context, id uuid.UUID) (*UserAccount, error)
 	FindUserAccountByEmail(ctx context.Context, email string) (*UserAccount, error)
 	FindAuthIdentityByID(ctx context.Context, id uuid.UUID) (*AuthIdentity, error)
 	FindAuthIdentityByEmail(ctx context.Context, email string) (*AuthIdentity, error)

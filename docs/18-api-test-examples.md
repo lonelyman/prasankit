@@ -45,6 +45,7 @@ docker compose ps
 | POST | `/api/v1/auth/verify-email` | Done, see `docs/18.2-auth-verify-email-test-examples.md` |
 | POST | `/api/v1/auth/resend-verification-email` | Done, see `docs/18.3-auth-resend-verification-email-test-examples.md` |
 | POST | `/api/v1/auth/login` | Done, sets httpOnly cookie, see `docs/18.4-auth-login-test-examples.md` |
+| GET | `/api/v1/auth/me` | Done, validates Redis session cookie, see `docs/18.5-auth-me-test-examples.md` |
 
 ## Health
 
@@ -159,6 +160,7 @@ HTTP/1.1 503 Service Unavailable
 | `docs/18.2-auth-verify-email-test-examples.md` | `POST /api/v1/auth/verify-email` |
 | `docs/18.3-auth-resend-verification-email-test-examples.md` | `POST /api/v1/auth/resend-verification-email` |
 | `docs/18.4-auth-login-test-examples.md` | `POST /api/v1/auth/login` |
+| `docs/18.5-auth-me-test-examples.md` | `GET /api/v1/auth/me` |
 
 ## Not Done Yet
 
@@ -170,4 +172,3 @@ Auth routes ที่ยังเป็น placeholder:
 | POST | `/api/v1/auth/logout-all` | `501 NOT_IMPLEMENTED` |
 | POST | `/api/v1/auth/forgot-password` | `501 NOT_IMPLEMENTED` |
 | POST | `/api/v1/auth/reset-password` | `501 NOT_IMPLEMENTED` |
-| GET | `/api/v1/auth/me` | `501 NOT_IMPLEMENTED` |

@@ -34,6 +34,22 @@ func (s Store) Save(ctx context.Context, session authsvc.SessionRecord, ttl time
 	return s.redis.Set(ctx, sessionKey(session.SessionKeyHash), payload, ttl).Err()
 }
 
+func (s Store) Get(ctx context.Context, sessionKeyHash string) (*authsvc.SessionRecord, error) {
+	payload, err := s.redis.Get(ctx, sessionKey(sessionKeyHash)).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, authsvc.ErrSessionNotFound
+		}
+		return nil, err
+	}
+
+	var session authsvc.SessionRecord
+	if err := json.Unmarshal(payload, &session); err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
 func (s Store) Delete(ctx context.Context, sessionKeyHash string) error {
 	return s.redis.Del(ctx, sessionKey(sessionKeyHash)).Err()
 }

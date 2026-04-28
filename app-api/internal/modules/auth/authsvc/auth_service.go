@@ -38,6 +38,10 @@ var ErrEmailNotVerified = errors.New("email is not verified")
 var ErrAccountInactive = errors.New("account is inactive")
 var ErrSessionStoreRequired = errors.New("session store is required")
 var ErrSessionConfigInvalid = errors.New("session config is invalid")
+var ErrSessionTokenRequired = errors.New("session token is required")
+var ErrSessionNotFound = errors.New("session not found")
+var ErrSessionInvalid = errors.New("session is invalid")
+var ErrSessionExpired = errors.New("session is expired")
 
 type PasswordHasher interface {
 	Hash(password string) (string, error)
@@ -54,6 +58,7 @@ type RateLimiter interface {
 
 type SessionStore interface {
 	Save(ctx context.Context, session SessionRecord, ttl time.Duration) error
+	Get(ctx context.Context, sessionKeyHash string) (*SessionRecord, error)
 	Delete(ctx context.Context, sessionKeyHash string) error
 }
 
@@ -118,6 +123,17 @@ type LoginEmailPasswordResult struct {
 	SessionID        uuid.UUID
 	SessionToken     string
 	SessionExpiresAt time.Time
+}
+
+type CurrentAccountInput struct {
+	SessionToken string
+	IPAddress    string
+	UserAgent    string
+}
+
+type CurrentAccountResult struct {
+	Account auth.UserAccount
+	Session SessionRecord
 }
 
 type Service struct {
@@ -586,6 +602,51 @@ func (s *Service) LoginEmailPassword(ctx context.Context, input LoginEmailPasswo
 		SessionID:        sessionID,
 		SessionToken:     sessionToken,
 		SessionExpiresAt: expiresAt,
+	}, nil
+}
+
+func (s *Service) CurrentAccount(ctx context.Context, input CurrentAccountInput) (*CurrentAccountResult, error) {
+	sessionToken := strings.TrimSpace(input.SessionToken)
+	if sessionToken == "" {
+		return nil, ErrSessionTokenRequired
+	}
+	if s.sessions == nil {
+		return nil, ErrSessionStoreRequired
+	}
+	if err := s.validateSessionConfig(); err != nil {
+		return nil, err
+	}
+
+	sessionKeyHash := hashSessionKey(sessionToken, s.config.SessionSecret)
+	session, err := s.sessions.Get(ctx, sessionKeyHash)
+	if errors.Is(err, ErrSessionNotFound) {
+		return nil, ErrSessionInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	if !session.ExpiresAt.After(now) {
+		_ = s.sessions.Delete(ctx, session.SessionKeyHash)
+		return nil, ErrSessionExpired
+	}
+
+	account, err := s.repository.FindUserAccountByID(ctx, session.UserAccountID)
+	if errors.Is(err, auth.ErrUserAccountNotFound) {
+		_ = s.sessions.Delete(ctx, session.SessionKeyHash)
+		return nil, ErrSessionInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+	if account.Status != auth.UserAccountStatusActive {
+		return nil, ErrAccountInactive
+	}
+
+	return &CurrentAccountResult{
+		Account: *account,
+		Session: *session,
 	}, nil
 }
 

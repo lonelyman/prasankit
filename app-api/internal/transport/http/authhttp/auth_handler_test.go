@@ -31,6 +31,9 @@ type fakeRegistrar struct {
 	loginResult    *authsvc.LoginEmailPasswordResult
 	loginErr       error
 	loginInput     authsvc.LoginEmailPasswordInput
+	currentResult  *authsvc.CurrentAccountResult
+	currentErr     error
+	currentInput   authsvc.CurrentAccountInput
 }
 
 func (r *fakeRegistrar) RegisterEmailPassword(_ context.Context, input authsvc.RegisterEmailPasswordInput) (*authsvc.RegisterEmailPasswordResult, error) {
@@ -63,6 +66,14 @@ func (r *fakeRegistrar) LoginEmailPassword(_ context.Context, input authsvc.Logi
 		return nil, r.loginErr
 	}
 	return r.loginResult, nil
+}
+
+func (r *fakeRegistrar) CurrentAccount(_ context.Context, input authsvc.CurrentAccountInput) (*authsvc.CurrentAccountResult, error) {
+	r.currentInput = input
+	if r.currentErr != nil {
+		return nil, r.currentErr
+	}
+	return r.currentResult, nil
 }
 
 func TestRegisterEmailPassword(t *testing.T) {
@@ -511,6 +522,107 @@ func TestLoginEmailPasswordMapsServiceErrors(t *testing.T) {
 				"email":    "owner@example.test",
 				"password": "correct-password",
 			})
+			defer resp.Body.Close()
+
+			assertAuthError(t, resp, tt.wantStatus, tt.wantCode)
+		})
+	}
+}
+
+func TestMe(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	registrar := &fakeRegistrar{
+		currentResult: &authsvc.CurrentAccountResult{
+			Account: auth.UserAccount{
+				ID:           accountID,
+				PrimaryEmail: "owner@example.test",
+				Status:       auth.UserAccountStatusActive,
+			},
+		},
+	}
+	app := newAuthTestApp(newTestHandler(registrar))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if registrar.currentInput.SessionToken != "raw-session-token" {
+		t.Fatalf("session token = %s, want raw-session-token", registrar.currentInput.SessionToken)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	accountData := data["account"].(map[string]any)
+	if accountData["id"] != accountID.String() {
+		t.Fatalf("account.id = %v, want %s", accountData["id"], accountID)
+	}
+	if accountData["primary_email"] != "owner@example.test" {
+		t.Fatalf("account.primary_email = %v, want owner@example.test", accountData["primary_email"])
+	}
+	if _, ok := body["error"]; ok {
+		t.Fatalf("unexpected error envelope: %#v", body)
+	}
+}
+
+func TestMeMapsSessionErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "session required",
+			err:        authsvc.ErrSessionTokenRequired,
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "AUTH_SESSION_REQUIRED",
+		},
+		{
+			name:       "session invalid",
+			err:        authsvc.ErrSessionInvalid,
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "AUTH_SESSION_INVALID",
+		},
+		{
+			name:       "session expired",
+			err:        authsvc.ErrSessionExpired,
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "AUTH_SESSION_EXPIRED",
+		},
+		{
+			name:       "account inactive",
+			err:        authsvc.ErrAccountInactive,
+			wantStatus: http.StatusForbidden,
+			wantCode:   "ACCOUNT_INACTIVE",
+		},
+		{
+			name:       "unexpected error",
+			err:        errors.New("redis down"),
+			wantStatus: http.StatusInternalServerError,
+			wantCode:   "INTERNAL_SERVER_ERROR",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := newAuthTestApp(newTestHandler(&fakeRegistrar{currentErr: tt.err}))
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+			req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
 			defer resp.Body.Close()
 
 			assertAuthError(t, resp, tt.wantStatus, tt.wantCode)

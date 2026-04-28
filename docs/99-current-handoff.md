@@ -57,6 +57,7 @@ Foundation
 │  ├─ 18.2-auth-verify-email-test-examples.md
 │  ├─ 18.3-auth-resend-verification-email-test-examples.md
 │  ├─ 18.4-auth-login-test-examples.md
+│  ├─ 18.5-auth-me-test-examples.md
 ├─ .env.example
 ├─ Makefile
 ├─ docker-compose.yml
@@ -158,6 +159,7 @@ app-api/
 - สร้าง `docs/18.2-auth-verify-email-test-examples.md` สำหรับตัวอย่างทดสอบ `POST /api/v1/auth/verify-email`
 - สร้าง `docs/18.3-auth-resend-verification-email-test-examples.md` สำหรับตัวอย่างทดสอบ `POST /api/v1/auth/resend-verification-email`
 - สร้าง `docs/18.4-auth-login-test-examples.md` สำหรับตัวอย่างทดสอบ `POST /api/v1/auth/login`
+- สร้าง `docs/18.5-auth-me-test-examples.md` สำหรับตัวอย่างทดสอบ `GET /api/v1/auth/me`
 - สร้าง `.env.example`
 - สร้าง root `Makefile` สำหรับ dev bootstrap
 - สร้าง `docker-compose.yml`
@@ -203,6 +205,7 @@ app-api/
   - `POST /api/v1/auth/register`
 - เพิ่ม Auth routes ที่ยังไม่ทำแบบ placeholder ที่ตอบ `501 NOT_IMPLEMENTED`
 - Implement Auth repository method แรก:
+  - `FindUserAccountByID`
   - `FindUserAccountByEmail`
   - `CreateUserAccount` โดยใช้ UUID v7 จาก Go application, set status default และ set `created_at`/`updated_at` ใน app
   - `CreateAuthIdentity` โดยใช้ UUID v7 จาก Go application และ default เป็น `email_password/email`
@@ -234,7 +237,9 @@ app-api/
 - Wire `VerifyEmail` เข้า HTTP handler `POST /api/v1/auth/verify-email` แล้ว
 - Wire `ResendVerificationEmail` เข้า HTTP handler `POST /api/v1/auth/resend-verification-email` แล้ว
 - Wire `LoginEmailPassword` เข้า HTTP handler `POST /api/v1/auth/login` แล้ว
+- Wire `CurrentAccount` เข้า HTTP handler `GET /api/v1/auth/me` แล้ว
 - เพิ่ม Redis session store สำหรับเก็บ session record หลัง login
+- เพิ่ม Redis session store สำหรับอ่าน session record และ delete session record แล้ว
 - เพิ่ม Auth service flow สำหรับ `LoginEmailPassword`:
   - normalize email
   - ตรวจ password ด้วย bcrypt
@@ -247,6 +252,13 @@ app-api/
   - set httpOnly cookie ใน handler
   - create `auth_login_attempts`
   - create `security_events` สำหรับ `auth.login_success` และ `auth.login_failed`
+- เพิ่ม Auth service flow สำหรับ `CurrentAccount`:
+  - require session token จาก cookie
+  - hash session token ด้วย `SESSION_SECRET`
+  - อ่าน session record จาก Redis
+  - reject missing/invalid/expired session
+  - โหลด `user_accounts` จาก database
+  - require account status `active`
 - เปลี่ยน `docker-compose.yml` ให้ API container อ่าน runtime env จาก `.env` แทน `.env.example`
 - เพิ่ม root Make targets:
   - `make env-init`
@@ -288,7 +300,6 @@ app-api/
   - `POST /api/v1/auth/logout-all`
   - `POST /api/v1/auth/forgot-password`
   - `POST /api/v1/auth/reset-password`
-  - `GET /api/v1/auth/me`
 - Auth repository integration test ผ่านกับ Docker PostgreSQL:
 
 ```bash
@@ -300,10 +311,12 @@ PRASANKIT_TEST_DB_DSN='postgres://prasankit:change_me@localhost:15432/prasankit?
 - Auth service unit test ผ่านสำหรับ verify email success, missing token, invalid token, expired token และ used token
 - Auth service unit test ผ่านสำหรับ resend verification email success, missing/active account generic success, invalid email, rate limit และ email send failure
 - Auth service unit test ผ่านสำหรับ login success, invalid credentials, email not verified และ inactive account
+- Auth service unit test ผ่านสำหรับ current account/session validation, missing session, invalid session, expired session และ inactive account
 - Auth register handler unit test ผ่าน รวมถึง success, invalid JSON, validation error, duplicate email, rate limit, email send failure และ unexpected error
 - Auth verify-email handler unit test ผ่าน รวมถึง success, invalid JSON, required token, invalid token, expired token, used token และ unexpected error
 - Auth resend-verification-email handler unit test ผ่าน รวมถึง success, invalid JSON, invalid email, rate limit, email send failure และ unexpected error
 - Auth login handler unit test ผ่าน รวมถึง success, httpOnly cookie, invalid JSON, invalid credentials, email not verified, inactive account และ unexpected error
+- Auth me handler unit test ผ่าน รวมถึง success, missing session, invalid session, expired session, inactive account และ unexpected error
 - Docker smoke test `POST /api/v1/auth/register` ผ่าน ได้ `201 Created` และ response อยู่ใต้ root key `data`
 - Docker smoke test สมัคร email ซ้ำผ่าน ได้ `409 Conflict` และ error code `EMAIL_ALREADY_REGISTERED`
 - เพิ่มตัวอย่างทดสอบ endpoint ที่เสร็จแล้วใน `docs/18-api-test-examples.md`
@@ -312,6 +325,7 @@ PRASANKIT_TEST_DB_DSN='postgres://prasankit:change_me@localhost:15432/prasankit?
 - เพิ่มตัวอย่าง `POST /api/v1/auth/verify-email` ใน `docs/18.2-auth-verify-email-test-examples.md`
 - เพิ่มตัวอย่าง `POST /api/v1/auth/resend-verification-email` ใน `docs/18.3-auth-resend-verification-email-test-examples.md`
 - เพิ่มตัวอย่าง `POST /api/v1/auth/login` ใน `docs/18.4-auth-login-test-examples.md`
+- เพิ่มตัวอย่าง `GET /api/v1/auth/me` ใน `docs/18.5-auth-me-test-examples.md`
 - `GOTOOLCHAIN=auto go test ./...` ผ่านใน `app-api`
 - PostgreSQL extensions ที่ apply แล้ว:
   - `citext`
@@ -407,6 +421,7 @@ config
 - Password hashing ใช้ `pkg/passwordhash` เป็น adapter กลาง; handler/repository ไม่ hash password เอง
 - Email verification ใช้ SMTP จริงจาก env, เก็บเฉพาะ token hash ใน `auth_email_verification_tokens`, และคุมจำนวนส่งด้วย Redis rate limit
 - Login ใช้ Redis session store + httpOnly cookie; raw session token ไม่ถูกส่งใน response body และไม่เก็บตรง ๆ ใน database
+- `GET /api/v1/auth/me` ตรวจ session จาก cookie/Redis แล้วคืน account กลางเท่านั้น; workspace context จะเติมตอนเริ่ม Workspace/Tenant flow
 - Auth service เขียน business flow ก่อน handler: handler แค่ parse/response, service รับผิดชอบ validation/use case, repository รับผิดชอบ persistence
 - เมื่อ endpoint ไหน implement เสร็จจริง ต้องเพิ่มรายการลง `docs/18-api-test-examples.md`; ถ้าเนื้อหายาวให้แยกเป็น `docs/18.x-...-test-examples.md`
 - สำหรับย้ายขึ้น server ใหม่ ให้รัน `make env-init`, แก้ค่า `.env`, แล้วรัน `make db-migrate` ก่อน start/rebuild API สำหรับ real traffic
@@ -426,7 +441,7 @@ PostgreSQL connection done
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Migration 000004_create_auth_identities applied
 -> Auth module skeleton created
--> Auth repository: FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
+-> Auth repository: FindUserAccountByID/FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
 -> Auth service: RegisterEmailPassword implemented
 -> Auth HTTP: POST /api/v1/auth/register wired
 -> Auth register now creates verification token and sends verification email via real SMTP
@@ -435,7 +450,9 @@ PostgreSQL connection done
 -> Auth service: LoginEmailPassword implemented
 -> Auth HTTP: POST /api/v1/auth/login wired
 -> Auth session store: Redis session record implemented
--> ต่อไปเริ่ม auth session validation + GET /api/v1/auth/me
+-> Auth service: CurrentAccount/session validation implemented
+-> Auth HTTP: GET /api/v1/auth/me wired
+-> ต่อไปเริ่ม logout/session revoke
 ```
 
 ## Do Not Do Yet

@@ -134,6 +134,23 @@ func (r *Repository) WithinTransaction(ctx context.Context, fn func(context.Cont
 	})
 }
 
+func (r *Repository) FindUserAccountByID(ctx context.Context, id uuid.UUID) (*auth.UserAccount, error) {
+	var row userAccountRow
+	err := r.db.WithContext(ctx).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		First(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, auth.ErrUserAccountNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return row.toDomain(), nil
+}
+
 func (r *Repository) FindUserAccountByEmail(ctx context.Context, email string) (*auth.UserAccount, error) {
 	var row userAccountRow
 	err := r.db.WithContext(ctx).

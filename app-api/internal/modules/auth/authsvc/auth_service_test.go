@@ -66,6 +66,16 @@ func (r *fakeRepository) FindUserAccountByEmail(context.Context, string) (*auth.
 	return nil, auth.ErrUserAccountNotFound
 }
 
+func (r *fakeRepository) FindUserAccountByID(_ context.Context, id uuid.UUID) (*auth.UserAccount, error) {
+	if r.existingAccount != nil && r.existingAccount.ID == id {
+		return r.existingAccount, nil
+	}
+	if r.account != nil && r.account.ID == id {
+		return r.account, nil
+	}
+	return nil, auth.ErrUserAccountNotFound
+}
+
 func (r *fakeRepository) FindAuthIdentityByID(_ context.Context, id uuid.UUID) (*auth.AuthIdentity, error) {
 	if r.identity == nil || r.identity.ID != id {
 		return nil, auth.ErrAuthIdentityNotFound
@@ -210,6 +220,7 @@ type fakeSessionStore struct {
 	session     SessionRecord
 	ttl         time.Duration
 	deletedHash string
+	getErr      error
 	saveErr     error
 	deleteErr   error
 }
@@ -218,6 +229,16 @@ func (s *fakeSessionStore) Save(_ context.Context, session SessionRecord, ttl ti
 	s.session = session
 	s.ttl = ttl
 	return s.saveErr
+}
+
+func (s *fakeSessionStore) Get(_ context.Context, sessionKeyHash string) (*SessionRecord, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	if s.session.SessionKeyHash != sessionKeyHash {
+		return nil, ErrSessionNotFound
+	}
+	return &s.session, nil
 }
 
 func (s *fakeSessionStore) Delete(_ context.Context, sessionKeyHash string) error {
@@ -836,6 +857,118 @@ func TestLoginEmailPasswordRequiresVerifiedActiveAccount(t *testing.T) {
 		Email:    "owner@example.test",
 		Password: "correct-password",
 	})
+	if !errors.Is(err, ErrAccountInactive) {
+		t.Fatalf("err = %v, want ErrAccountInactive", err)
+	}
+}
+
+func TestCurrentAccount(t *testing.T) {
+	sessionToken := "raw-session-token"
+	sessionKeyHash := hashSessionKey(sessionToken, "test-session-secret")
+	accountID := uuid.Must(uuid.NewV7())
+	account := &auth.UserAccount{
+		ID:           accountID,
+		PrimaryEmail: "owner@example.test",
+		Status:       auth.UserAccountStatusActive,
+	}
+	sessions := &fakeSessionStore{
+		session: SessionRecord{
+			SessionID:      uuid.Must(uuid.NewV7()),
+			UserAccountID:  accountID,
+			SessionKeyHash: sessionKeyHash,
+			CreatedAt:      time.Now().UTC().Add(-time.Minute),
+			ExpiresAt:      time.Now().UTC().Add(24 * time.Hour),
+		},
+	}
+	service := NewService(&fakeRepository{existingAccount: account}, fakeHasher{}, &fakeEmailSender{}, &fakeRateLimiter{}, sessions, ServiceConfig{
+		SessionSecret: "test-session-secret",
+		SessionTTL:    24 * time.Hour,
+	})
+
+	result, err := service.CurrentAccount(context.Background(), CurrentAccountInput{
+		SessionToken: sessionToken,
+		IPAddress:    "127.0.0.1",
+		UserAgent:    "service unit test",
+	})
+	if err != nil {
+		t.Fatalf("CurrentAccount: %v", err)
+	}
+	if result.Account.ID != accountID {
+		t.Fatalf("account.ID = %s, want %s", result.Account.ID, accountID)
+	}
+	if result.Session.SessionKeyHash != sessionKeyHash {
+		t.Fatalf("session hash = %s, want %s", result.Session.SessionKeyHash, sessionKeyHash)
+	}
+}
+
+func TestCurrentAccountRejectsMissingInvalidAndExpiredSessions(t *testing.T) {
+	service := newTestService(&fakeRepository{}, nil, nil)
+
+	_, err := service.CurrentAccount(context.Background(), CurrentAccountInput{})
+	if !errors.Is(err, ErrSessionTokenRequired) {
+		t.Fatalf("err = %v, want ErrSessionTokenRequired", err)
+	}
+
+	sessions := &fakeSessionStore{}
+	service = NewService(&fakeRepository{}, fakeHasher{}, &fakeEmailSender{}, &fakeRateLimiter{}, sessions, ServiceConfig{
+		SessionSecret: "test-session-secret",
+		SessionTTL:    24 * time.Hour,
+	})
+	_, err = service.CurrentAccount(context.Background(), CurrentAccountInput{SessionToken: "missing-session"})
+	if !errors.Is(err, ErrSessionInvalid) {
+		t.Fatalf("err = %v, want ErrSessionInvalid", err)
+	}
+
+	sessionToken := "expired-session"
+	sessionKeyHash := hashSessionKey(sessionToken, "test-session-secret")
+	accountID := uuid.Must(uuid.NewV7())
+	sessions = &fakeSessionStore{
+		session: SessionRecord{
+			SessionID:      uuid.Must(uuid.NewV7()),
+			UserAccountID:  accountID,
+			SessionKeyHash: sessionKeyHash,
+			CreatedAt:      time.Now().UTC().Add(-48 * time.Hour),
+			ExpiresAt:      time.Now().UTC().Add(-time.Minute),
+		},
+	}
+	service = NewService(&fakeRepository{}, fakeHasher{}, &fakeEmailSender{}, &fakeRateLimiter{}, sessions, ServiceConfig{
+		SessionSecret: "test-session-secret",
+		SessionTTL:    24 * time.Hour,
+	})
+	_, err = service.CurrentAccount(context.Background(), CurrentAccountInput{SessionToken: sessionToken})
+	if !errors.Is(err, ErrSessionExpired) {
+		t.Fatalf("err = %v, want ErrSessionExpired", err)
+	}
+	if sessions.deletedHash != sessionKeyHash {
+		t.Fatalf("deleted hash = %s, want %s", sessions.deletedHash, sessionKeyHash)
+	}
+}
+
+func TestCurrentAccountRequiresActiveAccount(t *testing.T) {
+	sessionToken := "raw-session-token"
+	sessionKeyHash := hashSessionKey(sessionToken, "test-session-secret")
+	accountID := uuid.Must(uuid.NewV7())
+	sessions := &fakeSessionStore{
+		session: SessionRecord{
+			SessionID:      uuid.Must(uuid.NewV7()),
+			UserAccountID:  accountID,
+			SessionKeyHash: sessionKeyHash,
+			CreatedAt:      time.Now().UTC().Add(-time.Minute),
+			ExpiresAt:      time.Now().UTC().Add(24 * time.Hour),
+		},
+	}
+	service := NewService(&fakeRepository{
+		existingAccount: &auth.UserAccount{
+			ID:           accountID,
+			PrimaryEmail: "owner@example.test",
+			Status:       auth.UserAccountStatusSuspended,
+		},
+	}, fakeHasher{}, &fakeEmailSender{}, &fakeRateLimiter{}, sessions, ServiceConfig{
+		SessionSecret: "test-session-secret",
+		SessionTTL:    24 * time.Hour,
+	})
+
+	_, err := service.CurrentAccount(context.Background(), CurrentAccountInput{SessionToken: sessionToken})
 	if !errors.Is(err, ErrAccountInactive) {
 		t.Fatalf("err = %v, want ErrAccountInactive", err)
 	}

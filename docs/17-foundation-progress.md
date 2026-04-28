@@ -191,7 +191,6 @@ Verified:
   - `POST /api/v1/auth/logout-all`
   - `POST /api/v1/auth/forgot-password`
   - `POST /api/v1/auth/reset-password`
-  - `GET /api/v1/auth/me`
 - Auth postgres repository implementation เริ่มแล้ว:
   - `FindUserAccountByEmail`
   - `CreateUserAccount` โดยสร้าง primary key เป็น UUID v7 จาก Go application, set status default และ set `created_at`/`updated_at` ใน app
@@ -199,6 +198,7 @@ Verified:
   - `CreateAuthSession` โดยสร้าง primary key เป็น UUID v7 จาก Go application, set `created_at` ใน app และบังคับ `expires_at`
   - `CreateLoginAttempt` โดยสร้าง primary key เป็น UUID v7 จาก Go application และ set `created_at` ใน app หาก caller ไม่ส่งมา
   - `CreateSecurityEvent` โดยสร้าง primary key เป็น UUID v7 จาก Go application และใช้ `pkg/dbtypes.JSONB` สำหรับ `metadata_json`
+  - `FindUserAccountByID`
 - Auth repository integration test ใช้ `PRASANKIT_TEST_DB_DSN` และผ่านกับ Docker PostgreSQL แล้ว
 - ทดสอบ fresh install migration กับ database ใหม่ `prasankit_identity_install_check` แล้วผ่านถึง version 4
 - ตรวจ fresh install schema แล้ว auth primary key defaults เป็น `<null>` ทั้งหมด
@@ -230,7 +230,9 @@ Verified:
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/verify-email` แล้ว โดย response สำเร็จอยู่ใต้ root key `data`
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/resend-verification-email` แล้ว โดย response เป็น generic success ใต้ root key `data`
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/login` แล้ว โดย set httpOnly cookie และ response อยู่ใต้ root key `data`
+- เพิ่ม HTTP handler สำหรับ `GET /api/v1/auth/me` แล้ว โดยตรวจ Redis session cookie และ response อยู่ใต้ root key `data`
 - เพิ่ม Redis session store adapter แล้ว เพื่อเก็บ session record จาก login
+- เพิ่ม Redis session store read/delete แล้ว เพื่อใช้ validate session และ cleanup session หมดอายุ
 - เพิ่ม Auth service flow สำหรับ email/password login แล้ว:
   - normalize email
   - ตรวจ password ด้วย bcrypt
@@ -242,6 +244,13 @@ Verified:
   - เก็บ session record ใน Redis
   - เขียน `auth_login_attempts`
   - เขียน `security_events` สำหรับ `auth.login_success` และ `auth.login_failed`
+- เพิ่ม Auth service flow สำหรับ current account/session validation แล้ว:
+  - require session token จาก cookie
+  - hash session token ด้วย `SESSION_SECRET`
+  - อ่าน session record จาก Redis
+  - reject missing/invalid/expired session
+  - โหลด `user_accounts` จาก database
+  - require account status `active`
 - เพิ่ม test สำหรับ Auth register handler แล้ว
 - เพิ่ม test สำหรับ Auth verify-email handler แล้ว
 - เพิ่ม test สำหรับ Auth resend-verification-email handler แล้ว
@@ -256,6 +265,7 @@ Verified:
 - เพิ่ม `docs/18.2-auth-verify-email-test-examples.md` สำหรับตัวอย่างทดสอบ verify email แล้ว
 - เพิ่ม `docs/18.3-auth-resend-verification-email-test-examples.md` สำหรับตัวอย่างทดสอบ resend verification email แล้ว
 - เพิ่ม `docs/18.4-auth-login-test-examples.md` สำหรับตัวอย่างทดสอบ login แล้ว
+- เพิ่ม `docs/18.5-auth-me-test-examples.md` สำหรับตัวอย่างทดสอบ current session/me แล้ว
 
 Known note:
 
@@ -282,7 +292,7 @@ Composition note:
 - Completed API documentation strategy: เมื่อ endpoint ไหน implement เสร็จจริง ต้องเพิ่ม request/success/error examples ใน `docs/18-api-test-examples.md`
 - Fresh server bootstrap order: create/edit `.env` -> start PostgreSQL/Redis/MinIO -> run goose migrations -> start/rebuild API
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
-- Login/session backend ขั้นแรกเสร็จแล้ว แต่ auth middleware, `GET /api/v1/auth/me`, logout และ session revoke ยังไม่เสร็จ
+- Login/session backend และ `GET /api/v1/auth/me` เสร็จแล้ว แต่ logout และ session revoke ยังไม่เสร็จ
 
 หมายเหตุ:
 
@@ -290,12 +300,12 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปเริ่ม auth session validation:
+ขั้นถัดไปเริ่ม logout/session revoke:
 
-- middleware อ่าน httpOnly cookie
-- hash session token ด้วย `SESSION_SECRET`
-- ตรวจ Redis session
-- `GET /api/v1/auth/me`
+- `POST /api/v1/auth/logout`
+- revoke Redis session
+- update `auth_sessions.status = revoked`
+- clear httpOnly cookie
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -310,7 +320,7 @@ PostgreSQL connection done
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Migration 000004_create_auth_identities applied
 -> Auth module skeleton created
--> Auth repository: FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
+-> Auth repository: FindUserAccountByID/FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
 -> Auth service: RegisterEmailPassword implemented
 -> Auth HTTP: POST /api/v1/auth/register wired
 -> Auth HTTP: POST /api/v1/auth/verify-email wired
@@ -318,4 +328,6 @@ PostgreSQL connection done
 -> Auth service: LoginEmailPassword implemented
 -> Auth HTTP: POST /api/v1/auth/login wired
 -> Auth session store: Redis session record implemented
+-> Auth service: CurrentAccount/session validation implemented
+-> Auth HTTP: GET /api/v1/auth/me wired
 ```

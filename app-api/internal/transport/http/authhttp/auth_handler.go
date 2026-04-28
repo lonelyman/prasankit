@@ -17,7 +17,10 @@ type AuthService interface {
 	VerifyEmail(ctx context.Context, input authsvc.VerifyEmailInput) (*authsvc.VerifyEmailResult, error)
 	ResendVerificationEmail(ctx context.Context, input authsvc.ResendVerificationEmailInput) (*authsvc.ResendVerificationEmailResult, error)
 	LoginEmailPassword(ctx context.Context, input authsvc.LoginEmailPasswordInput) (*authsvc.LoginEmailPasswordResult, error)
+	CurrentAccount(ctx context.Context, input authsvc.CurrentAccountInput) (*authsvc.CurrentAccountResult, error)
 }
+
+const accountLocalKey = "auth.account"
 
 type Handler struct {
 	auth   AuthService
@@ -67,6 +70,10 @@ type loginEmailPasswordResponse struct {
 	SessionExpiresAt string          `json:"session_expires_at"`
 }
 
+type currentAccountResponse struct {
+	Account accountResponse `json:"account"`
+}
+
 type accountResponse struct {
 	ID           string `json:"id"`
 	PrimaryEmail string `json:"primary_email"`
@@ -90,7 +97,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	auth.Post("/logout-all", h.NotImplemented)
 	auth.Post("/forgot-password", h.NotImplemented)
 	auth.Post("/reset-password", h.NotImplemented)
-	auth.Get("/me", h.NotImplemented)
+	auth.Get("/me", h.requireSession, h.Me)
 }
 
 func (h Handler) RegisterEmailPassword(c fiber.Ctx) error {
@@ -207,16 +214,51 @@ func (h Handler) LoginEmailPassword(c fiber.Ctx) error {
 	})
 }
 
+func (h Handler) Me(c fiber.Ctx) error {
+	account, ok := c.Locals(accountLocalKey).(auth.UserAccount)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	return presenter.RenderItem(c, currentAccountResponse{
+		Account: accountResponse{
+			ID:           account.ID.String(),
+			PrimaryEmail: account.PrimaryEmail,
+			Status:       string(account.Status),
+		},
+	})
+}
+
+func (h Handler) requireSession(c fiber.Ctx) error {
+	if h.auth == nil {
+		return h.NotImplemented(c)
+	}
+
+	result, err := h.auth.CurrentAccount(c.Context(), authsvc.CurrentAccountInput{
+		SessionToken: c.Cookies(h.cookieName()),
+		IPAddress:    c.IP(),
+		UserAgent:    c.UserAgent(),
+	})
+	if err != nil {
+		return renderSessionError(c, err)
+	}
+
+	c.Locals(accountLocalKey, result.Account)
+	return c.Next()
+}
+
 func (h Handler) NotImplemented(c fiber.Ctx) error {
 	return presenter.RenderError(c, fiber.StatusNotImplemented, "NOT_IMPLEMENTED", "Auth endpoint is not implemented yet")
 }
 
-func (h Handler) setSessionCookie(c fiber.Ctx, value string, expiresAt time.Time) {
-	cookieName := h.cookie.Name
-	if cookieName == "" {
-		cookieName = "prasankit_session"
+func (h Handler) cookieName() string {
+	if h.cookie.Name == "" {
+		return "prasankit_session"
 	}
+	return h.cookie.Name
+}
 
+func (h Handler) setSessionCookie(c fiber.Ctx, value string, expiresAt time.Time) {
 	maxAge := 0
 	if h.cookie.TTL > 0 {
 		maxAge = int(h.cookie.TTL.Seconds())
@@ -228,7 +270,7 @@ func (h Handler) setSessionCookie(c fiber.Ctx, value string, expiresAt time.Time
 	}
 
 	c.Cookie(&fiber.Cookie{
-		Name:     cookieName,
+		Name:     h.cookieName(),
 		Value:    value,
 		Path:     "/",
 		Expires:  expiresAt,
@@ -237,6 +279,21 @@ func (h Handler) setSessionCookie(c fiber.Ctx, value string, expiresAt time.Time
 		HTTPOnly: true,
 		SameSite: sameSite,
 	})
+}
+
+func renderSessionError(c fiber.Ctx, err error) error {
+	switch {
+	case errors.Is(err, authsvc.ErrSessionTokenRequired):
+		return presenter.RenderError(c, fiber.StatusUnauthorized, "AUTH_SESSION_REQUIRED", "Authentication session is required")
+	case errors.Is(err, authsvc.ErrSessionInvalid):
+		return presenter.RenderError(c, fiber.StatusUnauthorized, "AUTH_SESSION_INVALID", "Authentication session is invalid")
+	case errors.Is(err, authsvc.ErrSessionExpired):
+		return presenter.RenderError(c, fiber.StatusUnauthorized, "AUTH_SESSION_EXPIRED", "Authentication session is expired")
+	case errors.Is(err, authsvc.ErrAccountInactive):
+		return presenter.RenderError(c, fiber.StatusForbidden, "ACCOUNT_INACTIVE", "Account is inactive")
+	default:
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
 }
 
 func renderLoginError(c fiber.Ctx, err error) error {
