@@ -17,6 +17,7 @@ type fakeRepository struct {
 	membership        *workspace.Membership
 	listItems         []workspace.WorkspaceWithMembership
 	listTotal         int
+	role              *workspace.WorkspaceRoleMaster
 	transactionCalled bool
 }
 
@@ -30,6 +31,20 @@ func (r *fakeRepository) FindWorkspaceBySlug(context.Context, string) (*workspac
 		return r.existingWorkspace, nil
 	}
 	return nil, workspace.ErrWorkspaceNotFound
+}
+
+func (r *fakeRepository) FindWorkspaceRoleByCode(_ context.Context, code workspace.WorkspaceRole) (*workspace.WorkspaceRoleMaster, error) {
+	if r.role != nil {
+		return r.role, nil
+	}
+	if code == workspace.WorkspaceRoleOwner {
+		return &workspace.WorkspaceRoleMaster{
+			ID:   uuid.Must(uuid.NewV7()),
+			Code: workspace.WorkspaceRoleOwner,
+			Name: "Owner",
+		}, nil
+	}
+	return nil, workspace.ErrWorkspaceRoleNotFound
 }
 
 func (r *fakeRepository) CreateWorkspace(_ context.Context, value *workspace.Workspace) error {
@@ -124,6 +139,9 @@ func TestRegisterWorkspace(t *testing.T) {
 	}
 	if result.Membership.Role != workspace.WorkspaceRoleOwner {
 		t.Fatalf("role = %s, want owner", result.Membership.Role)
+	}
+	if result.Membership.RoleID == uuid.Nil {
+		t.Fatal("membership role ID was not set")
 	}
 	if result.Membership.UserAccountID == nil || *result.Membership.UserAccountID != accountID {
 		t.Fatalf("membership user = %v, want %s", result.Membership.UserAccountID, accountID)

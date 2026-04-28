@@ -39,6 +39,18 @@ const (
 	MembershipStatusSuspended MembershipStatus = "suspended"
 )
 
+type WorkspaceRoleMaster struct {
+	ID          uuid.UUID
+	Code        WorkspaceRole
+	Name        string
+	Description string
+	SortOrder   int
+	IsSystem    bool
+	Status      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type Workspace struct {
 	ID                    uuid.UUID
 	TenantID              uuid.UUID
@@ -63,6 +75,7 @@ type Membership struct {
 	ID            uuid.UUID
 	TenantID      uuid.UUID
 	WorkspaceID   uuid.UUID
+	RoleID        uuid.UUID
 	ProfileID     *uuid.UUID
 	UserAccountID *uuid.UUID
 	Role          WorkspaceRole

@@ -147,11 +147,31 @@ created_at
 
 | Table | Purpose |
 | --- | --- |
+| workspace_roles | App Master สำหรับ role ของสมาชิก workspace |
 | workspace_memberships | ความสัมพันธ์ user/profile กับ workspace และ role |
 | workspace_configs | Config ระดับ Workspace |
 | workspace_master_items | Master Data ระดับ Workspace แบบ generic |
 | workspace_usage_snapshots | Usage snapshot เช่น project, member, file, storage |
 | workspace_cleanup_candidates | Workspace ที่ควรตรวจสอบเพื่อ cleanup |
+
+### workspace_roles
+
+id
+code -- owner, admin, executive, user
+name
+description
+sort_order
+is_system
+status -- active, deprecated
+created_at
+updated_at
+
+หลักการ:
+
+1. เป็น App Master / seed กลางของระบบสำหรับ permission role
+1. ตารางธุรกิจต้อง FK มาที่ `workspace_roles.id` ไม่เก็บ role เป็น free text
+1. API ยังสามารถคืน `code` เช่น owner/admin ให้ frontend แสดงผลได้ แต่ backend ต้องใช้ FK เป็น source หลัก
+1. Role ที่ถูกใช้งานแล้วไม่ควร hard delete ให้ใช้ `deprecated` แทน
 
 ### workspace_memberships
 
@@ -160,7 +180,7 @@ tenant_id
 workspace_id
 profile_id
 user_account_id -- nullable ได้ หากเป็น profile ที่ยังไม่มี account
-workspace_role -- owner, admin, executive, user
+workspace_role_id -- FK -> workspace_roles.id
 status -- active, removed, suspended
 status_reason
 joined_at
@@ -176,6 +196,7 @@ updated_by
 1. ต้องรองรับ user กลับมาเป็นสมาชิกใหม่ได้โดยไม่ทำลายประวัติเดิม
 1. Removed -> Active ได้ แต่ต้องมี audit log
 1. User Account Status แยกจาก Workspace Membership Status
+1. Role เป็น Live Reference ผ่าน `workspace_role_id`; lifecycle status ยังเป็น system state ที่ควบคุมด้วย constraint ได้
 ### workspace_configs
 
 id

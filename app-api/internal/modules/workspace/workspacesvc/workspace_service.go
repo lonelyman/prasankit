@@ -27,6 +27,7 @@ var (
 	ErrContactEmailInvalid    = errors.New("contact email is invalid")
 	ErrAccountRequired        = errors.New("account is required")
 	ErrAccountInactive        = errors.New("account is inactive")
+	ErrWorkspaceRoleMissing   = errors.New("workspace role is missing")
 	ErrMembershipCreateFailed = errors.New("workspace membership create failed")
 )
 
@@ -180,12 +181,21 @@ func (s *Service) RegisterWorkspace(ctx context.Context, input RegisterWorkspace
 			return err
 		}
 
+		ownerRole, err := repo.FindWorkspaceRoleByCode(ctx, workspace.WorkspaceRoleOwner)
+		if errors.Is(err, workspace.ErrWorkspaceRoleNotFound) {
+			return ErrWorkspaceRoleMissing
+		}
+		if err != nil {
+			return err
+		}
+
 		membershipUserID := input.Account.ID
 		membershipRecord = workspace.Membership{
 			TenantID:      workspaceRecord.TenantID,
 			WorkspaceID:   workspaceRecord.ID,
+			RoleID:        ownerRole.ID,
 			UserAccountID: &membershipUserID,
-			Role:          workspace.WorkspaceRoleOwner,
+			Role:          ownerRole.Code,
 			Status:        workspace.MembershipStatusActive,
 			JoinedAt:      &now,
 			CreatedAt:     now,

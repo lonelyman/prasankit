@@ -28,7 +28,6 @@ func TestRepositoryIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get sql db: %v", err)
 	}
-	defer sqlDB.Close()
 
 	repo := NewRepository(db)
 	ctx := context.Background()
@@ -49,6 +48,7 @@ func TestRepositoryIntegration(t *testing.T) {
 		_ = db.Exec(`DELETE FROM workspace_memberships WHERE user_account_id = ?`, accountID).Error
 		_ = db.Exec(`DELETE FROM workspaces WHERE owner_user_account_id = ?`, accountID).Error
 		_ = db.Exec(`DELETE FROM user_accounts WHERE id = ?`, accountID).Error
+		_ = sqlDB.Close()
 	})
 
 	workspaceRecord := &workspace.Workspace{
@@ -85,12 +85,21 @@ func TestRepositoryIntegration(t *testing.T) {
 		t.Fatalf("found workspace ID = %s, want %s", foundWorkspace.ID, workspaceRecord.ID)
 	}
 
+	ownerRole, err := repo.FindWorkspaceRoleByCode(ctx, workspace.WorkspaceRoleOwner)
+	if err != nil {
+		t.Fatalf("find owner role: %v", err)
+	}
+	if ownerRole.ID == uuid.Nil {
+		t.Fatal("owner role ID was not set")
+	}
+
 	membershipUserID := accountID
 	membership := &workspace.Membership{
 		TenantID:      workspaceRecord.TenantID,
 		WorkspaceID:   workspaceRecord.ID,
+		RoleID:        ownerRole.ID,
 		UserAccountID: &membershipUserID,
-		Role:          workspace.WorkspaceRoleOwner,
+		Role:          ownerRole.Code,
 		Status:        workspace.MembershipStatusActive,
 		CreatedBy:     &accountID,
 		UpdatedBy:     &accountID,
@@ -112,6 +121,12 @@ func TestRepositoryIntegration(t *testing.T) {
 	if foundMembership.ID != membership.ID {
 		t.Fatalf("membership ID = %s, want %s", foundMembership.ID, membership.ID)
 	}
+	if foundMembership.RoleID != ownerRole.ID {
+		t.Fatalf("membership role ID = %s, want %s", foundMembership.RoleID, ownerRole.ID)
+	}
+	if foundMembership.Role != workspace.WorkspaceRoleOwner {
+		t.Fatalf("membership role = %s, want owner", foundMembership.Role)
+	}
 
 	items, total, err := repo.ListWorkspacesByUserAccountID(ctx, accountID, 10, 0)
 	if err != nil {
@@ -126,6 +141,12 @@ func TestRepositoryIntegration(t *testing.T) {
 			foundListItem = true
 			if item.Workspace.TenantID != workspaceRecord.TenantID {
 				t.Fatalf("list item tenant ID = %s, want %s", item.Workspace.TenantID, workspaceRecord.TenantID)
+			}
+			if item.Membership.RoleID != ownerRole.ID {
+				t.Fatalf("list item role ID = %s, want %s", item.Membership.RoleID, ownerRole.ID)
+			}
+			if item.Membership.Role != workspace.WorkspaceRoleOwner {
+				t.Fatalf("list item role = %s, want owner", item.Membership.Role)
 			}
 		}
 	}

@@ -55,6 +55,7 @@ Foundation Step 2: Backend Skeleton
 - app-api/database/migrations/000003_drop_auth_uuid_v4_defaults.sql
 - app-api/database/migrations/000004_create_auth_identities.sql
 - app-api/database/migrations/000005_create_workspace_core_tables.sql
+- app-api/database/migrations/000006_create_workspace_roles_master.sql
 - app-api/cmd/api/main.go
 - app-api/internal/config/config.go
 - app-api/internal/bootstrap/app.go
@@ -177,6 +178,7 @@ Verified:
 - ปรับ migration `000003_drop_auth_uuid_v4_defaults.sql` ทั้ง Up/Down ไม่ให้พา UUID v4 default กลับมาใน dev rollback/redo flow
 - เพิ่มและ apply migration `000004_create_auth_identities.sql` เพื่อแยก account owner (`user_accounts`) ออกจาก login methods (`auth_identities`)
 - เพิ่มและ apply migration `000005_create_workspace_core_tables.sql` สำหรับ `workspaces` และ `workspace_memberships`
+- เพิ่ม migration `000006_create_workspace_roles_master.sql` เพื่อย้าย Workspace Role จาก text/check ไปเป็น master table `workspace_roles` และ FK `workspace_memberships.workspace_role_id`
 - ปรับ fresh install migration `000002_create_auth_core_tables.sql` ให้มี `auth_identities` ตั้งแต่แรก
 - PostgreSQL extensions ที่ยืนยันแล้ว:
   - `citext`
@@ -191,6 +193,7 @@ Verified:
 - Workspace core tables ที่ยืนยันแล้ว:
   - `workspaces`
   - `workspace_memberships`
+  - `workspace_roles`
 - เพิ่ม Auth module skeleton แล้ว:
   - domain entity
   - repository interface
@@ -339,6 +342,8 @@ Composition note:
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
 - Auth/session backend หลักเสร็จถึง forgot/reset password แล้ว
 - Workspace registration backend ก้อนแรกเสร็จถึง check slug/register/list my workspaces แล้ว
+- Workspace membership role ปรับเป็น master/FK แล้ว: `workspace_roles` เป็น App Master seed, `workspace_memberships.workspace_role_id` เป็น FK, ส่วน API ยังคืน role code ให้ frontend ใช้งานได้
+- ตรวจกลุ่ม field ที่เป็น text แล้ว: ค่า role/master/permission ต้องเป็น master/FK, ส่วน `status`/`mode`/auth provider/type/security severity ตอนนี้ยังถือเป็น lifecycle/system state และคุมด้วย constraint ได้ก่อน
 
 หมายเหตุ:
 
@@ -361,6 +366,7 @@ PostgreSQL connection done
 -> Migration 000003_drop_auth_uuid_v4_defaults applied
 -> Migration 000004_create_auth_identities applied
 -> Migration 000005_create_workspace_core_tables applied
+-> Migration 000006_create_workspace_roles_master applied
 -> Auth module skeleton created
 -> Auth repository: FindUserAccountByID/FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
 -> Auth service: RegisterEmailPassword implemented

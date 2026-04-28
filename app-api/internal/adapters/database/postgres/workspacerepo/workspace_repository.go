@@ -42,25 +42,42 @@ func (workspaceRow) TableName() string {
 }
 
 type membershipRow struct {
-	ID            uuid.UUID  `gorm:"column:id;type:uuid"`
-	TenantID      uuid.UUID  `gorm:"column:tenant_id;type:uuid"`
-	WorkspaceID   uuid.UUID  `gorm:"column:workspace_id;type:uuid"`
-	ProfileID     *uuid.UUID `gorm:"column:profile_id;type:uuid"`
-	UserAccountID *uuid.UUID `gorm:"column:user_account_id;type:uuid"`
-	WorkspaceRole string     `gorm:"column:workspace_role"`
-	Status        string     `gorm:"column:status"`
-	StatusReason  string     `gorm:"column:status_reason"`
-	JoinedAt      *time.Time `gorm:"column:joined_at"`
-	RemovedAt     *time.Time `gorm:"column:removed_at"`
-	SuspendedAt   *time.Time `gorm:"column:suspended_at"`
-	CreatedAt     time.Time  `gorm:"column:created_at"`
-	CreatedBy     *uuid.UUID `gorm:"column:created_by;type:uuid"`
-	UpdatedAt     time.Time  `gorm:"column:updated_at"`
-	UpdatedBy     *uuid.UUID `gorm:"column:updated_by;type:uuid"`
+	ID                uuid.UUID  `gorm:"column:id;type:uuid"`
+	TenantID          uuid.UUID  `gorm:"column:tenant_id;type:uuid"`
+	WorkspaceID       uuid.UUID  `gorm:"column:workspace_id;type:uuid"`
+	WorkspaceRoleID   uuid.UUID  `gorm:"column:workspace_role_id;type:uuid"`
+	WorkspaceRoleCode string     `gorm:"column:workspace_role_code;->"`
+	ProfileID         *uuid.UUID `gorm:"column:profile_id;type:uuid"`
+	UserAccountID     *uuid.UUID `gorm:"column:user_account_id;type:uuid"`
+	Status            string     `gorm:"column:status"`
+	StatusReason      string     `gorm:"column:status_reason"`
+	JoinedAt          *time.Time `gorm:"column:joined_at"`
+	RemovedAt         *time.Time `gorm:"column:removed_at"`
+	SuspendedAt       *time.Time `gorm:"column:suspended_at"`
+	CreatedAt         time.Time  `gorm:"column:created_at"`
+	CreatedBy         *uuid.UUID `gorm:"column:created_by;type:uuid"`
+	UpdatedAt         time.Time  `gorm:"column:updated_at"`
+	UpdatedBy         *uuid.UUID `gorm:"column:updated_by;type:uuid"`
 }
 
 func (membershipRow) TableName() string {
 	return "workspace_memberships"
+}
+
+type workspaceRoleRow struct {
+	ID          uuid.UUID `gorm:"column:id;type:uuid"`
+	Code        string    `gorm:"column:code"`
+	Name        string    `gorm:"column:name"`
+	Description string    `gorm:"column:description"`
+	SortOrder   int       `gorm:"column:sort_order"`
+	IsSystem    bool      `gorm:"column:is_system"`
+	Status      string    `gorm:"column:status"`
+	CreatedAt   time.Time `gorm:"column:created_at"`
+	UpdatedAt   time.Time `gorm:"column:updated_at"`
+}
+
+func (workspaceRoleRow) TableName() string {
+	return "workspace_roles"
 }
 
 type workspaceMembershipListRow struct {
@@ -84,9 +101,10 @@ type workspaceMembershipListRow struct {
 	MembershipID                   uuid.UUID  `gorm:"column:membership_id"`
 	MembershipTenantID             uuid.UUID  `gorm:"column:membership_tenant_id"`
 	MembershipWorkspaceID          uuid.UUID  `gorm:"column:membership_workspace_id"`
+	MembershipWorkspaceRoleID      uuid.UUID  `gorm:"column:membership_workspace_role_id"`
 	MembershipProfileID            *uuid.UUID `gorm:"column:membership_profile_id"`
 	MembershipUserAccountID        *uuid.UUID `gorm:"column:membership_user_account_id"`
-	MembershipWorkspaceRole        string     `gorm:"column:membership_workspace_role"`
+	MembershipWorkspaceRoleCode    string     `gorm:"column:membership_workspace_role_code"`
 	MembershipStatus               string     `gorm:"column:membership_status"`
 	MembershipStatusReason         string     `gorm:"column:membership_status_reason"`
 	MembershipJoinedAt             *time.Time `gorm:"column:membership_joined_at"`
@@ -117,6 +135,22 @@ func (r *Repository) FindWorkspaceBySlug(ctx context.Context, slug string) (*wor
 		Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, workspace.ErrWorkspaceNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return row.toDomain(), nil
+}
+
+func (r *Repository) FindWorkspaceRoleByCode(ctx context.Context, code workspace.WorkspaceRole) (*workspace.WorkspaceRoleMaster, error) {
+	var row workspaceRoleRow
+	err := r.db.WithContext(ctx).
+		Where("code = ?", string(code)).
+		Where("status = ?", "active").
+		First(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, workspace.ErrWorkspaceRoleNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -193,21 +227,21 @@ func (r *Repository) CreateMembership(ctx context.Context, membership *workspace
 	}
 
 	row := membershipRow{
-		ID:            membership.ID,
-		TenantID:      membership.TenantID,
-		WorkspaceID:   membership.WorkspaceID,
-		ProfileID:     membership.ProfileID,
-		UserAccountID: membership.UserAccountID,
-		WorkspaceRole: string(membership.Role),
-		Status:        string(membership.Status),
-		StatusReason:  membership.StatusReason,
-		JoinedAt:      membership.JoinedAt,
-		RemovedAt:     membership.RemovedAt,
-		SuspendedAt:   membership.SuspendedAt,
-		CreatedAt:     membership.CreatedAt,
-		CreatedBy:     membership.CreatedBy,
-		UpdatedAt:     membership.UpdatedAt,
-		UpdatedBy:     membership.UpdatedBy,
+		ID:              membership.ID,
+		TenantID:        membership.TenantID,
+		WorkspaceID:     membership.WorkspaceID,
+		WorkspaceRoleID: membership.RoleID,
+		ProfileID:       membership.ProfileID,
+		UserAccountID:   membership.UserAccountID,
+		Status:          string(membership.Status),
+		StatusReason:    membership.StatusReason,
+		JoinedAt:        membership.JoinedAt,
+		RemovedAt:       membership.RemovedAt,
+		SuspendedAt:     membership.SuspendedAt,
+		CreatedAt:       membership.CreatedAt,
+		CreatedBy:       membership.CreatedBy,
+		UpdatedAt:       membership.UpdatedAt,
+		UpdatedBy:       membership.UpdatedBy,
 	}
 	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return err
@@ -222,9 +256,29 @@ func (r *Repository) CreateMembership(ctx context.Context, membership *workspace
 func (r *Repository) FindActiveMembership(ctx context.Context, tenantID uuid.UUID, userAccountID uuid.UUID) (*workspace.Membership, error) {
 	var row membershipRow
 	err := r.db.WithContext(ctx).
-		Where("tenant_id = ?", tenantID).
-		Where("user_account_id = ?", userAccountID).
-		Where("status = ?", string(workspace.MembershipStatusActive)).
+		Table("workspace_memberships AS wm").
+		Select(`
+			wm.id,
+			wm.tenant_id,
+			wm.workspace_id,
+			wm.workspace_role_id,
+			wr.code AS workspace_role_code,
+			wm.profile_id,
+			wm.user_account_id,
+			wm.status,
+			wm.status_reason,
+			wm.joined_at,
+			wm.removed_at,
+			wm.suspended_at,
+			wm.created_at,
+			wm.created_by,
+			wm.updated_at,
+			wm.updated_by
+		`).
+		Joins("JOIN workspace_roles AS wr ON wr.id = wm.workspace_role_id").
+		Where("wm.tenant_id = ?", tenantID).
+		Where("wm.user_account_id = ?", userAccountID).
+		Where("wm.status = ?", string(workspace.MembershipStatusActive)).
 		First(&row).
 		Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -272,9 +326,10 @@ func (r *Repository) ListWorkspacesByUserAccountID(ctx context.Context, userAcco
 			wm.id AS membership_id,
 			wm.tenant_id AS membership_tenant_id,
 			wm.workspace_id AS membership_workspace_id,
+			wm.workspace_role_id AS membership_workspace_role_id,
 			wm.profile_id AS membership_profile_id,
 			wm.user_account_id AS membership_user_account_id,
-			wm.workspace_role AS membership_workspace_role,
+			wr.code AS membership_workspace_role_code,
 			wm.status AS membership_status,
 			wm.status_reason AS membership_status_reason,
 			wm.joined_at AS membership_joined_at,
@@ -286,6 +341,7 @@ func (r *Repository) ListWorkspacesByUserAccountID(ctx context.Context, userAcco
 			wm.updated_by AS membership_updated_by
 		`).
 		Joins("JOIN workspaces AS w ON w.id = wm.workspace_id AND w.tenant_id = wm.tenant_id").
+		Joins("JOIN workspace_roles AS wr ON wr.id = wm.workspace_role_id").
 		Where("wm.user_account_id = ?", userAccountID).
 		Where("wm.status = ?", string(workspace.MembershipStatusActive)).
 		Where("w.deleted_at IS NULL").
@@ -354,9 +410,10 @@ func (r membershipRow) toDomain() *workspace.Membership {
 		ID:            r.ID,
 		TenantID:      r.TenantID,
 		WorkspaceID:   r.WorkspaceID,
+		RoleID:        r.WorkspaceRoleID,
+		Role:          workspace.WorkspaceRole(r.WorkspaceRoleCode),
 		ProfileID:     r.ProfileID,
 		UserAccountID: r.UserAccountID,
-		Role:          workspace.WorkspaceRole(r.WorkspaceRole),
 		Status:        workspace.MembershipStatus(r.Status),
 		StatusReason:  r.StatusReason,
 		JoinedAt:      r.JoinedAt,
@@ -366,6 +423,20 @@ func (r membershipRow) toDomain() *workspace.Membership {
 		CreatedBy:     r.CreatedBy,
 		UpdatedAt:     r.UpdatedAt,
 		UpdatedBy:     r.UpdatedBy,
+	}
+}
+
+func (r workspaceRoleRow) toDomain() *workspace.WorkspaceRoleMaster {
+	return &workspace.WorkspaceRoleMaster{
+		ID:          r.ID,
+		Code:        workspace.WorkspaceRole(r.Code),
+		Name:        r.Name,
+		Description: r.Description,
+		SortOrder:   r.SortOrder,
+		IsSystem:    r.IsSystem,
+		Status:      r.Status,
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
 	}
 }
 
@@ -394,9 +465,10 @@ func (r workspaceMembershipListRow) toDomain() workspace.WorkspaceWithMembership
 			ID:            r.MembershipID,
 			TenantID:      r.MembershipTenantID,
 			WorkspaceID:   r.MembershipWorkspaceID,
+			RoleID:        r.MembershipWorkspaceRoleID,
 			ProfileID:     r.MembershipProfileID,
 			UserAccountID: r.MembershipUserAccountID,
-			Role:          workspace.WorkspaceRole(r.MembershipWorkspaceRole),
+			Role:          workspace.WorkspaceRole(r.MembershipWorkspaceRoleCode),
 			Status:        workspace.MembershipStatus(r.MembershipStatus),
 			StatusReason:  r.MembershipStatusReason,
 			JoinedAt:      r.MembershipJoinedAt,
