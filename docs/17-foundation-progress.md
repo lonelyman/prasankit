@@ -228,7 +228,9 @@ Verified:
   - create `security_events` สำหรับ `auth.email_verification_sent`
 - เพิ่ม unit test สำหรับ Auth registration service แล้ว
 - เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/register` แล้ว โดย response สำเร็จเป็น `201 Created` ใต้ root key `data`
+- เพิ่ม HTTP handler สำหรับ `POST /api/v1/auth/verify-email` แล้ว โดย response สำเร็จอยู่ใต้ root key `data`
 - เพิ่ม test สำหรับ Auth register handler แล้ว
+- เพิ่ม test สำหรับ Auth verify-email handler แล้ว
 - `GOTOOLCHAIN=auto go test ./...` ผ่านใน app-api หลัง wire register handler
 - Auth repository integration test ผ่านกับ Docker PostgreSQL หลังเพิ่ม duplicate email mapping
 - `docker compose up -d --build prasankit-api` ผ่านหลัง wire register handler
@@ -236,6 +238,7 @@ Verified:
 - Docker smoke test สมัคร email ซ้ำผ่าน ได้ `409 Conflict` และ error code `EMAIL_ALREADY_REGISTERED`
 - เพิ่ม `docs/18-api-test-examples.md` เป็นเอกสารตัวอย่างทดสอบ endpoint ที่เสร็จจริง
 - เพิ่ม `docs/18.1-auth-register-test-examples.md` และอัปเดตตัวอย่าง register ให้รวม verification email/rate limit/SMTP failure แล้ว
+- เพิ่ม `docs/18.2-auth-verify-email-test-examples.md` สำหรับตัวอย่างทดสอบ verify email แล้ว
 
 Known note:
 
@@ -287,6 +290,7 @@ PostgreSQL connection done
 -> Auth repository: FindUserAccountByEmail/CreateUserAccount/CreateAuthIdentity/CreateAuthSession/CreateLoginAttempt/CreateSecurityEvent implemented
 -> Auth service: RegisterEmailPassword implemented
 -> Auth HTTP: POST /api/v1/auth/register wired
+-> Auth HTTP: POST /api/v1/auth/verify-email wired
 ```
 
 ขั้นถัดไปเริ่ม login/session flow โดยยังคง session-based auth + Redis + httpOnly Cookie

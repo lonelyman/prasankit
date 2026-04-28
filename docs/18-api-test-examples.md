@@ -40,6 +40,7 @@ docker compose ps
 | GET | `/api/v1/health/live` | Done |
 | GET | `/api/v1/health/ready` | Done |
 | POST | `/api/v1/auth/register` | Done, requires SMTP env, see `docs/18.1-auth-register-test-examples.md` |
+| POST | `/api/v1/auth/verify-email` | Done, see `docs/18.2-auth-verify-email-test-examples.md` |
 
 ## Health
 
@@ -151,6 +152,7 @@ HTTP/1.1 503 Service Unavailable
 | File | Endpoint |
 | --- | --- |
 | `docs/18.1-auth-register-test-examples.md` | `POST /api/v1/auth/register` |
+| `docs/18.2-auth-verify-email-test-examples.md` | `POST /api/v1/auth/verify-email` |
 
 ## Not Done Yet
 
@@ -158,7 +160,6 @@ Auth routes ที่ยังเป็น placeholder:
 
 | Method | Endpoint | Current Response |
 | --- | --- | --- |
-| POST | `/api/v1/auth/verify-email` | `501 NOT_IMPLEMENTED` |
 | POST | `/api/v1/auth/login` | `501 NOT_IMPLEMENTED` |
 | POST | `/api/v1/auth/logout` | `501 NOT_IMPLEMENTED` |
 | POST | `/api/v1/auth/logout-all` | `501 NOT_IMPLEMENTED` |

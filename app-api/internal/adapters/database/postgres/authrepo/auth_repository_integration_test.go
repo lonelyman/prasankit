@@ -198,6 +198,14 @@ func TestRepositoryIntegration(t *testing.T) {
 			t.Fatalf("token.Status = %s, want %s", token.Status, auth.EmailVerificationTokenStatusActive)
 		}
 
+		foundToken, err := repo.FindEmailVerificationTokenByHash(ctx, token.TokenHash)
+		if err != nil {
+			t.Fatalf("find email verification token by hash: %v", err)
+		}
+		if foundToken.ID != token.ID {
+			t.Fatalf("found token ID = %s, want %s", foundToken.ID, token.ID)
+		}
+
 		if err := repo.RevokeActiveEmailVerificationTokens(ctx, identity.ID); err != nil {
 			t.Fatalf("revoke active email verification tokens: %v", err)
 		}
@@ -212,6 +220,66 @@ func TestRepositoryIntegration(t *testing.T) {
 		}
 		if status != string(auth.EmailVerificationTokenStatusRevoked) {
 			t.Fatalf("token status = %s, want %s", status, auth.EmailVerificationTokenStatusRevoked)
+		}
+
+		secondToken := &auth.EmailVerificationToken{
+			AuthIdentityID: identity.ID,
+			TokenHash:      "verify-token-hash-" + uuid.NewString(),
+			ExpiresAt:      time.Now().UTC().Add(30 * time.Minute),
+		}
+		if err := repo.CreateEmailVerificationToken(ctx, secondToken); err != nil {
+			t.Fatalf("create second email verification token: %v", err)
+		}
+
+		usedAt := time.Now().UTC()
+		if err := repo.MarkEmailVerificationTokenUsed(ctx, secondToken.ID, usedAt); err != nil {
+			t.Fatalf("mark email verification token used: %v", err)
+		}
+
+		var usedToken struct {
+			Status string
+			UsedAt *time.Time
+		}
+		if err := db.Table("auth_email_verification_tokens").
+			Select("status, used_at").
+			Where("id = ?", secondToken.ID).
+			Scan(&usedToken).
+			Error; err != nil {
+			t.Fatalf("query used token: %v", err)
+		}
+		if usedToken.Status != string(auth.EmailVerificationTokenStatusUsed) {
+			t.Fatalf("used token status = %s, want %s", usedToken.Status, auth.EmailVerificationTokenStatusUsed)
+		}
+		if usedToken.UsedAt == nil {
+			t.Fatal("used_at was not set")
+		}
+
+		verifiedAt := time.Now().UTC()
+		if err := repo.MarkAuthIdentityEmailVerified(ctx, identity.ID, verifiedAt); err != nil {
+			t.Fatalf("mark auth identity email verified: %v", err)
+		}
+		if err := repo.ActivateUserAccount(ctx, account.ID, verifiedAt); err != nil {
+			t.Fatalf("activate user account: %v", err)
+		}
+
+		foundIdentity, err := repo.FindAuthIdentityByID(ctx, identity.ID)
+		if err != nil {
+			t.Fatalf("find auth identity by id: %v", err)
+		}
+		if foundIdentity.EmailVerifiedAt == nil {
+			t.Fatal("identity.EmailVerifiedAt was not set")
+		}
+
+		var accountStatus string
+		if err := db.Table("user_accounts").
+			Select("status").
+			Where("id = ?", account.ID).
+			Scan(&accountStatus).
+			Error; err != nil {
+			t.Fatalf("query user account status: %v", err)
+		}
+		if accountStatus != string(auth.UserAccountStatusActive) {
+			t.Fatalf("account status = %s, want %s", accountStatus, auth.UserAccountStatusActive)
 		}
 	})
 

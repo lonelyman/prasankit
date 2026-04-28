@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"prasankit-api/internal/modules/auth"
+	"prasankit-api/pkg/securetoken"
 
 	"github.com/google/uuid"
 )
@@ -31,6 +32,11 @@ type fakeRepository struct {
 	account           *auth.UserAccount
 	identity          *auth.AuthIdentity
 	emailToken        *auth.EmailVerificationToken
+	tokenByHash       *auth.EmailVerificationToken
+	findTokenErr      error
+	verifiedIdentity  uuid.UUID
+	activatedAccount  uuid.UUID
+	usedToken         uuid.UUID
 	securityEvent     *auth.SecurityEvent
 	securityEvents    []*auth.SecurityEvent
 }
@@ -48,6 +54,23 @@ func (r *fakeRepository) FindUserAccountByEmail(context.Context, string) (*auth.
 		return r.existingAccount, nil
 	}
 	return nil, auth.ErrUserAccountNotFound
+}
+
+func (r *fakeRepository) FindAuthIdentityByID(_ context.Context, id uuid.UUID) (*auth.AuthIdentity, error) {
+	if r.identity == nil || r.identity.ID != id {
+		return nil, auth.ErrAuthIdentityNotFound
+	}
+	return r.identity, nil
+}
+
+func (r *fakeRepository) FindEmailVerificationTokenByHash(context.Context, string) (*auth.EmailVerificationToken, error) {
+	if r.findTokenErr != nil {
+		return nil, r.findTokenErr
+	}
+	if r.tokenByHash != nil {
+		return r.tokenByHash, nil
+	}
+	return nil, auth.ErrEmailVerificationTokenNotFound
 }
 
 func (r *fakeRepository) CreateUserAccount(_ context.Context, account *auth.UserAccount) error {
@@ -69,6 +92,34 @@ func (r *fakeRepository) RevokeActiveEmailVerificationTokens(context.Context, uu
 func (r *fakeRepository) CreateEmailVerificationToken(_ context.Context, token *auth.EmailVerificationToken) error {
 	token.ID = uuid.Must(uuid.NewV7())
 	r.emailToken = token
+	return nil
+}
+
+func (r *fakeRepository) MarkEmailVerificationTokenUsed(_ context.Context, id uuid.UUID, usedAt time.Time) error {
+	if r.tokenByHash == nil || r.tokenByHash.ID != id || r.tokenByHash.Status != auth.EmailVerificationTokenStatusActive {
+		return auth.ErrEmailVerificationTokenNotFound
+	}
+	r.usedToken = id
+	r.tokenByHash.Status = auth.EmailVerificationTokenStatusUsed
+	r.tokenByHash.UsedAt = &usedAt
+	return nil
+}
+
+func (r *fakeRepository) MarkAuthIdentityEmailVerified(_ context.Context, id uuid.UUID, verifiedAt time.Time) error {
+	if r.identity == nil || r.identity.ID != id {
+		return auth.ErrAuthIdentityNotFound
+	}
+	r.verifiedIdentity = id
+	r.identity.EmailVerifiedAt = &verifiedAt
+	return nil
+}
+
+func (r *fakeRepository) ActivateUserAccount(_ context.Context, id uuid.UUID, updatedAt time.Time) error {
+	r.activatedAccount = id
+	if r.account != nil && r.account.ID == id {
+		r.account.Status = auth.UserAccountStatusActive
+		r.account.UpdatedAt = updatedAt
+	}
 	return nil
 }
 
@@ -309,5 +360,115 @@ func TestRegisterEmailPasswordReturnsEmailSendFailure(t *testing.T) {
 	})
 	if !errors.Is(err, ErrVerificationEmailSendFailed) {
 		t.Fatalf("err = %v, want ErrVerificationEmailSendFailed", err)
+	}
+}
+
+func TestVerifyEmail(t *testing.T) {
+	token := "verify-token"
+	accountID := uuid.Must(uuid.NewV7())
+	identityID := uuid.Must(uuid.NewV7())
+	tokenID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		account: &auth.UserAccount{
+			ID:           accountID,
+			PrimaryEmail: "owner@example.test",
+			Status:       auth.UserAccountStatusPendingVerification,
+		},
+		identity: &auth.AuthIdentity{
+			ID:            identityID,
+			UserAccountID: accountID,
+			Email:         "owner@example.test",
+		},
+		tokenByHash: &auth.EmailVerificationToken{
+			ID:             tokenID,
+			AuthIdentityID: identityID,
+			TokenHash:      securetoken.Hash(token),
+			Status:         auth.EmailVerificationTokenStatusActive,
+			ExpiresAt:      time.Now().UTC().Add(30 * time.Minute),
+		},
+	}
+	service := newTestService(repo, nil, nil)
+
+	result, err := service.VerifyEmail(context.Background(), VerifyEmailInput{
+		Token:     token,
+		IPAddress: "127.0.0.1",
+		UserAgent: "service unit test",
+	})
+	if err != nil {
+		t.Fatalf("VerifyEmail: %v", err)
+	}
+
+	if result.Account.ID != accountID {
+		t.Fatalf("account.ID = %s, want %s", result.Account.ID, accountID)
+	}
+	if result.Account.Status != auth.UserAccountStatusActive {
+		t.Fatalf("account.Status = %s, want %s", result.Account.Status, auth.UserAccountStatusActive)
+	}
+	if repo.usedToken != tokenID {
+		t.Fatalf("used token = %s, want %s", repo.usedToken, tokenID)
+	}
+	if repo.verifiedIdentity != identityID {
+		t.Fatalf("verified identity = %s, want %s", repo.verifiedIdentity, identityID)
+	}
+	if repo.activatedAccount != accountID {
+		t.Fatalf("activated account = %s, want %s", repo.activatedAccount, accountID)
+	}
+	if len(repo.securityEvents) != 1 {
+		t.Fatalf("security events count = %d, want 1", len(repo.securityEvents))
+	}
+	if repo.securityEvents[0].EventType != "auth.email_verified" {
+		t.Fatalf("event type = %s, want auth.email_verified", repo.securityEvents[0].EventType)
+	}
+}
+
+func TestVerifyEmailRejectsInvalidTokens(t *testing.T) {
+	service := newTestService(&fakeRepository{}, nil, nil)
+
+	_, err := service.VerifyEmail(context.Background(), VerifyEmailInput{})
+	if !errors.Is(err, ErrVerificationTokenRequired) {
+		t.Fatalf("err = %v, want ErrVerificationTokenRequired", err)
+	}
+
+	_, err = service.VerifyEmail(context.Background(), VerifyEmailInput{Token: "missing-token"})
+	if !errors.Is(err, ErrVerificationTokenInvalid) {
+		t.Fatalf("err = %v, want ErrVerificationTokenInvalid", err)
+	}
+}
+
+func TestVerifyEmailRejectsExpiredToken(t *testing.T) {
+	token := "expired-token"
+	repo := &fakeRepository{
+		tokenByHash: &auth.EmailVerificationToken{
+			ID:             uuid.Must(uuid.NewV7()),
+			AuthIdentityID: uuid.Must(uuid.NewV7()),
+			TokenHash:      securetoken.Hash(token),
+			Status:         auth.EmailVerificationTokenStatusActive,
+			ExpiresAt:      time.Now().UTC().Add(-time.Minute),
+		},
+	}
+	service := newTestService(repo, nil, nil)
+
+	_, err := service.VerifyEmail(context.Background(), VerifyEmailInput{Token: token})
+	if !errors.Is(err, ErrVerificationTokenExpired) {
+		t.Fatalf("err = %v, want ErrVerificationTokenExpired", err)
+	}
+}
+
+func TestVerifyEmailRejectsUsedToken(t *testing.T) {
+	token := "used-token"
+	repo := &fakeRepository{
+		tokenByHash: &auth.EmailVerificationToken{
+			ID:             uuid.Must(uuid.NewV7()),
+			AuthIdentityID: uuid.Must(uuid.NewV7()),
+			TokenHash:      securetoken.Hash(token),
+			Status:         auth.EmailVerificationTokenStatusUsed,
+			ExpiresAt:      time.Now().UTC().Add(30 * time.Minute),
+		},
+	}
+	service := newTestService(repo, nil, nil)
+
+	_, err := service.VerifyEmail(context.Background(), VerifyEmailInput{Token: token})
+	if !errors.Is(err, ErrVerificationTokenAlreadyUsed) {
+		t.Fatalf("err = %v, want ErrVerificationTokenAlreadyUsed", err)
 	}
 }

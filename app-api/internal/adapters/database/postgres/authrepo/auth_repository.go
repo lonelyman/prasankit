@@ -157,6 +157,39 @@ func (r *Repository) FindUserAccountByEmail(ctx context.Context, email string) (
 	return row.toDomain(), nil
 }
 
+func (r *Repository) FindAuthIdentityByID(ctx context.Context, id uuid.UUID) (*auth.AuthIdentity, error) {
+	var row authIdentityRow
+	err := r.db.WithContext(ctx).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		First(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, auth.ErrAuthIdentityNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return row.toDomain(), nil
+}
+
+func (r *Repository) FindEmailVerificationTokenByHash(ctx context.Context, tokenHash string) (*auth.EmailVerificationToken, error) {
+	var row emailVerificationTokenRow
+	err := r.db.WithContext(ctx).
+		Where("token_hash = ?", tokenHash).
+		First(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, auth.ErrEmailVerificationTokenNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return row.toDomain(), nil
+}
+
 func (r *Repository) CreateUserAccount(ctx context.Context, account *auth.UserAccount) error {
 	if err := ensureUUID(&account.ID); err != nil {
 		return err
@@ -276,6 +309,60 @@ func (r *Repository) CreateEmailVerificationToken(ctx context.Context, token *au
 
 	token.ID = row.ID
 	token.CreatedAt = row.CreatedAt
+	return nil
+}
+
+func (r *Repository) MarkEmailVerificationTokenUsed(ctx context.Context, id uuid.UUID, usedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&emailVerificationTokenRow{}).
+		Where("id = ?", id).
+		Where("status = ?", string(auth.EmailVerificationTokenStatusActive)).
+		Updates(map[string]any{
+			"status":  string(auth.EmailVerificationTokenStatusUsed),
+			"used_at": usedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return auth.ErrEmailVerificationTokenNotFound
+	}
+	return nil
+}
+
+func (r *Repository) MarkAuthIdentityEmailVerified(ctx context.Context, id uuid.UUID, verifiedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&authIdentityRow{}).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"email_verified_at": verifiedAt,
+			"updated_at":        verifiedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return auth.ErrAuthIdentityNotFound
+	}
+	return nil
+}
+
+func (r *Repository) ActivateUserAccount(ctx context.Context, id uuid.UUID, updatedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&userAccountRow{}).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"status":     string(auth.UserAccountStatusActive),
+			"updated_at": updatedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return auth.ErrUserAccountNotFound
+	}
 	return nil
 }
 
@@ -429,5 +516,39 @@ func (r userAccountRow) toDomain() *auth.UserAccount {
 		UpdatedAt:        r.UpdatedAt,
 		DeletedAt:        r.DeletedAt,
 		DeletedBy:        r.DeletedBy,
+	}
+}
+
+func (r authIdentityRow) toDomain() *auth.AuthIdentity {
+	providerUserID := ""
+	if r.ProviderUserID != nil {
+		providerUserID = *r.ProviderUserID
+	}
+	return &auth.AuthIdentity{
+		ID:                r.ID,
+		UserAccountID:     r.UserAccountID,
+		IdentityType:      auth.AuthIdentityType(r.IdentityType),
+		Provider:          auth.AuthProvider(r.Provider),
+		ProviderUserID:    providerUserID,
+		Email:             r.Email,
+		EmailVerifiedAt:   r.EmailVerifiedAt,
+		PasswordHash:      r.PasswordHash,
+		PasswordChangedAt: r.PasswordChangedAt,
+		LastUsedAt:        r.LastUsedAt,
+		CreatedAt:         r.CreatedAt,
+		UpdatedAt:         r.UpdatedAt,
+		DeletedAt:         r.DeletedAt,
+	}
+}
+
+func (r emailVerificationTokenRow) toDomain() *auth.EmailVerificationToken {
+	return &auth.EmailVerificationToken{
+		ID:             r.ID,
+		AuthIdentityID: r.AuthIdentityID,
+		TokenHash:      r.TokenHash,
+		Status:         auth.EmailVerificationTokenStatus(r.Status),
+		CreatedAt:      r.CreatedAt,
+		ExpiresAt:      r.ExpiresAt,
+		UsedAt:         r.UsedAt,
 	}
 }

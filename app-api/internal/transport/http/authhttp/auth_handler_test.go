@@ -17,23 +17,34 @@ import (
 )
 
 type fakeRegistrar struct {
-	result *authsvc.RegisterEmailPasswordResult
-	err    error
-	input  authsvc.RegisterEmailPasswordInput
+	registerResult *authsvc.RegisterEmailPasswordResult
+	registerErr    error
+	registerInput  authsvc.RegisterEmailPasswordInput
+	verifyResult   *authsvc.VerifyEmailResult
+	verifyErr      error
+	verifyInput    authsvc.VerifyEmailInput
 }
 
 func (r *fakeRegistrar) RegisterEmailPassword(_ context.Context, input authsvc.RegisterEmailPasswordInput) (*authsvc.RegisterEmailPasswordResult, error) {
-	r.input = input
-	if r.err != nil {
-		return nil, r.err
+	r.registerInput = input
+	if r.registerErr != nil {
+		return nil, r.registerErr
 	}
-	return r.result, nil
+	return r.registerResult, nil
+}
+
+func (r *fakeRegistrar) VerifyEmail(_ context.Context, input authsvc.VerifyEmailInput) (*authsvc.VerifyEmailResult, error) {
+	r.verifyInput = input
+	if r.verifyErr != nil {
+		return nil, r.verifyErr
+	}
+	return r.verifyResult, nil
 }
 
 func TestRegisterEmailPassword(t *testing.T) {
 	accountID := uuid.Must(uuid.NewV7())
 	registrar := &fakeRegistrar{
-		result: &authsvc.RegisterEmailPasswordResult{
+		registerResult: &authsvc.RegisterEmailPasswordResult{
 			Account: auth.UserAccount{
 				ID:           accountID,
 				PrimaryEmail: "owner@example.test",
@@ -53,10 +64,10 @@ func TestRegisterEmailPassword(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
-	if registrar.input.Email != "owner@example.test" {
-		t.Fatalf("input.Email = %s, want owner@example.test", registrar.input.Email)
+	if registrar.registerInput.Email != "owner@example.test" {
+		t.Fatalf("input.Email = %s, want owner@example.test", registrar.registerInput.Email)
 	}
-	if registrar.input.Password != "correct-password" {
+	if registrar.registerInput.Password != "correct-password" {
 		t.Fatal("password was not passed to service")
 	}
 
@@ -142,11 +153,118 @@ func TestRegisterEmailPasswordMapsServiceErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			app := newAuthTestApp(NewHandler(&fakeRegistrar{err: tt.err}))
+			app := newAuthTestApp(NewHandler(&fakeRegistrar{registerErr: tt.err}))
 
 			resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/register", map[string]string{
 				"email":    "owner@example.test",
 				"password": "correct-password",
+			})
+			defer resp.Body.Close()
+
+			assertAuthError(t, resp, tt.wantStatus, tt.wantCode)
+		})
+	}
+}
+
+func TestVerifyEmail(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	registrar := &fakeRegistrar{
+		verifyResult: &authsvc.VerifyEmailResult{
+			Account: auth.UserAccount{
+				ID:           accountID,
+				PrimaryEmail: "owner@example.test",
+				Status:       auth.UserAccountStatusActive,
+			},
+		},
+	}
+	app := newAuthTestApp(NewHandler(registrar))
+
+	resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/verify-email", map[string]string{
+		"token": "verify-token",
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if registrar.verifyInput.Token != "verify-token" {
+		t.Fatalf("input.Token = %s, want verify-token", registrar.verifyInput.Token)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	data := body["data"].(map[string]any)
+	accountData := data["account"].(map[string]any)
+	if accountData["id"] != accountID.String() {
+		t.Fatalf("account.id = %v, want %s", accountData["id"], accountID)
+	}
+	if accountData["status"] != string(auth.UserAccountStatusActive) {
+		t.Fatalf("account.status = %v, want %s", accountData["status"], auth.UserAccountStatusActive)
+	}
+}
+
+func TestVerifyEmailRejectsInvalidJSON(t *testing.T) {
+	app := newAuthTestApp(NewHandler(&fakeRegistrar{}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/verify-email", bytes.NewBufferString("{"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertAuthError(t, resp, http.StatusBadRequest, "INVALID_REQUEST")
+}
+
+func TestVerifyEmailMapsServiceErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "token required",
+			err:        authsvc.ErrVerificationTokenRequired,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "VERIFICATION_TOKEN_REQUIRED",
+		},
+		{
+			name:       "token invalid",
+			err:        authsvc.ErrVerificationTokenInvalid,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "VERIFICATION_TOKEN_INVALID",
+		},
+		{
+			name:       "token expired",
+			err:        authsvc.ErrVerificationTokenExpired,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "VERIFICATION_TOKEN_EXPIRED",
+		},
+		{
+			name:       "token already used",
+			err:        authsvc.ErrVerificationTokenAlreadyUsed,
+			wantStatus: http.StatusConflict,
+			wantCode:   "VERIFICATION_TOKEN_ALREADY_USED",
+		},
+		{
+			name:       "unexpected error",
+			err:        errors.New("database down"),
+			wantStatus: http.StatusInternalServerError,
+			wantCode:   "INTERNAL_SERVER_ERROR",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := newAuthTestApp(NewHandler(&fakeRegistrar{verifyErr: tt.err}))
+
+			resp := authTestRequest(t, app, http.MethodPost, "/api/v1/auth/verify-email", map[string]string{
+				"token": "verify-token",
 			})
 			defer resp.Body.Close()
 

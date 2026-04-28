@@ -23,6 +23,10 @@ var ErrRateLimiterRequired = errors.New("rate limiter is required")
 var ErrVerificationEmailRateLimited = errors.New("verification email rate limited")
 var ErrVerificationEmailSendFailed = errors.New("verification email send failed")
 var ErrVerificationConfigInvalid = errors.New("verification email config is invalid")
+var ErrVerificationTokenRequired = errors.New("verification token is required")
+var ErrVerificationTokenInvalid = errors.New("verification token is invalid")
+var ErrVerificationTokenExpired = errors.New("verification token is expired")
+var ErrVerificationTokenAlreadyUsed = errors.New("verification token is already used")
 
 type PasswordHasher interface {
 	Hash(password string) (string, error)
@@ -53,6 +57,16 @@ type RegisterEmailPasswordInput struct {
 type RegisterEmailPasswordResult struct {
 	Account               auth.UserAccount
 	VerificationEmailSent bool
+}
+
+type VerifyEmailInput struct {
+	Token     string
+	IPAddress string
+	UserAgent string
+}
+
+type VerifyEmailResult struct {
+	Account auth.UserAccount
 }
 
 type Service struct {
@@ -198,6 +212,82 @@ func (s *Service) RegisterEmailPassword(ctx context.Context, input RegisterEmail
 	return &RegisterEmailPasswordResult{
 		Account:               account,
 		VerificationEmailSent: true,
+	}, nil
+}
+
+func (s *Service) VerifyEmail(ctx context.Context, input VerifyEmailInput) (*VerifyEmailResult, error) {
+	tokenValue := strings.TrimSpace(input.Token)
+	if tokenValue == "" {
+		return nil, ErrVerificationTokenRequired
+	}
+
+	emailToken, err := s.repository.FindEmailVerificationTokenByHash(ctx, securetoken.Hash(tokenValue))
+	if errors.Is(err, auth.ErrEmailVerificationTokenNotFound) {
+		return nil, ErrVerificationTokenInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	switch emailToken.Status {
+	case auth.EmailVerificationTokenStatusActive:
+	case auth.EmailVerificationTokenStatusUsed:
+		return nil, ErrVerificationTokenAlreadyUsed
+	default:
+		return nil, ErrVerificationTokenInvalid
+	}
+
+	now := time.Now().UTC()
+	if !emailToken.ExpiresAt.After(now) {
+		return nil, ErrVerificationTokenExpired
+	}
+
+	identity, err := s.repository.FindAuthIdentityByID(ctx, emailToken.AuthIdentityID)
+	if errors.Is(err, auth.ErrAuthIdentityNotFound) {
+		return nil, ErrVerificationTokenInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	account := auth.UserAccount{
+		ID:           identity.UserAccountID,
+		PrimaryEmail: identity.Email,
+		Status:       auth.UserAccountStatusActive,
+		UpdatedAt:    now,
+	}
+
+	err = s.repository.WithinTransaction(ctx, func(ctx context.Context, repo auth.Repository) error {
+		if err := repo.MarkEmailVerificationTokenUsed(ctx, emailToken.ID, now); err != nil {
+			if errors.Is(err, auth.ErrEmailVerificationTokenNotFound) {
+				return ErrVerificationTokenInvalid
+			}
+			return err
+		}
+		if err := repo.MarkAuthIdentityEmailVerified(ctx, identity.ID, now); err != nil {
+			return err
+		}
+		if err := repo.ActivateUserAccount(ctx, identity.UserAccountID, now); err != nil {
+			return err
+		}
+		return repo.CreateSecurityEvent(ctx, &auth.SecurityEvent{
+			UserAccountID: &identity.UserAccountID,
+			EventType:     "auth.email_verified",
+			Severity:      auth.SecurityEventSeverityInfo,
+			IPAddress:     input.IPAddress,
+			UserAgent:     input.UserAgent,
+			MetadataJSON: map[string]any{
+				"identity_id":                 identity.ID.String(),
+				"email_verification_token_id": emailToken.ID.String(),
+			},
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &VerifyEmailResult{
+		Account: account,
 	}, nil
 }
 
