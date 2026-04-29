@@ -26,6 +26,7 @@ type ProjectService interface {
 	CreateProject(ctx context.Context, input projectsvc.CreateProjectInput) (*projectsvc.CreateProjectResult, error)
 	ListProjects(ctx context.Context, input projectsvc.ListProjectsInput) (*projectsvc.ListProjectsResult, error)
 	GetProject(ctx context.Context, input projectsvc.GetProjectInput) (*projectsvc.GetProjectResult, error)
+	UpdateProject(ctx context.Context, input projectsvc.UpdateProjectInput) (*projectsvc.UpdateProjectResult, error)
 }
 
 type SessionService interface {
@@ -56,6 +57,15 @@ type createProjectRequest struct {
 	Description            string `json:"description"`
 	ClientOrRequestingUnit string `json:"client_or_requesting_unit"`
 	ScopeOrObjective       string `json:"scope_or_objective"`
+}
+
+type updateProjectRequest struct {
+	Name                   *string `json:"name"`
+	Type                   *string `json:"type"`
+	Priority               *string `json:"priority"`
+	Description            *string `json:"description"`
+	ClientOrRequestingUnit *string `json:"client_or_requesting_unit"`
+	ScopeOrObjective       *string `json:"scope_or_objective"`
 }
 
 type createProjectResponse struct {
@@ -102,6 +112,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	projects.Get("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListProjects)
 	projects.Post("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateProject)
 	projects.Get("/:project_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetProject)
+	projects.Patch("/:project_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateProject)
 }
 
 func (h Handler) CreateProject(c fiber.Ctx) error {
@@ -200,6 +211,58 @@ func (h Handler) GetProject(c fiber.Ctx) error {
 	})
 }
 
+func (h Handler) UpdateProject(c fiber.Ctx) error {
+	if h.projects == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+
+	var req updateProjectRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+
+	var projectType *project.ProjectType
+	if req.Type != nil {
+		value := project.ProjectType(*req.Type)
+		projectType = &value
+	}
+	var priority *project.ProjectPriority
+	if req.Priority != nil {
+		value := project.ProjectPriority(*req.Priority)
+		priority = &value
+	}
+
+	result, err := h.projects.UpdateProject(c.Context(), projectsvc.UpdateProjectInput{
+		Account:                account,
+		TenantContext:          tenantContext,
+		ProjectID:              projectID,
+		Name:                   req.Name,
+		Type:                   projectType,
+		Priority:               priority,
+		Description:            req.Description,
+		ClientOrRequestingUnit: req.ClientOrRequestingUnit,
+		ScopeOrObjective:       req.ScopeOrObjective,
+	})
+	if err != nil {
+		return renderProjectError(c, err)
+	}
+
+	return presenter.RenderItem(c, projectListItemResponse{
+		Project: toProjectResponse(result.Item.Project),
+		Member:  toMemberResponse(result.Item.Member),
+	})
+}
+
 func (h Handler) requireSession(c fiber.Ctx) error {
 	if h.session == nil {
 		return presenter.RenderError(c, fiber.StatusUnauthorized, "AUTH_SESSION_REQUIRED", "Authentication session is required")
@@ -276,6 +339,10 @@ func renderProjectError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_NAME_REQUIRED", "Project name is required")
 	case errors.Is(err, projectsvc.ErrProjectTypeInvalid):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_TYPE_INVALID", "Project type is invalid")
+	case errors.Is(err, projectsvc.ErrProjectPriorityInvalid):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_PRIORITY_INVALID", "Project priority is invalid")
+	case errors.Is(err, projectsvc.ErrProjectUpdateNoFields):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_UPDATE_NO_FIELDS", "Project update has no fields")
 	case errors.Is(err, projectsvc.ErrAccountInactive):
 		return presenter.RenderError(c, fiber.StatusForbidden, "ACCOUNT_INACTIVE", "Account is inactive")
 	case errors.Is(err, projectsvc.ErrTenantContextRequired):

@@ -96,6 +96,17 @@ type Project struct {
 	ArchivedAt             *time.Time
 }
 
+type ProjectProfilePatch struct {
+	Name                   *string
+	Type                   *ProjectType
+	PriorityID             *uuid.UUID
+	Description            *string
+	ClientOrRequestingUnit *string
+	ScopeOrObjective       *string
+	UpdatedBy              uuid.UUID
+	UpdatedAt              time.Time
+}
+
 type Member struct {
 	ID                    uuid.UUID
 	TenantID              uuid.UUID

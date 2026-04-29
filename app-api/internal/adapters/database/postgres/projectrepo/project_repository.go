@@ -303,6 +303,46 @@ func (r *Repository) CreateMember(ctx context.Context, value *project.Member) er
 	return nil
 }
 
+func (r *Repository) UpdateProjectProfile(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, patch project.ProjectProfilePatch) error {
+	updates := map[string]any{
+		"updated_by": patch.UpdatedBy,
+		"updated_at": patch.UpdatedAt,
+	}
+	if patch.Name != nil {
+		updates["project_name"] = *patch.Name
+	}
+	if patch.Type != nil {
+		updates["project_type"] = string(*patch.Type)
+	}
+	if patch.PriorityID != nil {
+		updates["priority_id"] = *patch.PriorityID
+	}
+	if patch.Description != nil {
+		updates["description"] = *patch.Description
+	}
+	if patch.ClientOrRequestingUnit != nil {
+		updates["client_or_requesting_unit"] = *patch.ClientOrRequestingUnit
+	}
+	if patch.ScopeOrObjective != nil {
+		updates["scope_or_objective"] = *patch.ScopeOrObjective
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&projectRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("id = ?", projectID).
+		Where("deleted_at IS NULL").
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return project.ErrProjectNotFound
+	}
+	return nil
+}
+
 func (r *Repository) FindProjectByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID) (*project.ProjectWithMember, error) {
 	var row projectListRow
 	err := r.db.WithContext(ctx).

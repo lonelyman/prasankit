@@ -30,6 +30,9 @@ type fakeProjectService struct {
 	getResult    *projectsvc.GetProjectResult
 	getErr       error
 	getInput     projectsvc.GetProjectInput
+	updateResult *projectsvc.UpdateProjectResult
+	updateErr    error
+	updateInput  projectsvc.UpdateProjectInput
 }
 
 func (s *fakeProjectService) CreateProject(_ context.Context, input projectsvc.CreateProjectInput) (*projectsvc.CreateProjectResult, error) {
@@ -54,6 +57,14 @@ func (s *fakeProjectService) GetProject(_ context.Context, input projectsvc.GetP
 		return nil, s.getErr
 	}
 	return s.getResult, nil
+}
+
+func (s *fakeProjectService) UpdateProject(_ context.Context, input projectsvc.UpdateProjectInput) (*projectsvc.UpdateProjectResult, error) {
+	s.updateInput = input
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	return s.updateResult, nil
 }
 
 type fakeSessionService struct {
@@ -326,6 +337,137 @@ func TestGetProjectMapsNotFound(t *testing.T) {
 	defer resp.Body.Close()
 
 	assertProjectError(t, resp, http.StatusNotFound, "PROJECT_NOT_FOUND")
+}
+
+func TestUpdateProject(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	service := &fakeProjectService{
+		updateResult: &projectsvc.UpdateProjectResult{
+			Item: project.ProjectWithMember{
+				Project: project.Project{
+					ID:          projectID,
+					TenantID:    tenantContext.TenantID,
+					WorkspaceID: tenantContext.WorkspaceID,
+					Code:        "PRJ-2026-0001",
+					Name:        "Project B",
+					Type:        project.ProjectTypeClient,
+					Status:      project.ProjectStatusDraft,
+					Priority:    project.ProjectPriorityHigh,
+					Description: "",
+				},
+				Member: project.Member{
+					ID:        uuid.Must(uuid.NewV7()),
+					ProjectID: projectID,
+					Role:      project.ProjectRoleOwner,
+					Status:    project.ProjectMemberStatusActive,
+				},
+			},
+		},
+	}
+	session := &fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: accountID, Status: auth.UserAccountStatusActive}}}
+	tenant := &fakeTenantResolver{result: &workspacesvc.ResolveTenantContextResult{Context: tenantContext}}
+	app := newProjectTestApp(newTestHandler(service, session, tenant))
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspace/projects/"+projectID.String(), bytes.NewBufferString(`{"name":"Project B","type":"client","priority":"high","description":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.updateInput.ProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", service.updateInput.ProjectID, projectID)
+	}
+	if service.updateInput.TenantContext.TenantID != tenantContext.TenantID {
+		t.Fatalf("tenant ID = %s, want %s", service.updateInput.TenantContext.TenantID, tenantContext.TenantID)
+	}
+	if service.updateInput.Name == nil || *service.updateInput.Name != "Project B" {
+		t.Fatalf("name = %#v, want Project B", service.updateInput.Name)
+	}
+	if service.updateInput.Description == nil || *service.updateInput.Description != "" {
+		t.Fatalf("description = %#v, want empty string", service.updateInput.Description)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	projectData := data["project"].(map[string]any)
+	if _, ok := projectData["tenant_id"]; ok {
+		t.Fatalf("response must not expose tenant_id: %#v", projectData)
+	}
+	if projectData["name"] != "Project B" {
+		t.Fatalf("project.name = %v, want Project B", projectData["name"])
+	}
+}
+
+func TestUpdateProjectRequiresManagePermission(t *testing.T) {
+	app := newProjectTestApp(newTestHandler(
+		&fakeProjectService{},
+		&fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}}},
+		&fakeTenantResolver{result: &workspacesvc.ResolveTenantContextResult{Context: testTenantContext(workspace.WorkspaceRoleUser)}},
+	))
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspace/projects/"+uuid.Must(uuid.NewV7()).String(), bytes.NewBufferString(`{"name":"Project B"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertProjectError(t, resp, http.StatusForbidden, "PERMISSION_DENIED")
+}
+
+func TestUpdateProjectRejectsInvalidID(t *testing.T) {
+	app := newProjectTestApp(newTestHandler(
+		&fakeProjectService{},
+		&fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}}},
+		&fakeTenantResolver{result: &workspacesvc.ResolveTenantContextResult{Context: testTenantContext(workspace.WorkspaceRoleOwner)}},
+	))
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspace/projects/not-a-uuid", bytes.NewBufferString(`{"name":"Project B"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertProjectError(t, resp, http.StatusBadRequest, "PROJECT_ID_INVALID")
+}
+
+func TestUpdateProjectMapsValidationError(t *testing.T) {
+	app := newProjectTestApp(newTestHandler(
+		&fakeProjectService{updateErr: projectsvc.ErrProjectPriorityInvalid},
+		&fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}}},
+		&fakeTenantResolver{result: &workspacesvc.ResolveTenantContextResult{Context: testTenantContext(workspace.WorkspaceRoleOwner)}},
+	))
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspace/projects/"+uuid.Must(uuid.NewV7()).String(), bytes.NewBufferString(`{"priority":"urgent"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertProjectError(t, resp, http.StatusBadRequest, "PROJECT_PRIORITY_INVALID")
 }
 
 func newTestHandler(projectService ProjectService, sessionService SessionService, tenantResolver TenantResolver) Handler {

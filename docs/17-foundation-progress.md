@@ -307,7 +307,7 @@ Verified:
 - เพิ่ม `docs/18.8-auth-password-reset-test-examples.md` สำหรับตัวอย่างทดสอบ forgot/reset password แล้ว
 - เพิ่ม `docs/18.9-workspace-registration-test-examples.md` สำหรับตัวอย่างทดสอบ check slug/register workspace แล้ว
 - เพิ่ม `docs/18.10-workspace-current-test-examples.md` สำหรับตัวอย่างทดสอบ Tenant Context resolver แล้ว
-- เพิ่ม `docs/18.11-project-foundation-test-examples.md` สำหรับตัวอย่างทดสอบ create/list/detail project แล้ว
+- เพิ่ม `docs/18.11-project-foundation-test-examples.md` สำหรับตัวอย่างทดสอบ create/list/detail/update project แล้ว
 - เพิ่ม Workspace module ก้อนแรกแล้ว:
   - `GET /api/v1/workspaces/check-slug`
   - `POST /api/v1/workspaces/register`
@@ -356,6 +356,7 @@ Composition note:
   - `GET /api/v1/workspace/projects`
   - `POST /api/v1/workspace/projects`
   - `GET /api/v1/workspace/projects/{project_id}`
+  - `PATCH /api/v1/workspace/projects/{project_id}`
   - ทุก project route ต้องผ่าน session, Tenant Context และ Permission Guard ก่อน query
 - ตรวจกลุ่ม field ที่เป็น text แล้ว: ค่า role/master/permission ต้องเป็น master/FK, ส่วน `status`/`mode`/auth provider/type/security severity ตอนนี้ยังถือเป็น lifecycle/system state และคุมด้วย constraint ได้ก่อน
 
@@ -365,7 +366,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปต่อ Project update แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
+ขั้นถัดไปต่อ Project Team แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -407,4 +408,5 @@ PostgreSQL connection done
 -> Project HTTP: GET /api/v1/workspace/projects wired
 -> Project HTTP: POST /api/v1/workspace/projects wired
 -> Project HTTP: GET /api/v1/workspace/projects/{project_id} wired
+-> Project HTTP: PATCH /api/v1/workspace/projects/{project_id} wired
 ```

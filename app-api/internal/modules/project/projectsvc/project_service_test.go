@@ -20,6 +20,11 @@ type fakeRepository struct {
 	findProjectID     uuid.UUID
 	findTenantID      uuid.UUID
 	findWorkspaceID   uuid.UUID
+	updateProjectID   uuid.UUID
+	updateTenantID    uuid.UUID
+	updateWorkspaceID uuid.UUID
+	updatePatch       project.ProjectProfilePatch
+	updateErr         error
 	listItems         []project.ProjectWithMember
 	listTotal         int
 	transactionCalled bool
@@ -38,8 +43,9 @@ func (r *fakeRepository) FindProjectRoleByCode(_ context.Context, code project.P
 }
 
 func (r *fakeRepository) FindProjectPriorityByCode(_ context.Context, code project.ProjectPriority) (*project.PriorityMaster, error) {
-	if code == project.ProjectPriorityMedium {
-		return &project.PriorityMaster{ID: uuid.Must(uuid.NewV7()), Code: project.ProjectPriorityMedium, Name: "Medium"}, nil
+	switch code {
+	case project.ProjectPriorityLow, project.ProjectPriorityMedium, project.ProjectPriorityHigh:
+		return &project.PriorityMaster{ID: uuid.Must(uuid.NewV7()), Code: code, Name: string(code)}, nil
 	}
 	return nil, project.ErrProjectPriorityNotFound
 }
@@ -71,6 +77,17 @@ func (r *fakeRepository) FindProjectByID(_ context.Context, tenantID uuid.UUID, 
 		return r.findItem, nil
 	}
 	return nil, project.ErrProjectNotFound
+}
+
+func (r *fakeRepository) UpdateProjectProfile(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, patch project.ProjectProfilePatch) error {
+	r.updateTenantID = tenantID
+	r.updateWorkspaceID = workspaceID
+	r.updateProjectID = projectID
+	r.updatePatch = patch
+	if r.updateErr != nil {
+		return r.updateErr
+	}
+	return nil
 }
 
 func (r *fakeRepository) ListProjects(context.Context, uuid.UUID, uuid.UUID, int, int) ([]project.ProjectWithMember, int, error) {
@@ -245,6 +262,117 @@ func TestGetProjectMapsNotFound(t *testing.T) {
 		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
 		TenantContext: testTenantContext(),
 		ProjectID:     uuid.Must(uuid.NewV7()),
+	})
+	if !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf("err = %v, want ErrProjectNotFound", err)
+	}
+}
+
+func TestUpdateProject(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	name := " Project B "
+	projectType := project.ProjectTypeClient
+	priority := project.ProjectPriorityHigh
+	description := " "
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{
+				ID:          projectID,
+				TenantID:    tenantContext.TenantID,
+				WorkspaceID: tenantContext.WorkspaceID,
+				Code:        "PRJ-2026-0001",
+				Name:        "Project B",
+				Type:        project.ProjectTypeClient,
+				Status:      project.ProjectStatusDraft,
+				Priority:    project.ProjectPriorityHigh,
+			},
+		},
+	}
+	service := NewService(repo)
+
+	result, err := service.UpdateProject(context.Background(), UpdateProjectInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Name:          &name,
+		Type:          &projectType,
+		Priority:      &priority,
+		Description:   &description,
+	})
+	if err != nil {
+		t.Fatalf("UpdateProject: %v", err)
+	}
+	if repo.updateTenantID != tenantContext.TenantID {
+		t.Fatalf("tenant ID = %s, want %s", repo.updateTenantID, tenantContext.TenantID)
+	}
+	if repo.updateWorkspaceID != tenantContext.WorkspaceID {
+		t.Fatalf("workspace ID = %s, want %s", repo.updateWorkspaceID, tenantContext.WorkspaceID)
+	}
+	if repo.updateProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", repo.updateProjectID, projectID)
+	}
+	if repo.updatePatch.Name == nil || *repo.updatePatch.Name != "Project B" {
+		t.Fatalf("patch name = %#v, want Project B", repo.updatePatch.Name)
+	}
+	if repo.updatePatch.Description == nil || *repo.updatePatch.Description != "" {
+		t.Fatalf("patch description = %#v, want empty string", repo.updatePatch.Description)
+	}
+	if repo.updatePatch.PriorityID == nil || *repo.updatePatch.PriorityID == uuid.Nil {
+		t.Fatal("patch priority ID was not set")
+	}
+	if result.Item.Project.ID != projectID {
+		t.Fatalf("project ID = %s, want %s", result.Item.Project.ID, projectID)
+	}
+}
+
+func TestUpdateProjectRejectsInvalidInput(t *testing.T) {
+	service := NewService(&fakeRepository{})
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+
+	_, err := service.UpdateProject(context.Background(), UpdateProjectInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+	})
+	if !errors.Is(err, ErrProjectUpdateNoFields) {
+		t.Fatalf("err = %v, want ErrProjectUpdateNoFields", err)
+	}
+
+	name := " "
+	_, err = service.UpdateProject(context.Background(), UpdateProjectInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Name:          &name,
+	})
+	if !errors.Is(err, ErrProjectNameRequired) {
+		t.Fatalf("err = %v, want ErrProjectNameRequired", err)
+	}
+
+	priority := project.ProjectPriority("urgent")
+	_, err = service.UpdateProject(context.Background(), UpdateProjectInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Priority:      &priority,
+	})
+	if !errors.Is(err, ErrProjectPriorityInvalid) {
+		t.Fatalf("err = %v, want ErrProjectPriorityInvalid", err)
+	}
+}
+
+func TestUpdateProjectMapsNotFound(t *testing.T) {
+	name := "Project B"
+	service := NewService(&fakeRepository{updateErr: project.ErrProjectNotFound})
+
+	_, err := service.UpdateProject(context.Background(), UpdateProjectInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: testTenantContext(),
+		ProjectID:     uuid.Must(uuid.NewV7()),
+		Name:          &name,
 	})
 	if !errors.Is(err, ErrProjectNotFound) {
 		t.Fatalf("err = %v, want ErrProjectNotFound", err)

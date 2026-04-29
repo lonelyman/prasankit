@@ -89,6 +89,10 @@ func TestRepositoryIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find project medium priority: %v", err)
 	}
+	highPriority, err := repo.FindProjectPriorityByCode(ctx, project.ProjectPriorityHigh)
+	if err != nil {
+		t.Fatalf("find project high priority: %v", err)
+	}
 
 	code, err := repo.NextProjectCode(ctx, tenantID, workspaceID, "PRJ", time.Now().UTC().Year(), 4)
 	if err != nil {
@@ -107,6 +111,7 @@ func TestRepositoryIntegration(t *testing.T) {
 		Status:      project.ProjectStatusDraft,
 		PriorityID:  mediumPriority.ID,
 		Priority:    mediumPriority.Code,
+		Description: "Old description",
 		CreatedBy:   accountID,
 	}
 	if err := repo.CreateProject(ctx, projectRecord); err != nil {
@@ -158,10 +163,48 @@ func TestRepositoryIntegration(t *testing.T) {
 		t.Fatalf("found member role = %s, want project_owner", found.Member.Role)
 	}
 
+	updatedName := "Project B"
+	updatedDescription := ""
+	updatedType := project.ProjectTypeClient
+	if err := repo.UpdateProjectProfile(ctx, tenantID, workspaceID, projectRecord.ID, project.ProjectProfilePatch{
+		Name:        &updatedName,
+		Type:        &updatedType,
+		PriorityID:  &highPriority.ID,
+		Description: &updatedDescription,
+		UpdatedBy:   accountID,
+		UpdatedAt:   time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("update project profile: %v", err)
+	}
+	updated, err := repo.FindProjectByID(ctx, tenantID, workspaceID, projectRecord.ID)
+	if err != nil {
+		t.Fatalf("find updated project by id: %v", err)
+	}
+	if updated.Project.Name != "Project B" {
+		t.Fatalf("updated name = %s, want Project B", updated.Project.Name)
+	}
+	if updated.Project.Type != project.ProjectTypeClient {
+		t.Fatalf("updated type = %s, want client", updated.Project.Type)
+	}
+	if updated.Project.Priority != project.ProjectPriorityHigh {
+		t.Fatalf("updated priority = %s, want high", updated.Project.Priority)
+	}
+	if updated.Project.Description != "" {
+		t.Fatalf("updated description = %q, want empty string", updated.Project.Description)
+	}
+
 	otherTenantID := mustUUID(t)
 	_, err = repo.FindProjectByID(ctx, otherTenantID, workspaceID, projectRecord.ID)
 	if err == nil {
 		t.Fatal("find project with wrong tenant returned nil error, want not found")
+	}
+	err = repo.UpdateProjectProfile(ctx, otherTenantID, workspaceID, projectRecord.ID, project.ProjectProfilePatch{
+		Name:      &updatedName,
+		UpdatedBy: accountID,
+		UpdatedAt: time.Now().UTC(),
+	})
+	if err == nil {
+		t.Fatal("update project with wrong tenant returned nil error, want not found")
 	}
 
 	items, total, err := repo.ListProjects(ctx, tenantID, workspaceID, 10, 0)

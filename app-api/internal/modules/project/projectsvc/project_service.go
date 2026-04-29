@@ -25,8 +25,10 @@ var (
 	ErrProjectNameRequired     = errors.New("project name is required")
 	ErrProjectTypeInvalid      = errors.New("project type is invalid")
 	ErrProjectIDRequired       = errors.New("project id is required")
+	ErrProjectUpdateNoFields   = errors.New("project update has no fields")
 	ErrProjectRoleMissing      = errors.New("project role is missing")
 	ErrProjectPriorityMissing  = errors.New("project priority is missing")
+	ErrProjectPriorityInvalid  = errors.New("project priority is invalid")
 	ErrProjectNotFound         = errors.New("project not found")
 	ErrProjectMemberCreateFail = errors.New("project member create failed")
 )
@@ -65,6 +67,22 @@ type GetProjectInput struct {
 }
 
 type GetProjectResult struct {
+	Item project.ProjectWithMember
+}
+
+type UpdateProjectInput struct {
+	Account                auth.UserAccount
+	TenantContext          workspace.TenantContext
+	ProjectID              uuid.UUID
+	Name                   *string
+	Type                   *project.ProjectType
+	Priority               *project.ProjectPriority
+	Description            *string
+	ClientOrRequestingUnit *string
+	ScopeOrObjective       *string
+}
+
+type UpdateProjectResult struct {
 	Item project.ProjectWithMember
 }
 
@@ -229,6 +247,90 @@ func (s *Service) GetProject(ctx context.Context, input GetProjectInput) (*GetPr
 	}
 
 	return &GetProjectResult{Item: *item}, nil
+}
+
+func (s *Service) UpdateProject(ctx context.Context, input UpdateProjectInput) (*UpdateProjectResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+
+	profilePatch := project.ProjectProfilePatch{
+		UpdatedBy: input.Account.ID,
+		UpdatedAt: s.clock(),
+	}
+
+	hasField := false
+	if input.Name != nil {
+		name := strings.TrimSpace(*input.Name)
+		if name == "" {
+			return nil, ErrProjectNameRequired
+		}
+		profilePatch.Name = &name
+		hasField = true
+	}
+	if input.Type != nil {
+		projectType := project.ProjectType(strings.TrimSpace(string(*input.Type)))
+		if projectType != project.ProjectTypeInternal && projectType != project.ProjectTypeClient {
+			return nil, ErrProjectTypeInvalid
+		}
+		profilePatch.Type = &projectType
+		hasField = true
+	}
+	if input.Priority != nil {
+		priorityCode := project.ProjectPriority(strings.TrimSpace(string(*input.Priority)))
+		if priorityCode == "" {
+			return nil, ErrProjectPriorityInvalid
+		}
+		priority, err := s.repository.FindProjectPriorityByCode(ctx, priorityCode)
+		if errors.Is(err, project.ErrProjectPriorityNotFound) {
+			return nil, ErrProjectPriorityInvalid
+		}
+		if err != nil {
+			return nil, err
+		}
+		profilePatch.PriorityID = &priority.ID
+		hasField = true
+	}
+	if input.Description != nil {
+		description := strings.TrimSpace(*input.Description)
+		profilePatch.Description = &description
+		hasField = true
+	}
+	if input.ClientOrRequestingUnit != nil {
+		clientOrRequestingUnit := strings.TrimSpace(*input.ClientOrRequestingUnit)
+		profilePatch.ClientOrRequestingUnit = &clientOrRequestingUnit
+		hasField = true
+	}
+	if input.ScopeOrObjective != nil {
+		scopeOrObjective := strings.TrimSpace(*input.ScopeOrObjective)
+		profilePatch.ScopeOrObjective = &scopeOrObjective
+		hasField = true
+	}
+	if !hasField {
+		return nil, ErrProjectUpdateNoFields
+	}
+
+	if err := s.repository.UpdateProjectProfile(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, profilePatch); err != nil {
+		if errors.Is(err, project.ErrProjectNotFound) {
+			return nil, ErrProjectNotFound
+		}
+		return nil, err
+	}
+
+	item, err := s.repository.FindProjectByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID)
+	if errors.Is(err, project.ErrProjectNotFound) {
+		return nil, ErrProjectNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &UpdateProjectResult{Item: *item}, nil
 }
 
 func validateAccount(account auth.UserAccount) error {
