@@ -141,6 +141,29 @@ func TestRepositoryIntegration(t *testing.T) {
 		t.Fatalf("member ID version = %d, want 7", member.ID.Version())
 	}
 
+	found, err := repo.FindProjectByID(ctx, tenantID, workspaceID, projectRecord.ID)
+	if err != nil {
+		t.Fatalf("find project by id: %v", err)
+	}
+	if found.Project.ID != projectRecord.ID {
+		t.Fatalf("found project ID = %s, want %s", found.Project.ID, projectRecord.ID)
+	}
+	if found.Project.TenantID != tenantID {
+		t.Fatalf("found tenant ID = %s, want %s", found.Project.TenantID, tenantID)
+	}
+	if found.Project.WorkspaceID != workspaceID {
+		t.Fatalf("found workspace ID = %s, want %s", found.Project.WorkspaceID, workspaceID)
+	}
+	if found.Member.Role != project.ProjectRoleOwner {
+		t.Fatalf("found member role = %s, want project_owner", found.Member.Role)
+	}
+
+	otherTenantID := mustUUID(t)
+	_, err = repo.FindProjectByID(ctx, otherTenantID, workspaceID, projectRecord.ID)
+	if err == nil {
+		t.Fatal("find project with wrong tenant returned nil error, want not found")
+	}
+
 	items, total, err := repo.ListProjects(ctx, tenantID, workspaceID, 10, 0)
 	if err != nil {
 		t.Fatalf("list projects: %v", err)
@@ -148,10 +171,10 @@ func TestRepositoryIntegration(t *testing.T) {
 	if total < 1 {
 		t.Fatalf("total = %d, want at least 1", total)
 	}
-	found := false
+	foundInList := false
 	for _, item := range items {
 		if item.Project.ID == projectRecord.ID {
-			found = true
+			foundInList = true
 			if item.Project.TenantID != tenantID {
 				t.Fatalf("tenant ID = %s, want %s", item.Project.TenantID, tenantID)
 			}
@@ -160,7 +183,7 @@ func TestRepositoryIntegration(t *testing.T) {
 			}
 		}
 	}
-	if !found {
+	if !foundInList {
 		t.Fatalf("created project not found in list: %#v", items)
 	}
 }

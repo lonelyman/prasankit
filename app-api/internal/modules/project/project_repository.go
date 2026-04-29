@@ -19,5 +19,6 @@ type Repository interface {
 	NextProjectCode(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, prefix string, year int, numberLength int) (string, error)
 	CreateProject(ctx context.Context, project *Project) error
 	CreateMember(ctx context.Context, member *Member) error
+	FindProjectByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID) (*ProjectWithMember, error)
 	ListProjects(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, limit int, offset int) ([]ProjectWithMember, int, error)
 }

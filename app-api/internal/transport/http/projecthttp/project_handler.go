@@ -15,6 +15,7 @@ import (
 	"prasankit-api/internal/transport/http/presenter"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
 )
 
 const accountLocalKey = "project.account"
@@ -24,6 +25,7 @@ const workspaceSlugHeader = "X-Workspace-Slug"
 type ProjectService interface {
 	CreateProject(ctx context.Context, input projectsvc.CreateProjectInput) (*projectsvc.CreateProjectResult, error)
 	ListProjects(ctx context.Context, input projectsvc.ListProjectsInput) (*projectsvc.ListProjectsResult, error)
+	GetProject(ctx context.Context, input projectsvc.GetProjectInput) (*projectsvc.GetProjectResult, error)
 }
 
 type SessionService interface {
@@ -99,6 +101,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	projects := router.Group("/workspace/projects")
 	projects.Get("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListProjects)
 	projects.Post("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateProject)
+	projects.Get("/:project_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetProject)
 }
 
 func (h Handler) CreateProject(c fiber.Ctx) error {
@@ -165,6 +168,36 @@ func (h Handler) ListProjects(c fiber.Ctx) error {
 	}
 
 	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
+}
+
+func (h Handler) GetProject(c fiber.Ctx) error {
+	if h.projects == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+
+	result, err := h.projects.GetProject(c.Context(), projectsvc.GetProjectInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+	})
+	if err != nil {
+		return renderProjectError(c, err)
+	}
+
+	return presenter.RenderItem(c, projectListItemResponse{
+		Project: toProjectResponse(result.Item.Project),
+		Member:  toMemberResponse(result.Item.Member),
+	})
 }
 
 func (h Handler) requireSession(c fiber.Ctx) error {
@@ -247,6 +280,10 @@ func renderProjectError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusForbidden, "ACCOUNT_INACTIVE", "Account is inactive")
 	case errors.Is(err, projectsvc.ErrTenantContextRequired):
 		return presenter.RenderError(c, fiber.StatusForbidden, "TENANT_CONTEXT_REQUIRED", "Tenant context is required")
+	case errors.Is(err, projectsvc.ErrProjectIDRequired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_REQUIRED", "Project id is required")
+	case errors.Is(err, projectsvc.ErrProjectNotFound):
+		return presenter.RenderError(c, fiber.StatusNotFound, "PROJECT_NOT_FOUND", "Project not found")
 	default:
 		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
 	}

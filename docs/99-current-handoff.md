@@ -483,7 +483,7 @@ config
 - ค่า role/master/permission ให้ใช้ master/FK; ค่า `status`/`mode` ที่เป็น lifecycle/system state ยังใช้ text + constraint ได้จนกว่าจะมีเหตุผลให้ยกเป็น master
 - Permission Guard ก้อนแรกอยู่ที่ `internal/modules/workspace/workspaceperm`; `GET /api/v1/workspaces/current` ใช้ permission `workspace.view`
 - Project foundation ก้อนแรกมี `project_roles`, `project_priorities`, `project_code_counters`, `projects`, `project_members`; role/priority ใช้ master/FK ตั้งแต่ migration แรก
-- Project routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects` และ `POST /api/v1/workspace/projects`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
+- Project routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects`, `POST /api/v1/workspace/projects` และ `GET /api/v1/workspace/projects/{project_id}`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
 
 ## Next Step
 
@@ -526,7 +526,8 @@ PostgreSQL connection done
 -> Migration 000006_create_project_core_tables applied
 -> Project HTTP: GET /api/v1/workspace/projects wired
 -> Project HTTP: POST /api/v1/workspace/projects wired
--> ต่อไปเริ่ม Project detail/update โดยต้องผ่าน Tenant Context + Permission Guard
+-> Project HTTP: GET /api/v1/workspace/projects/{project_id} wired
+-> ต่อไปเริ่ม Project update โดยต้องผ่าน Tenant Context + Permission Guard
 ```
 
 ## Do Not Do Yet

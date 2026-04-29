@@ -303,6 +303,31 @@ func (r *Repository) CreateMember(ctx context.Context, value *project.Member) er
 	return nil
 }
 
+func (r *Repository) FindProjectByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID) (*project.ProjectWithMember, error) {
+	var row projectListRow
+	err := r.db.WithContext(ctx).
+		Table("projects AS p").
+		Select(projectListSelect()).
+		Joins("JOIN project_priorities AS pp ON pp.id = p.priority_id").
+		Joins(projectOwnerJoin(), string(project.ProjectMemberStatusActive), string(project.ProjectRoleOwner)).
+		Joins("LEFT JOIN project_roles AS pr ON pr.id = pm.project_role_id").
+		Where("p.tenant_id = ?", tenantID).
+		Where("p.workspace_id = ?", workspaceID).
+		Where("p.id = ?", projectID).
+		Where("p.deleted_at IS NULL").
+		Take(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, project.ErrProjectNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	item := row.toDomain()
+	return &item, nil
+}
+
 func (r *Repository) ListProjects(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, limit int, offset int) ([]project.ProjectWithMember, int, error) {
 	var total int64
 	countQuery := r.db.WithContext(ctx).
@@ -319,14 +344,7 @@ func (r *Repository) ListProjects(ctx context.Context, tenantID uuid.UUID, works
 		Table("projects AS p").
 		Select(projectListSelect()).
 		Joins("JOIN project_priorities AS pp ON pp.id = p.priority_id").
-		Joins(`
-			LEFT JOIN project_members AS pm
-				ON pm.project_id = p.id
-				AND pm.status = ?
-				AND pm.project_role_id = (
-					SELECT id FROM project_roles WHERE code = ? LIMIT 1
-				)
-		`, string(project.ProjectMemberStatusActive), string(project.ProjectRoleOwner)).
+		Joins(projectOwnerJoin(), string(project.ProjectMemberStatusActive), string(project.ProjectRoleOwner)).
 		Joins("LEFT JOIN project_roles AS pr ON pr.id = pm.project_role_id").
 		Where("p.tenant_id = ?", tenantID).
 		Where("p.workspace_id = ?", workspaceID).
@@ -345,6 +363,19 @@ func (r *Repository) ListProjects(ctx context.Context, tenantID uuid.UUID, works
 		items = append(items, row.toDomain())
 	}
 	return items, int(total), nil
+}
+
+func projectOwnerJoin() string {
+	return `
+		LEFT JOIN project_members AS pm
+			ON pm.project_id = p.id
+			AND pm.tenant_id = p.tenant_id
+			AND pm.workspace_id = p.workspace_id
+			AND pm.status = ?
+			AND pm.project_role_id = (
+				SELECT id FROM project_roles WHERE code = ? LIMIT 1
+			)
+	`
 }
 
 func projectListSelect() string {

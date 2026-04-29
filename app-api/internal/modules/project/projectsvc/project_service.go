@@ -24,8 +24,10 @@ var (
 	ErrTenantContextRequired   = errors.New("tenant context is required")
 	ErrProjectNameRequired     = errors.New("project name is required")
 	ErrProjectTypeInvalid      = errors.New("project type is invalid")
+	ErrProjectIDRequired       = errors.New("project id is required")
 	ErrProjectRoleMissing      = errors.New("project role is missing")
 	ErrProjectPriorityMissing  = errors.New("project priority is missing")
+	ErrProjectNotFound         = errors.New("project not found")
 	ErrProjectMemberCreateFail = errors.New("project member create failed")
 )
 
@@ -54,6 +56,16 @@ type ListProjectsInput struct {
 type ListProjectsResult struct {
 	Items []project.ProjectWithMember
 	Total int
+}
+
+type GetProjectInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+}
+
+type GetProjectResult struct {
+	Item project.ProjectWithMember
 }
 
 type Service struct {
@@ -195,6 +207,28 @@ func (s *Service) ListProjects(ctx context.Context, input ListProjectsInput) (*L
 		return nil, err
 	}
 	return &ListProjectsResult{Items: items, Total: total}, nil
+}
+
+func (s *Service) GetProject(ctx context.Context, input GetProjectInput) (*GetProjectResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+
+	item, err := s.repository.FindProjectByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID)
+	if errors.Is(err, project.ErrProjectNotFound) {
+		return nil, ErrProjectNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &GetProjectResult{Item: *item}, nil
 }
 
 func validateAccount(account auth.UserAccount) error {
