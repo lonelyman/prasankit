@@ -59,6 +59,7 @@ docker compose ps
 | GET | `/api/v1/workspace/projects/{project_id}` | Done, requires session cookie + `X-Workspace-Slug`, see `docs/18.11-project-foundation-test-examples.md` |
 | PATCH | `/api/v1/workspace/projects/{project_id}` | Done, requires session cookie + `X-Workspace-Slug` + `workspace.manage`, see `docs/18.11-project-foundation-test-examples.md` |
 | GET | `/api/v1/workspace/projects/{project_id}/members` | Done, requires session cookie + `X-Workspace-Slug`, see `docs/18.12-project-team-test-examples.md` |
+| POST | `/api/v1/workspace/projects/{project_id}/members` | Done, requires session cookie + `X-Workspace-Slug` + `workspace.manage`, see `docs/18.12-project-team-test-examples.md` |
 
 ## Health
 
@@ -180,7 +181,7 @@ HTTP/1.1 503 Service Unavailable
 | `docs/18.9-workspace-registration-test-examples.md` | `GET /api/v1/workspaces/check-slug`, `POST /api/v1/workspaces/register`, `GET /api/v1/workspaces/me` |
 | `docs/18.10-workspace-current-test-examples.md` | `GET /api/v1/workspaces/current` |
 | `docs/18.11-project-foundation-test-examples.md` | `GET /api/v1/workspace/projects`, `POST /api/v1/workspace/projects`, `GET /api/v1/workspace/projects/{project_id}`, `PATCH /api/v1/workspace/projects/{project_id}` |
-| `docs/18.12-project-team-test-examples.md` | `GET /api/v1/workspace/projects/{project_id}/members` |
+| `docs/18.12-project-team-test-examples.md` | `GET /api/v1/workspace/projects/{project_id}/members`, `POST /api/v1/workspace/projects/{project_id}/members` |
 
 ## Not Done Yet
 

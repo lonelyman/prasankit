@@ -28,6 +28,7 @@ type ProjectService interface {
 	GetProject(ctx context.Context, input projectsvc.GetProjectInput) (*projectsvc.GetProjectResult, error)
 	UpdateProject(ctx context.Context, input projectsvc.UpdateProjectInput) (*projectsvc.UpdateProjectResult, error)
 	ListProjectMembers(ctx context.Context, input projectsvc.ListProjectMembersInput) (*projectsvc.ListProjectMembersResult, error)
+	AddProjectMember(ctx context.Context, input projectsvc.AddProjectMemberInput) (*projectsvc.AddProjectMemberResult, error)
 }
 
 type SessionService interface {
@@ -67,6 +68,11 @@ type updateProjectRequest struct {
 	Description            *string `json:"description"`
 	ClientOrRequestingUnit *string `json:"client_or_requesting_unit"`
 	ScopeOrObjective       *string `json:"scope_or_objective"`
+}
+
+type addProjectMemberRequest struct {
+	WorkspaceMembershipID string `json:"workspace_membership_id"`
+	Role                  string `json:"role"`
 }
 
 type createProjectResponse struct {
@@ -116,6 +122,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	projects.Get("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListProjects)
 	projects.Post("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateProject)
 	projects.Get("/:project_id/members", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListProjectMembers)
+	projects.Post("/:project_id/members", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.AddProjectMember)
 	projects.Get("/:project_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetProject)
 	projects.Patch("/:project_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateProject)
 }
@@ -303,6 +310,45 @@ func (h Handler) ListProjectMembers(c fiber.Ctx) error {
 	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
 }
 
+func (h Handler) AddProjectMember(c fiber.Ctx) error {
+	if h.projects == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+
+	var req addProjectMemberRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+
+	workspaceMembershipID, err := uuid.Parse(req.WorkspaceMembershipID)
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "WORKSPACE_MEMBERSHIP_ID_INVALID", "Workspace membership id is invalid")
+	}
+
+	result, err := h.projects.AddProjectMember(c.Context(), projectsvc.AddProjectMemberInput{
+		Account:               account,
+		TenantContext:         tenantContext,
+		ProjectID:             projectID,
+		WorkspaceMembershipID: workspaceMembershipID,
+		Role:                  project.ProjectRole(req.Role),
+	})
+	if err != nil {
+		return renderProjectError(c, err)
+	}
+
+	return presenter.RenderItem(c, toMemberResponse(result.Member), fiber.StatusCreated)
+}
+
 func (h Handler) requireSession(c fiber.Ctx) error {
 	if h.session == nil {
 		return presenter.RenderError(c, fiber.StatusUnauthorized, "AUTH_SESSION_REQUIRED", "Authentication session is required")
@@ -379,10 +425,18 @@ func renderProjectError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_NAME_REQUIRED", "Project name is required")
 	case errors.Is(err, projectsvc.ErrProjectTypeInvalid):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_TYPE_INVALID", "Project type is invalid")
+	case errors.Is(err, projectsvc.ErrProjectRoleInvalid):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ROLE_INVALID", "Project role is invalid")
 	case errors.Is(err, projectsvc.ErrProjectPriorityInvalid):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_PRIORITY_INVALID", "Project priority is invalid")
 	case errors.Is(err, projectsvc.ErrProjectUpdateNoFields):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_UPDATE_NO_FIELDS", "Project update has no fields")
+	case errors.Is(err, projectsvc.ErrWorkspaceMembershipIDRequired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "WORKSPACE_MEMBERSHIP_ID_REQUIRED", "Workspace membership id is required")
+	case errors.Is(err, projectsvc.ErrWorkspaceMembershipNotFound):
+		return presenter.RenderError(c, fiber.StatusNotFound, "WORKSPACE_MEMBERSHIP_NOT_FOUND", "Workspace membership not found")
+	case errors.Is(err, projectsvc.ErrProjectMemberAlreadyExists):
+		return presenter.RenderError(c, fiber.StatusConflict, "PROJECT_MEMBER_ALREADY_EXISTS", "Project member already exists")
 	case errors.Is(err, projectsvc.ErrAccountInactive):
 		return presenter.RenderError(c, fiber.StatusForbidden, "ACCOUNT_INACTIVE", "Account is inactive")
 	case errors.Is(err, projectsvc.ErrTenantContextRequired):

@@ -19,18 +19,22 @@ const (
 )
 
 var (
-	ErrAccountRequired         = errors.New("account is required")
-	ErrAccountInactive         = errors.New("account is inactive")
-	ErrTenantContextRequired   = errors.New("tenant context is required")
-	ErrProjectNameRequired     = errors.New("project name is required")
-	ErrProjectTypeInvalid      = errors.New("project type is invalid")
-	ErrProjectIDRequired       = errors.New("project id is required")
-	ErrProjectUpdateNoFields   = errors.New("project update has no fields")
-	ErrProjectRoleMissing      = errors.New("project role is missing")
-	ErrProjectPriorityMissing  = errors.New("project priority is missing")
-	ErrProjectPriorityInvalid  = errors.New("project priority is invalid")
-	ErrProjectNotFound         = errors.New("project not found")
-	ErrProjectMemberCreateFail = errors.New("project member create failed")
+	ErrAccountRequired               = errors.New("account is required")
+	ErrAccountInactive               = errors.New("account is inactive")
+	ErrTenantContextRequired         = errors.New("tenant context is required")
+	ErrProjectNameRequired           = errors.New("project name is required")
+	ErrProjectTypeInvalid            = errors.New("project type is invalid")
+	ErrProjectIDRequired             = errors.New("project id is required")
+	ErrProjectUpdateNoFields         = errors.New("project update has no fields")
+	ErrProjectRoleMissing            = errors.New("project role is missing")
+	ErrProjectRoleInvalid            = errors.New("project role is invalid")
+	ErrProjectPriorityMissing        = errors.New("project priority is missing")
+	ErrProjectPriorityInvalid        = errors.New("project priority is invalid")
+	ErrProjectNotFound               = errors.New("project not found")
+	ErrWorkspaceMembershipIDRequired = errors.New("workspace membership id is required")
+	ErrWorkspaceMembershipNotFound   = errors.New("workspace membership not found")
+	ErrProjectMemberAlreadyExists    = errors.New("project member already exists")
+	ErrProjectMemberCreateFail       = errors.New("project member create failed")
 )
 
 type CreateProjectInput struct {
@@ -97,6 +101,18 @@ type ListProjectMembersInput struct {
 type ListProjectMembersResult struct {
 	Items []project.Member
 	Total int
+}
+
+type AddProjectMemberInput struct {
+	Account               auth.UserAccount
+	TenantContext         workspace.TenantContext
+	ProjectID             uuid.UUID
+	WorkspaceMembershipID uuid.UUID
+	Role                  project.ProjectRole
+}
+
+type AddProjectMemberResult struct {
+	Member project.Member
 }
 
 type Service struct {
@@ -380,6 +396,82 @@ func (s *Service) ListProjectMembers(ctx context.Context, input ListProjectMembe
 		return nil, err
 	}
 	return &ListProjectMembersResult{Items: items, Total: total}, nil
+}
+
+func (s *Service) AddProjectMember(ctx context.Context, input AddProjectMemberInput) (*AddProjectMemberResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.WorkspaceMembershipID == uuid.Nil {
+		return nil, ErrWorkspaceMembershipIDRequired
+	}
+
+	roleCode := input.Role
+	if roleCode == "" {
+		roleCode = project.ProjectRoleMember
+	}
+
+	now := s.clock()
+	var createdMember project.Member
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo project.Repository) error {
+		if _, err := repo.FindProjectByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID); err != nil {
+			if errors.Is(err, project.ErrProjectNotFound) {
+				return ErrProjectNotFound
+			}
+			return err
+		}
+
+		role, err := repo.FindProjectRoleByCode(ctx, roleCode)
+		if errors.Is(err, project.ErrProjectRoleNotFound) {
+			return ErrProjectRoleInvalid
+		}
+		if err != nil {
+			return err
+		}
+
+		candidate, err := repo.FindActiveWorkspaceMembershipByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.WorkspaceMembershipID)
+		if errors.Is(err, project.ErrWorkspaceMembershipNotFound) {
+			return ErrWorkspaceMembershipNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		createdMember = project.Member{
+			TenantID:              input.TenantContext.TenantID,
+			WorkspaceID:           input.TenantContext.WorkspaceID,
+			ProjectID:             input.ProjectID,
+			WorkspaceMembershipID: candidate.MembershipID,
+			ProfileID:             candidate.ProfileID,
+			UserAccountID:         candidate.UserAccountID,
+			RoleID:                role.ID,
+			Role:                  role.Code,
+			Status:                project.ProjectMemberStatusActive,
+			JoinedAt:              &now,
+			CreatedBy:             &input.Account.ID,
+			CreatedAt:             now,
+			UpdatedBy:             &input.Account.ID,
+			UpdatedAt:             now,
+		}
+		if err := repo.CreateMember(ctx, &createdMember); err != nil {
+			if errors.Is(err, project.ErrProjectMemberAlreadyExists) {
+				return ErrProjectMemberAlreadyExists
+			}
+			return errors.Join(ErrProjectMemberCreateFail, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &AddProjectMemberResult{Member: createdMember}, nil
 }
 
 func validateAccount(account auth.UserAccount) error {

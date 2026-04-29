@@ -11,11 +11,14 @@ var ErrProjectNotFound = errors.New("project not found")
 var ErrProjectRoleNotFound = errors.New("project role not found")
 var ErrProjectPriorityNotFound = errors.New("project priority not found")
 var ErrProjectCodeAlreadyTaken = errors.New("project code is already taken")
+var ErrWorkspaceMembershipNotFound = errors.New("workspace membership not found")
+var ErrProjectMemberAlreadyExists = errors.New("project member already exists")
 
 type Repository interface {
 	WithinTransaction(ctx context.Context, fn func(ctx context.Context, repo Repository) error) error
 	FindProjectRoleByCode(ctx context.Context, code ProjectRole) (*RoleMaster, error)
 	FindProjectPriorityByCode(ctx context.Context, code ProjectPriority) (*PriorityMaster, error)
+	FindActiveWorkspaceMembershipByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, membershipID uuid.UUID) (*WorkspaceMemberCandidate, error)
 	NextProjectCode(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, prefix string, year int, numberLength int) (string, error)
 	CreateProject(ctx context.Context, project *Project) error
 	CreateMember(ctx context.Context, member *Member) error

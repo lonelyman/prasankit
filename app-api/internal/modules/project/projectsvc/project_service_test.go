@@ -13,29 +13,35 @@ import (
 )
 
 type fakeRepository struct {
-	project           *project.Project
-	member            *project.Member
-	findItem          *project.ProjectWithMember
-	findErr           error
-	findProjectID     uuid.UUID
-	findTenantID      uuid.UUID
-	findWorkspaceID   uuid.UUID
-	updateProjectID   uuid.UUID
-	updateTenantID    uuid.UUID
-	updateWorkspaceID uuid.UUID
-	updatePatch       project.ProjectProfilePatch
-	updateErr         error
-	memberItems       []project.Member
-	memberTotal       int
-	memberErr         error
-	memberProjectID   uuid.UUID
-	memberTenantID    uuid.UUID
-	memberWorkspaceID uuid.UUID
-	memberLimit       int
-	memberOffset      int
-	listItems         []project.ProjectWithMember
-	listTotal         int
-	transactionCalled bool
+	project                    *project.Project
+	member                     *project.Member
+	findItem                   *project.ProjectWithMember
+	findErr                    error
+	findProjectID              uuid.UUID
+	findTenantID               uuid.UUID
+	findWorkspaceID            uuid.UUID
+	updateProjectID            uuid.UUID
+	updateTenantID             uuid.UUID
+	updateWorkspaceID          uuid.UUID
+	updatePatch                project.ProjectProfilePatch
+	updateErr                  error
+	memberItems                []project.Member
+	memberTotal                int
+	memberErr                  error
+	memberCandidate            *project.WorkspaceMemberCandidate
+	memberCandidateErr         error
+	memberCandidateID          uuid.UUID
+	memberCandidateTenantID    uuid.UUID
+	memberCandidateWorkspaceID uuid.UUID
+	createMemberErr            error
+	memberProjectID            uuid.UUID
+	memberTenantID             uuid.UUID
+	memberWorkspaceID          uuid.UUID
+	memberLimit                int
+	memberOffset               int
+	listItems                  []project.ProjectWithMember
+	listTotal                  int
+	transactionCalled          bool
 }
 
 func (r *fakeRepository) WithinTransaction(ctx context.Context, fn func(context.Context, project.Repository) error) error {
@@ -44,8 +50,9 @@ func (r *fakeRepository) WithinTransaction(ctx context.Context, fn func(context.
 }
 
 func (r *fakeRepository) FindProjectRoleByCode(_ context.Context, code project.ProjectRole) (*project.RoleMaster, error) {
-	if code == project.ProjectRoleOwner {
-		return &project.RoleMaster{ID: uuid.Must(uuid.NewV7()), Code: project.ProjectRoleOwner, Name: "Project Owner"}, nil
+	switch code {
+	case project.ProjectRoleOwner, project.ProjectRoleManager, project.ProjectRoleMember, project.ProjectRoleFinance, project.ProjectRoleViewer:
+		return &project.RoleMaster{ID: uuid.Must(uuid.NewV7()), Code: code, Name: string(code)}, nil
 	}
 	return nil, project.ErrProjectRoleNotFound
 }
@@ -69,6 +76,9 @@ func (r *fakeRepository) CreateProject(_ context.Context, value *project.Project
 }
 
 func (r *fakeRepository) CreateMember(_ context.Context, value *project.Member) error {
+	if r.createMemberErr != nil {
+		return r.createMemberErr
+	}
 	value.ID = uuid.Must(uuid.NewV7())
 	r.member = value
 	return nil
@@ -100,6 +110,19 @@ func (r *fakeRepository) UpdateProjectProfile(_ context.Context, tenantID uuid.U
 
 func (r *fakeRepository) ListProjects(context.Context, uuid.UUID, uuid.UUID, int, int) ([]project.ProjectWithMember, int, error) {
 	return r.listItems, r.listTotal, nil
+}
+
+func (r *fakeRepository) FindActiveWorkspaceMembershipByID(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, membershipID uuid.UUID) (*project.WorkspaceMemberCandidate, error) {
+	r.memberCandidateTenantID = tenantID
+	r.memberCandidateWorkspaceID = workspaceID
+	r.memberCandidateID = membershipID
+	if r.memberCandidateErr != nil {
+		return nil, r.memberCandidateErr
+	}
+	if r.memberCandidate != nil {
+		return r.memberCandidate, nil
+	}
+	return nil, project.ErrWorkspaceMembershipNotFound
 }
 
 func (r *fakeRepository) ListProjectMembers(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, limit int, offset int) ([]project.Member, int, error) {
@@ -463,6 +486,192 @@ func TestListProjectMembersRequiresExistingProject(t *testing.T) {
 	})
 	if !errors.Is(err, ErrProjectNotFound) {
 		t.Fatalf("err = %v, want ErrProjectNotFound", err)
+	}
+}
+
+func TestAddProjectMember(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	workspaceMembershipID := uuid.Must(uuid.NewV7())
+	userAccountID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{
+				ID:          projectID,
+				TenantID:    tenantContext.TenantID,
+				WorkspaceID: tenantContext.WorkspaceID,
+			},
+		},
+		memberCandidate: &project.WorkspaceMemberCandidate{
+			MembershipID:  workspaceMembershipID,
+			TenantID:      tenantContext.TenantID,
+			WorkspaceID:   tenantContext.WorkspaceID,
+			UserAccountID: &userAccountID,
+		},
+	}
+	service := NewService(repo)
+
+	result, err := service.AddProjectMember(context.Background(), AddProjectMemberInput{
+		Account:               auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext:         tenantContext,
+		ProjectID:             projectID,
+		WorkspaceMembershipID: workspaceMembershipID,
+		Role:                  project.ProjectRoleManager,
+	})
+	if err != nil {
+		t.Fatalf("AddProjectMember: %v", err)
+	}
+	if !repo.transactionCalled {
+		t.Fatal("transaction was not used")
+	}
+	if repo.memberCandidateTenantID != tenantContext.TenantID {
+		t.Fatalf("tenant ID = %s, want %s", repo.memberCandidateTenantID, tenantContext.TenantID)
+	}
+	if repo.memberCandidateWorkspaceID != tenantContext.WorkspaceID {
+		t.Fatalf("workspace ID = %s, want %s", repo.memberCandidateWorkspaceID, tenantContext.WorkspaceID)
+	}
+	if repo.memberCandidateID != workspaceMembershipID {
+		t.Fatalf("membership ID = %s, want %s", repo.memberCandidateID, workspaceMembershipID)
+	}
+	if result.Member.ID == uuid.Nil {
+		t.Fatal("member ID was not set")
+	}
+	if result.Member.ProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", result.Member.ProjectID, projectID)
+	}
+	if result.Member.WorkspaceMembershipID != workspaceMembershipID {
+		t.Fatalf("workspace membership ID = %s, want %s", result.Member.WorkspaceMembershipID, workspaceMembershipID)
+	}
+	if result.Member.Role != project.ProjectRoleManager {
+		t.Fatalf("role = %s, want project_manager", result.Member.Role)
+	}
+	if result.Member.UserAccountID == nil || *result.Member.UserAccountID != userAccountID {
+		t.Fatalf("user account ID = %#v, want %s", result.Member.UserAccountID, userAccountID)
+	}
+}
+
+func TestAddProjectMemberDefaultsRole(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	workspaceMembershipID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+		memberCandidate: &project.WorkspaceMemberCandidate{
+			MembershipID: workspaceMembershipID,
+			TenantID:     tenantContext.TenantID,
+			WorkspaceID:  tenantContext.WorkspaceID,
+		},
+	}
+	service := NewService(repo)
+
+	result, err := service.AddProjectMember(context.Background(), AddProjectMemberInput{
+		Account:               auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext:         tenantContext,
+		ProjectID:             projectID,
+		WorkspaceMembershipID: workspaceMembershipID,
+	})
+	if err != nil {
+		t.Fatalf("AddProjectMember: %v", err)
+	}
+	if result.Member.Role != project.ProjectRoleMember {
+		t.Fatalf("role = %s, want member", result.Member.Role)
+	}
+}
+
+func TestAddProjectMemberRejectsInvalidInput(t *testing.T) {
+	service := NewService(&fakeRepository{})
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+
+	_, err := service.AddProjectMember(context.Background(), AddProjectMemberInput{
+		Account:               account,
+		TenantContext:         tenantContext,
+		WorkspaceMembershipID: uuid.Must(uuid.NewV7()),
+	})
+	if !errors.Is(err, ErrProjectIDRequired) {
+		t.Fatalf("err = %v, want ErrProjectIDRequired", err)
+	}
+
+	_, err = service.AddProjectMember(context.Background(), AddProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     uuid.Must(uuid.NewV7()),
+	})
+	if !errors.Is(err, ErrWorkspaceMembershipIDRequired) {
+		t.Fatalf("err = %v, want ErrWorkspaceMembershipIDRequired", err)
+	}
+
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+	}
+	_, err = NewService(repo).AddProjectMember(context.Background(), AddProjectMemberInput{
+		Account:               account,
+		TenantContext:         tenantContext,
+		ProjectID:             projectID,
+		WorkspaceMembershipID: uuid.Must(uuid.NewV7()),
+		Role:                  project.ProjectRole("invalid"),
+	})
+	if !errors.Is(err, ErrProjectRoleInvalid) {
+		t.Fatalf("err = %v, want ErrProjectRoleInvalid", err)
+	}
+}
+
+func TestAddProjectMemberMapsErrors(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	workspaceMembershipID := uuid.Must(uuid.NewV7())
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+
+	_, err := NewService(&fakeRepository{findErr: project.ErrProjectNotFound}).AddProjectMember(context.Background(), AddProjectMemberInput{
+		Account:               account,
+		TenantContext:         tenantContext,
+		ProjectID:             projectID,
+		WorkspaceMembershipID: workspaceMembershipID,
+	})
+	if !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf("err = %v, want ErrProjectNotFound", err)
+	}
+
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+		memberCandidateErr: project.ErrWorkspaceMembershipNotFound,
+	}
+	_, err = NewService(repo).AddProjectMember(context.Background(), AddProjectMemberInput{
+		Account:               account,
+		TenantContext:         tenantContext,
+		ProjectID:             projectID,
+		WorkspaceMembershipID: workspaceMembershipID,
+	})
+	if !errors.Is(err, ErrWorkspaceMembershipNotFound) {
+		t.Fatalf("err = %v, want ErrWorkspaceMembershipNotFound", err)
+	}
+
+	repo = &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+		memberCandidate: &project.WorkspaceMemberCandidate{
+			MembershipID: workspaceMembershipID,
+			TenantID:     tenantContext.TenantID,
+			WorkspaceID:  tenantContext.WorkspaceID,
+		},
+		createMemberErr: project.ErrProjectMemberAlreadyExists,
+	}
+	_, err = NewService(repo).AddProjectMember(context.Background(), AddProjectMemberInput{
+		Account:               account,
+		TenantContext:         tenantContext,
+		ProjectID:             projectID,
+		WorkspaceMembershipID: workspaceMembershipID,
+	})
+	if !errors.Is(err, ErrProjectMemberAlreadyExists) {
+		t.Fatalf("err = %v, want ErrProjectMemberAlreadyExists", err)
 	}
 }
 

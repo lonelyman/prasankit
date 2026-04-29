@@ -97,6 +97,14 @@ func (projectPriorityRow) TableName() string {
 	return "project_priorities"
 }
 
+type workspaceMemberCandidateRow struct {
+	MembershipID  uuid.UUID  `gorm:"column:membership_id"`
+	TenantID      uuid.UUID  `gorm:"column:tenant_id"`
+	WorkspaceID   uuid.UUID  `gorm:"column:workspace_id"`
+	ProfileID     *uuid.UUID `gorm:"column:profile_id"`
+	UserAccountID *uuid.UUID `gorm:"column:user_account_id"`
+}
+
 type projectListRow struct {
 	ProjectID                     uuid.UUID  `gorm:"column:project_id"`
 	ProjectTenantID               uuid.UUID  `gorm:"column:project_tenant_id"`
@@ -170,6 +178,32 @@ func (r *Repository) FindProjectPriorityByCode(ctx context.Context, code project
 		Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, project.ErrProjectPriorityNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return row.toDomain(), nil
+}
+
+func (r *Repository) FindActiveWorkspaceMembershipByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, membershipID uuid.UUID) (*project.WorkspaceMemberCandidate, error) {
+	var row workspaceMemberCandidateRow
+	err := r.db.WithContext(ctx).
+		Table("workspace_memberships AS wm").
+		Select(`
+			wm.id AS membership_id,
+			wm.tenant_id,
+			wm.workspace_id,
+			wm.profile_id,
+			wm.user_account_id
+		`).
+		Where("wm.tenant_id = ?", tenantID).
+		Where("wm.workspace_id = ?", workspaceID).
+		Where("wm.id = ?", membershipID).
+		Where("wm.status = ?", "active").
+		Take(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, project.ErrWorkspaceMembershipNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -294,7 +328,7 @@ func (r *Repository) CreateMember(ctx context.Context, value *project.Member) er
 		UpdatedAt:             value.UpdatedAt,
 	}
 	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
-		return err
+		return mapCreateProjectMemberError(err)
 	}
 
 	value.ID = row.ID
@@ -532,6 +566,26 @@ func mapCreateProjectError(err error) error {
 		}
 	}
 	return err
+}
+
+func mapCreateProjectMemberError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if pgErr.ConstraintName == "uq_project_members_active_workspace_membership" {
+			return project.ErrProjectMemberAlreadyExists
+		}
+	}
+	return err
+}
+
+func (r workspaceMemberCandidateRow) toDomain() *project.WorkspaceMemberCandidate {
+	return &project.WorkspaceMemberCandidate{
+		MembershipID:  r.MembershipID,
+		TenantID:      r.TenantID,
+		WorkspaceID:   r.WorkspaceID,
+		ProfileID:     r.ProfileID,
+		UserAccountID: r.UserAccountID,
+	}
 }
 
 func (r projectRow) toDomain() project.Project {

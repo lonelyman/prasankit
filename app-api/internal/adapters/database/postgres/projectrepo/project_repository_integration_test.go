@@ -2,6 +2,7 @@ package projectrepo
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -33,10 +34,13 @@ func TestRepositoryIntegration(t *testing.T) {
 	repo := NewRepository(db)
 
 	accountID := mustUUID(t)
+	memberAccountID := mustUUID(t)
 	tenantID := mustUUID(t)
 	workspaceID := mustUUID(t)
 	membershipID := mustUUID(t)
+	memberMembershipID := mustUUID(t)
 	email := "project-owner-" + uuid.NewString() + "@example.test"
+	memberEmail := "project-member-" + uuid.NewString() + "@example.test"
 	slug := "project-integration-" + uuid.NewString()[:8]
 
 	var workspaceRoleIDRaw string
@@ -50,9 +54,23 @@ func TestRepositoryIntegration(t *testing.T) {
 	if workspaceRoleID == uuid.Nil {
 		t.Fatal("workspace owner role ID was not found")
 	}
+	var workspaceUserRoleIDRaw string
+	if err := db.Raw(`SELECT id::text FROM workspace_roles WHERE code = 'user'`).Scan(&workspaceUserRoleIDRaw).Error; err != nil {
+		t.Fatalf("find workspace user role: %v", err)
+	}
+	workspaceUserRoleID, err := uuid.Parse(workspaceUserRoleIDRaw)
+	if err != nil {
+		t.Fatalf("parse workspace user role ID: %v", err)
+	}
+	if workspaceUserRoleID == uuid.Nil {
+		t.Fatal("workspace user role ID was not found")
+	}
 
 	if err := db.Exec(`INSERT INTO user_accounts (id, primary_email, status) VALUES (?, ?, 'active')`, accountID, email).Error; err != nil {
 		t.Fatalf("insert user account: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO user_accounts (id, primary_email, status) VALUES (?, ?, 'active')`, memberAccountID, memberEmail).Error; err != nil {
+		t.Fatalf("insert member user account: %v", err)
 	}
 	if err := db.Exec(`
 		INSERT INTO workspaces (
@@ -71,12 +89,21 @@ func TestRepositoryIntegration(t *testing.T) {
 	`, membershipID, tenantID, workspaceID, accountID, workspaceRoleID, accountID, accountID).Error; err != nil {
 		t.Fatalf("insert workspace membership: %v", err)
 	}
+	if err := db.Exec(`
+		INSERT INTO workspace_memberships (
+			id, tenant_id, workspace_id, user_account_id, workspace_role_id, status, joined_at, created_by, updated_by
+		)
+		VALUES (?, ?, ?, ?, ?, 'active', now(), ?, ?)
+	`, memberMembershipID, tenantID, workspaceID, memberAccountID, workspaceUserRoleID, accountID, accountID).Error; err != nil {
+		t.Fatalf("insert member workspace membership: %v", err)
+	}
 	t.Cleanup(func() {
 		_ = db.Exec(`DELETE FROM project_members WHERE tenant_id = ?`, tenantID).Error
 		_ = db.Exec(`DELETE FROM projects WHERE tenant_id = ?`, tenantID).Error
 		_ = db.Exec(`DELETE FROM project_code_counters WHERE tenant_id = ?`, tenantID).Error
 		_ = db.Exec(`DELETE FROM workspace_memberships WHERE tenant_id = ?`, tenantID).Error
 		_ = db.Exec(`DELETE FROM workspaces WHERE tenant_id = ?`, tenantID).Error
+		_ = db.Exec(`DELETE FROM user_accounts WHERE id = ?`, memberAccountID).Error
 		_ = db.Exec(`DELETE FROM user_accounts WHERE id = ?`, accountID).Error
 		_ = sqlDB.Close()
 	})
@@ -84,6 +111,10 @@ func TestRepositoryIntegration(t *testing.T) {
 	ownerRole, err := repo.FindProjectRoleByCode(ctx, project.ProjectRoleOwner)
 	if err != nil {
 		t.Fatalf("find project owner role: %v", err)
+	}
+	memberRole, err := repo.FindProjectRoleByCode(ctx, project.ProjectRoleMember)
+	if err != nil {
+		t.Fatalf("find project member role: %v", err)
 	}
 	mediumPriority, err := repo.FindProjectPriorityByCode(ctx, project.ProjectPriorityMedium)
 	if err != nil {
@@ -193,27 +224,81 @@ func TestRepositoryIntegration(t *testing.T) {
 		t.Fatalf("updated description = %q, want empty string", updated.Project.Description)
 	}
 
+	candidate, err := repo.FindActiveWorkspaceMembershipByID(ctx, tenantID, workspaceID, memberMembershipID)
+	if err != nil {
+		t.Fatalf("find active workspace membership: %v", err)
+	}
+	if candidate.MembershipID != memberMembershipID {
+		t.Fatalf("candidate membership ID = %s, want %s", candidate.MembershipID, memberMembershipID)
+	}
+	if candidate.UserAccountID == nil || *candidate.UserAccountID != memberAccountID {
+		t.Fatalf("candidate user account ID = %#v, want %s", candidate.UserAccountID, memberAccountID)
+	}
+
+	newMember := &project.Member{
+		TenantID:              tenantID,
+		WorkspaceID:           workspaceID,
+		ProjectID:             projectRecord.ID,
+		WorkspaceMembershipID: candidate.MembershipID,
+		UserAccountID:         candidate.UserAccountID,
+		RoleID:                memberRole.ID,
+		Role:                  memberRole.Code,
+		Status:                project.ProjectMemberStatusActive,
+		CreatedBy:             &accountID,
+		UpdatedBy:             &accountID,
+	}
+	if err := repo.CreateMember(ctx, newMember); err != nil {
+		t.Fatalf("create project member: %v", err)
+	}
+	if newMember.ID == uuid.Nil {
+		t.Fatal("new member ID was not set")
+	}
+	if newMember.ID.Version() != 7 {
+		t.Fatalf("new member ID version = %d, want 7", newMember.ID.Version())
+	}
+	duplicateMember := &project.Member{
+		TenantID:              tenantID,
+		WorkspaceID:           workspaceID,
+		ProjectID:             projectRecord.ID,
+		WorkspaceMembershipID: candidate.MembershipID,
+		UserAccountID:         candidate.UserAccountID,
+		RoleID:                memberRole.ID,
+		Role:                  memberRole.Code,
+		Status:                project.ProjectMemberStatusActive,
+		CreatedBy:             &accountID,
+		UpdatedBy:             &accountID,
+	}
+	if err := repo.CreateMember(ctx, duplicateMember); !errors.Is(err, project.ErrProjectMemberAlreadyExists) {
+		t.Fatalf("duplicate create err = %v, want ErrProjectMemberAlreadyExists", err)
+	}
+
 	members, memberTotal, err := repo.ListProjectMembers(ctx, tenantID, workspaceID, projectRecord.ID, 10, 0)
 	if err != nil {
 		t.Fatalf("list project members: %v", err)
 	}
-	if memberTotal != 1 {
-		t.Fatalf("member total = %d, want 1", memberTotal)
+	if memberTotal != 2 {
+		t.Fatalf("member total = %d, want 2", memberTotal)
 	}
-	if len(members) != 1 {
-		t.Fatalf("members len = %d, want 1", len(members))
+	if len(members) != 2 {
+		t.Fatalf("members len = %d, want 2", len(members))
 	}
-	if members[0].ID != member.ID {
-		t.Fatalf("member ID = %s, want %s", members[0].ID, member.ID)
+	foundMember := false
+	for _, item := range members {
+		if item.ID == newMember.ID {
+			foundMember = true
+			if item.TenantID != tenantID {
+				t.Fatalf("member tenant ID = %s, want %s", item.TenantID, tenantID)
+			}
+			if item.WorkspaceID != workspaceID {
+				t.Fatalf("member workspace ID = %s, want %s", item.WorkspaceID, workspaceID)
+			}
+			if item.Role != project.ProjectRoleMember {
+				t.Fatalf("member role = %s, want member", item.Role)
+			}
+		}
 	}
-	if members[0].TenantID != tenantID {
-		t.Fatalf("member tenant ID = %s, want %s", members[0].TenantID, tenantID)
-	}
-	if members[0].WorkspaceID != workspaceID {
-		t.Fatalf("member workspace ID = %s, want %s", members[0].WorkspaceID, workspaceID)
-	}
-	if members[0].Role != project.ProjectRoleOwner {
-		t.Fatalf("member role = %s, want project_owner", members[0].Role)
+	if !foundMember {
+		t.Fatalf("new member not found in list: %#v", members)
 	}
 
 	otherTenantID := mustUUID(t)

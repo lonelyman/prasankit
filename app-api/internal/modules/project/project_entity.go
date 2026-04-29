@@ -107,6 +107,14 @@ type ProjectProfilePatch struct {
 	UpdatedAt              time.Time
 }
 
+type WorkspaceMemberCandidate struct {
+	MembershipID  uuid.UUID
+	TenantID      uuid.UUID
+	WorkspaceID   uuid.UUID
+	ProfileID     *uuid.UUID
+	UserAccountID *uuid.UUID
+}
+
 type Member struct {
 	ID                    uuid.UUID
 	TenantID              uuid.UUID
