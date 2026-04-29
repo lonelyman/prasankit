@@ -21,18 +21,21 @@ import (
 )
 
 type fakeProjectService struct {
-	createResult *projectsvc.CreateProjectResult
-	createErr    error
-	createInput  projectsvc.CreateProjectInput
-	listResult   *projectsvc.ListProjectsResult
-	listErr      error
-	listInput    projectsvc.ListProjectsInput
-	getResult    *projectsvc.GetProjectResult
-	getErr       error
-	getInput     projectsvc.GetProjectInput
-	updateResult *projectsvc.UpdateProjectResult
-	updateErr    error
-	updateInput  projectsvc.UpdateProjectInput
+	createResult  *projectsvc.CreateProjectResult
+	createErr     error
+	createInput   projectsvc.CreateProjectInput
+	listResult    *projectsvc.ListProjectsResult
+	listErr       error
+	listInput     projectsvc.ListProjectsInput
+	getResult     *projectsvc.GetProjectResult
+	getErr        error
+	getInput      projectsvc.GetProjectInput
+	updateResult  *projectsvc.UpdateProjectResult
+	updateErr     error
+	updateInput   projectsvc.UpdateProjectInput
+	membersResult *projectsvc.ListProjectMembersResult
+	membersErr    error
+	membersInput  projectsvc.ListProjectMembersInput
 }
 
 func (s *fakeProjectService) CreateProject(_ context.Context, input projectsvc.CreateProjectInput) (*projectsvc.CreateProjectResult, error) {
@@ -65,6 +68,14 @@ func (s *fakeProjectService) UpdateProject(_ context.Context, input projectsvc.U
 		return nil, s.updateErr
 	}
 	return s.updateResult, nil
+}
+
+func (s *fakeProjectService) ListProjectMembers(_ context.Context, input projectsvc.ListProjectMembersInput) (*projectsvc.ListProjectMembersResult, error) {
+	s.membersInput = input
+	if s.membersErr != nil {
+		return nil, s.membersErr
+	}
+	return s.membersResult, nil
 }
 
 type fakeSessionService struct {
@@ -468,6 +479,95 @@ func TestUpdateProjectMapsValidationError(t *testing.T) {
 	defer resp.Body.Close()
 
 	assertProjectError(t, resp, http.StatusBadRequest, "PROJECT_PRIORITY_INVALID")
+}
+
+func TestListProjectMembers(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+	userAccountID := uuid.Must(uuid.NewV7())
+	service := &fakeProjectService{
+		membersResult: &projectsvc.ListProjectMembersResult{
+			Total: 1,
+			Items: []project.Member{
+				{
+					ID:                    memberID,
+					TenantID:              tenantContext.TenantID,
+					WorkspaceID:           tenantContext.WorkspaceID,
+					ProjectID:             projectID,
+					WorkspaceMembershipID: tenantContext.MembershipID,
+					UserAccountID:         &userAccountID,
+					Role:                  project.ProjectRoleOwner,
+					Status:                project.ProjectMemberStatusActive,
+				},
+			},
+		},
+	}
+	session := &fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: accountID, Status: auth.UserAccountStatusActive}}}
+	tenant := &fakeTenantResolver{result: &workspacesvc.ResolveTenantContextResult{Context: tenantContext}}
+	app := newProjectTestApp(newTestHandler(service, session, tenant))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/members?page=1&limit=10", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.membersInput.ProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", service.membersInput.ProjectID, projectID)
+	}
+	if service.membersInput.TenantContext.TenantID != tenantContext.TenantID {
+		t.Fatalf("tenant ID = %s, want %s", service.membersInput.TenantContext.TenantID, tenantContext.TenantID)
+	}
+	if service.membersInput.Limit != 10 || service.membersInput.Offset != 0 {
+		t.Fatalf("pagination = limit %d offset %d, want 10/0", service.membersInput.Limit, service.membersInput.Offset)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	items := data["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	memberData := items[0].(map[string]any)
+	if _, ok := memberData["tenant_id"]; ok {
+		t.Fatalf("response must not expose tenant_id: %#v", memberData)
+	}
+	if memberData["id"] != memberID.String() {
+		t.Fatalf("member.id = %v, want %s", memberData["id"], memberID)
+	}
+	if memberData["workspace_membership_id"] != tenantContext.MembershipID.String() {
+		t.Fatalf("workspace_membership_id = %v, want %s", memberData["workspace_membership_id"], tenantContext.MembershipID)
+	}
+}
+
+func TestListProjectMembersRejectsInvalidID(t *testing.T) {
+	app := newProjectTestApp(newTestHandler(
+		&fakeProjectService{},
+		&fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}}},
+		&fakeTenantResolver{result: &workspacesvc.ResolveTenantContextResult{Context: testTenantContext(workspace.WorkspaceRoleUser)}},
+	))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/not-a-uuid/members", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertProjectError(t, resp, http.StatusBadRequest, "PROJECT_ID_INVALID")
 }
 
 func newTestHandler(projectService ProjectService, sessionService SessionService, tenantResolver TenantResolver) Handler {

@@ -193,6 +193,29 @@ func TestRepositoryIntegration(t *testing.T) {
 		t.Fatalf("updated description = %q, want empty string", updated.Project.Description)
 	}
 
+	members, memberTotal, err := repo.ListProjectMembers(ctx, tenantID, workspaceID, projectRecord.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("list project members: %v", err)
+	}
+	if memberTotal != 1 {
+		t.Fatalf("member total = %d, want 1", memberTotal)
+	}
+	if len(members) != 1 {
+		t.Fatalf("members len = %d, want 1", len(members))
+	}
+	if members[0].ID != member.ID {
+		t.Fatalf("member ID = %s, want %s", members[0].ID, member.ID)
+	}
+	if members[0].TenantID != tenantID {
+		t.Fatalf("member tenant ID = %s, want %s", members[0].TenantID, tenantID)
+	}
+	if members[0].WorkspaceID != workspaceID {
+		t.Fatalf("member workspace ID = %s, want %s", members[0].WorkspaceID, workspaceID)
+	}
+	if members[0].Role != project.ProjectRoleOwner {
+		t.Fatalf("member role = %s, want project_owner", members[0].Role)
+	}
+
 	otherTenantID := mustUUID(t)
 	_, err = repo.FindProjectByID(ctx, otherTenantID, workspaceID, projectRecord.ID)
 	if err == nil {
@@ -205,6 +228,13 @@ func TestRepositoryIntegration(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("update project with wrong tenant returned nil error, want not found")
+	}
+	members, memberTotal, err = repo.ListProjectMembers(ctx, otherTenantID, workspaceID, projectRecord.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("list project members with wrong tenant: %v", err)
+	}
+	if memberTotal != 0 || len(members) != 0 {
+		t.Fatalf("wrong tenant members = total %d len %d, want 0/0", memberTotal, len(members))
 	}
 
 	items, total, err := repo.ListProjects(ctx, tenantID, workspaceID, 10, 0)

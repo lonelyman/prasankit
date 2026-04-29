@@ -25,6 +25,14 @@ type fakeRepository struct {
 	updateWorkspaceID uuid.UUID
 	updatePatch       project.ProjectProfilePatch
 	updateErr         error
+	memberItems       []project.Member
+	memberTotal       int
+	memberErr         error
+	memberProjectID   uuid.UUID
+	memberTenantID    uuid.UUID
+	memberWorkspaceID uuid.UUID
+	memberLimit       int
+	memberOffset      int
 	listItems         []project.ProjectWithMember
 	listTotal         int
 	transactionCalled bool
@@ -92,6 +100,18 @@ func (r *fakeRepository) UpdateProjectProfile(_ context.Context, tenantID uuid.U
 
 func (r *fakeRepository) ListProjects(context.Context, uuid.UUID, uuid.UUID, int, int) ([]project.ProjectWithMember, int, error) {
 	return r.listItems, r.listTotal, nil
+}
+
+func (r *fakeRepository) ListProjectMembers(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, limit int, offset int) ([]project.Member, int, error) {
+	r.memberTenantID = tenantID
+	r.memberWorkspaceID = workspaceID
+	r.memberProjectID = projectID
+	r.memberLimit = limit
+	r.memberOffset = offset
+	if r.memberErr != nil {
+		return nil, 0, r.memberErr
+	}
+	return r.memberItems, r.memberTotal, nil
 }
 
 func TestCreateProject(t *testing.T) {
@@ -373,6 +393,73 @@ func TestUpdateProjectMapsNotFound(t *testing.T) {
 		TenantContext: testTenantContext(),
 		ProjectID:     uuid.Must(uuid.NewV7()),
 		Name:          &name,
+	})
+	if !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf("err = %v, want ErrProjectNotFound", err)
+	}
+}
+
+func TestListProjectMembers(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{
+				ID:          projectID,
+				TenantID:    tenantContext.TenantID,
+				WorkspaceID: tenantContext.WorkspaceID,
+			},
+		},
+		memberTotal: 1,
+		memberItems: []project.Member{
+			{
+				ID:                    memberID,
+				TenantID:              tenantContext.TenantID,
+				WorkspaceID:           tenantContext.WorkspaceID,
+				ProjectID:             projectID,
+				WorkspaceMembershipID: tenantContext.MembershipID,
+				Role:                  project.ProjectRoleOwner,
+				Status:                project.ProjectMemberStatusActive,
+			},
+		},
+	}
+	service := NewService(repo)
+
+	result, err := service.ListProjectMembers(context.Background(), ListProjectMembersInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Limit:         10,
+		Offset:        0,
+	})
+	if err != nil {
+		t.Fatalf("ListProjectMembers: %v", err)
+	}
+	if repo.memberTenantID != tenantContext.TenantID {
+		t.Fatalf("tenant ID = %s, want %s", repo.memberTenantID, tenantContext.TenantID)
+	}
+	if repo.memberWorkspaceID != tenantContext.WorkspaceID {
+		t.Fatalf("workspace ID = %s, want %s", repo.memberWorkspaceID, tenantContext.WorkspaceID)
+	}
+	if repo.memberProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", repo.memberProjectID, projectID)
+	}
+	if result.Total != 1 || len(result.Items) != 1 {
+		t.Fatalf("result = total %d len %d, want 1/1", result.Total, len(result.Items))
+	}
+	if result.Items[0].ID != memberID {
+		t.Fatalf("member ID = %s, want %s", result.Items[0].ID, memberID)
+	}
+}
+
+func TestListProjectMembersRequiresExistingProject(t *testing.T) {
+	service := NewService(&fakeRepository{findErr: project.ErrProjectNotFound})
+
+	_, err := service.ListProjectMembers(context.Background(), ListProjectMembersInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: testTenantContext(),
+		ProjectID:     uuid.Must(uuid.NewV7()),
 	})
 	if !errors.Is(err, ErrProjectNotFound) {
 		t.Fatalf("err = %v, want ErrProjectNotFound", err)

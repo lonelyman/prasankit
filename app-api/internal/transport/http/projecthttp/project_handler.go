@@ -27,6 +27,7 @@ type ProjectService interface {
 	ListProjects(ctx context.Context, input projectsvc.ListProjectsInput) (*projectsvc.ListProjectsResult, error)
 	GetProject(ctx context.Context, input projectsvc.GetProjectInput) (*projectsvc.GetProjectResult, error)
 	UpdateProject(ctx context.Context, input projectsvc.UpdateProjectInput) (*projectsvc.UpdateProjectResult, error)
+	ListProjectMembers(ctx context.Context, input projectsvc.ListProjectMembersInput) (*projectsvc.ListProjectMembersResult, error)
 }
 
 type SessionService interface {
@@ -92,10 +93,13 @@ type projectResponse struct {
 }
 
 type memberResponse struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
-	Role      string `json:"role"`
-	Status    string `json:"status"`
+	ID                    string  `json:"id"`
+	ProjectID             string  `json:"project_id"`
+	WorkspaceMembershipID string  `json:"workspace_membership_id,omitempty"`
+	ProfileID             *string `json:"profile_id,omitempty"`
+	UserAccountID         *string `json:"user_account_id,omitempty"`
+	Role                  string  `json:"role"`
+	Status                string  `json:"status"`
 }
 
 func NewHandler(projectService ProjectService, sessionService SessionService, tenantResolver TenantResolver, cookie CookieConfig) Handler {
@@ -111,6 +115,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	projects := router.Group("/workspace/projects")
 	projects.Get("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListProjects)
 	projects.Post("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateProject)
+	projects.Get("/:project_id/members", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListProjectMembers)
 	projects.Get("/:project_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetProject)
 	projects.Patch("/:project_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateProject)
 }
@@ -263,6 +268,41 @@ func (h Handler) UpdateProject(c fiber.Ctx) error {
 	})
 }
 
+func (h Handler) ListProjectMembers(c fiber.Ctx) error {
+	if h.projects == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+
+	query := presenter.ParseOffsetQuery(c)
+	result, err := h.projects.ListProjectMembers(c.Context(), projectsvc.ListProjectMembersInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Limit:         query.Limit,
+		Offset:        query.Offset,
+	})
+	if err != nil {
+		return renderProjectError(c, err)
+	}
+
+	items := make([]memberResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, toMemberResponse(item))
+	}
+
+	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
+}
+
 func (h Handler) requireSession(c fiber.Ctx) error {
 	if h.session == nil {
 		return presenter.RenderError(c, fiber.StatusUnauthorized, "AUTH_SESSION_REQUIRED", "Authentication session is required")
@@ -402,10 +442,27 @@ func toProjectResponse(value project.Project) projectResponse {
 }
 
 func toMemberResponse(value project.Member) memberResponse {
+	workspaceMembershipID := ""
+	if value.WorkspaceMembershipID != uuid.Nil {
+		workspaceMembershipID = value.WorkspaceMembershipID.String()
+	}
+	var profileID *string
+	if value.ProfileID != nil {
+		id := value.ProfileID.String()
+		profileID = &id
+	}
+	var userAccountID *string
+	if value.UserAccountID != nil {
+		id := value.UserAccountID.String()
+		userAccountID = &id
+	}
 	return memberResponse{
-		ID:        value.ID.String(),
-		ProjectID: value.ProjectID.String(),
-		Role:      string(value.Role),
-		Status:    string(value.Status),
+		ID:                    value.ID.String(),
+		ProjectID:             value.ProjectID.String(),
+		WorkspaceMembershipID: workspaceMembershipID,
+		ProfileID:             profileID,
+		UserAccountID:         userAccountID,
+		Role:                  string(value.Role),
+		Status:                string(value.Status),
 	}
 }

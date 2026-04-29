@@ -405,6 +405,60 @@ func (r *Repository) ListProjects(ctx context.Context, tenantID uuid.UUID, works
 	return items, int(total), nil
 }
 
+func (r *Repository) ListProjectMembers(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, limit int, offset int) ([]project.Member, int, error) {
+	var total int64
+	countQuery := r.db.WithContext(ctx).
+		Table("project_members AS pm").
+		Where("pm.tenant_id = ?", tenantID).
+		Where("pm.workspace_id = ?", workspaceID).
+		Where("pm.project_id = ?", projectID).
+		Where("pm.status = ?", string(project.ProjectMemberStatusActive))
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var rows []projectMemberRow
+	err := r.db.WithContext(ctx).
+		Table("project_members AS pm").
+		Select(`
+			pm.id,
+			pm.tenant_id,
+			pm.workspace_id,
+			pm.project_id,
+			pm.workspace_membership_id,
+			pm.profile_id,
+			pm.user_account_id,
+			pm.project_role_id,
+			pr.code AS project_role_code,
+			pm.status,
+			pm.joined_at,
+			pm.removed_at,
+			pm.created_by,
+			pm.created_at,
+			pm.updated_by,
+			pm.updated_at
+		`).
+		Joins("JOIN project_roles AS pr ON pr.id = pm.project_role_id").
+		Where("pm.tenant_id = ?", tenantID).
+		Where("pm.workspace_id = ?", workspaceID).
+		Where("pm.project_id = ?", projectID).
+		Where("pm.status = ?", string(project.ProjectMemberStatusActive)).
+		Order("pm.joined_at ASC NULLS LAST, pm.created_at ASC, pm.id ASC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]project.Member, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, row.toDomain())
+	}
+	return items, int(total), nil
+}
+
 func projectOwnerJoin() string {
 	return `
 		LEFT JOIN project_members AS pm

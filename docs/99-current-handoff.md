@@ -64,6 +64,7 @@ Foundation
 │  ├─ 18.9-workspace-registration-test-examples.md
 │  ├─ 18.10-workspace-current-test-examples.md
 │  ├─ 18.11-project-foundation-test-examples.md
+│  ├─ 18.12-project-team-test-examples.md
 ├─ .env.example
 ├─ Makefile
 ├─ docker-compose.yml
@@ -483,7 +484,7 @@ config
 - ค่า role/master/permission ให้ใช้ master/FK; ค่า `status`/`mode` ที่เป็น lifecycle/system state ยังใช้ text + constraint ได้จนกว่าจะมีเหตุผลให้ยกเป็น master
 - Permission Guard ก้อนแรกอยู่ที่ `internal/modules/workspace/workspaceperm`; `GET /api/v1/workspaces/current` ใช้ permission `workspace.view`
 - Project foundation ก้อนแรกมี `project_roles`, `project_priorities`, `project_code_counters`, `projects`, `project_members`; role/priority ใช้ master/FK ตั้งแต่ migration แรก
-- Project routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects`, `POST /api/v1/workspace/projects`, `GET /api/v1/workspace/projects/{project_id}` และ `PATCH /api/v1/workspace/projects/{project_id}`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
+- Project routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects`, `POST /api/v1/workspace/projects`, `GET /api/v1/workspace/projects/{project_id}`, `PATCH /api/v1/workspace/projects/{project_id}` และ `GET /api/v1/workspace/projects/{project_id}/members`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
 
 ## Next Step
 
@@ -528,7 +529,8 @@ PostgreSQL connection done
 -> Project HTTP: POST /api/v1/workspace/projects wired
 -> Project HTTP: GET /api/v1/workspace/projects/{project_id} wired
 -> Project HTTP: PATCH /api/v1/workspace/projects/{project_id} wired
--> ต่อไปเริ่ม Project Team โดยต้องผ่าน Tenant Context + Permission Guard
+-> Project HTTP: GET /api/v1/workspace/projects/{project_id}/members wired
+-> ต่อไปเริ่ม Add Project Member โดยต้องผ่าน Tenant Context + Permission Guard
 ```
 
 ## Do Not Do Yet

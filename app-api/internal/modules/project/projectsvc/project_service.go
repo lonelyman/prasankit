@@ -86,6 +86,19 @@ type UpdateProjectResult struct {
 	Item project.ProjectWithMember
 }
 
+type ListProjectMembersInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	Limit         int
+	Offset        int
+}
+
+type ListProjectMembersResult struct {
+	Items []project.Member
+	Total int
+}
+
 type Service struct {
 	repository Repository
 	clock      func() time.Time
@@ -331,6 +344,42 @@ func (s *Service) UpdateProject(ctx context.Context, input UpdateProjectInput) (
 		return nil, err
 	}
 	return &UpdateProjectResult{Item: *item}, nil
+}
+
+func (s *Service) ListProjectMembers(ctx context.Context, input ListProjectMembersInput) (*ListProjectMembersResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	limit := input.Limit
+	if limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := input.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	if _, err := s.repository.FindProjectByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID); err != nil {
+		if errors.Is(err, project.ErrProjectNotFound) {
+			return nil, ErrProjectNotFound
+		}
+		return nil, err
+	}
+
+	items, total, err := s.repository.ListProjectMembers(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &ListProjectMembersResult{Items: items, Total: total}, nil
 }
 
 func validateAccount(account auth.UserAccount) error {
