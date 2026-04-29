@@ -8,6 +8,7 @@ import (
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/internal/modules/auth/authsvc"
 	"prasankit-api/internal/modules/workspace"
+	"prasankit-api/internal/modules/workspace/workspaceperm"
 	"prasankit-api/internal/modules/workspace/workspacesvc"
 	"prasankit-api/internal/transport/http/presenter"
 
@@ -103,7 +104,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	workspaces := router.Group("/workspaces")
 	workspaces.Get("/check-slug", h.CheckSlug)
 	workspaces.Get("/me", h.requireSession, h.MyWorkspaces)
-	workspaces.Get("/current", h.requireSession, h.requireTenantContext, h.CurrentWorkspace)
+	workspaces.Get("/current", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.CurrentWorkspace)
 	workspaces.Post("/register", h.requireSession, h.RegisterWorkspace)
 }
 
@@ -242,6 +243,19 @@ func (h Handler) requireTenantContext(c fiber.Ctx) error {
 
 	c.Locals(tenantContextLocalKey, result)
 	return c.Next()
+}
+
+func (h Handler) requireWorkspacePermission(permission workspaceperm.Permission) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		result, ok := c.Locals(tenantContextLocalKey).(*workspacesvc.ResolveTenantContextResult)
+		if !ok || result == nil {
+			return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+		}
+		if !workspaceperm.Can(result.Context.Role, permission) {
+			return presenter.RenderError(c, fiber.StatusForbidden, "PERMISSION_DENIED", "Permission denied")
+		}
+		return c.Next()
+	}
 }
 
 func (h Handler) NotImplemented(c fiber.Ctx) error {

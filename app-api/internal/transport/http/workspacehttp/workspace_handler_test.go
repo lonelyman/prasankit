@@ -385,6 +385,48 @@ func TestCurrentWorkspaceRejectsMissingMembership(t *testing.T) {
 	assertWorkspaceError(t, resp, http.StatusForbidden, "WORKSPACE_ACCESS_DENIED")
 }
 
+func TestCurrentWorkspaceRejectsUnknownRole(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.Must(uuid.NewV7())
+	membershipID := uuid.Must(uuid.NewV7())
+	app := newWorkspaceTestApp(newTestHandler(
+		&fakeWorkspaceService{
+			resolveResult: &workspacesvc.ResolveTenantContextResult{
+				Context: workspace.TenantContext{
+					WorkspaceID:   workspaceID,
+					WorkspaceSlug: "team-one",
+					MembershipID:  membershipID,
+					Role:          workspace.WorkspaceRole("unknown"),
+				},
+				Workspace: workspace.Workspace{
+					ID:     workspaceID,
+					Name:   "Team One",
+					Slug:   "team-one",
+					Status: workspace.WorkspaceStatusActive,
+				},
+				Membership: workspace.Membership{
+					ID:          membershipID,
+					WorkspaceID: workspaceID,
+					Role:        workspace.WorkspaceRole("unknown"),
+					Status:      workspace.MembershipStatusActive,
+				},
+			},
+		},
+		&fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: accountID, Status: auth.UserAccountStatusActive}}},
+	))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/current", nil)
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertWorkspaceError(t, resp, http.StatusForbidden, "PERMISSION_DENIED")
+}
+
 func TestRegisterWorkspaceMapsValidationErrors(t *testing.T) {
 	app := newWorkspaceTestApp(newTestHandler(
 		&fakeWorkspaceService{registerErr: workspacesvc.ErrWorkspaceSlugTaken},

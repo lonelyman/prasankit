@@ -480,6 +480,7 @@ config
 - สำหรับย้ายขึ้น server ใหม่ ให้รัน `make env-init`, แก้ค่า `.env`, แล้วรัน `make db-migrate` ก่อน start/rebuild API สำหรับ real traffic
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
 - ค่า role/master/permission ให้ใช้ master/FK; ค่า `status`/`mode` ที่เป็น lifecycle/system state ยังใช้ text + constraint ได้จนกว่าจะมีเหตุผลให้ยกเป็น master
+- Permission Guard ก้อนแรกอยู่ที่ `internal/modules/workspace/workspaceperm`; `GET /api/v1/workspaces/current` ใช้ permission `workspace.view`
 
 ## Next Step
 
@@ -518,7 +519,8 @@ PostgreSQL connection done
 -> Workspace HTTP: POST /api/v1/workspaces/register wired
 -> Workspace HTTP: GET /api/v1/workspaces/me wired
 -> Workspace HTTP: GET /api/v1/workspaces/current wired
--> ต่อไปเริ่ม Permission Guard
+-> Workspace Permission Guard: workspace.view/workspace.manage policy created
+-> ต่อไปเริ่ม Project foundation โดยต้องผ่าน Tenant Context + Permission Guard
 ```
 
 ## Do Not Do Yet

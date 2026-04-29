@@ -346,6 +346,7 @@ Composition note:
 - Workspace registration/backend context ก้อนแรกเสร็จถึง check slug/register/list my workspaces/current workspace แล้ว
 - Workspace membership role ปรับเป็น master/FK แล้ว: `workspace_roles` เป็น App Master seed, `workspace_memberships.workspace_role_id` เป็น FK, ส่วน API ยังคืน role code ให้ frontend ใช้งานได้
 - Tenant Context resolver ก้อนแรกใช้ session cookie + `X-Workspace-Slug`, ตรวจ active membership และเก็บ tenant context ภายใน backend โดยไม่รับหรือส่ง `tenant_id`
+- Permission Guard ก้อนแรกเริ่มแล้ว: เพิ่ม workspace permission policy กลาง และให้ `GET /api/v1/workspaces/current` ผ่าน `workspace.view`
 - ตรวจกลุ่ม field ที่เป็น text แล้ว: ค่า role/master/permission ต้องเป็น master/FK, ส่วน `status`/`mode`/auth provider/type/security severity ตอนนี้ยังถือเป็น lifecycle/system state และคุมด้วย constraint ได้ก่อน
 
 หมายเหตุ:
@@ -354,7 +355,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปเริ่ม Permission Guard แบบช้า ๆ โดยใช้ Tenant Context ที่ resolve แล้วเป็นฐาน
+ขั้นถัดไปเริ่ม Project foundation แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -391,4 +392,5 @@ PostgreSQL connection done
 -> Workspace HTTP: POST /api/v1/workspaces/register wired
 -> Workspace HTTP: GET /api/v1/workspaces/me wired
 -> Workspace HTTP: GET /api/v1/workspaces/current wired
+-> Workspace Permission Guard: workspace.view/workspace.manage policy created
 ```
