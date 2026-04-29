@@ -1,0 +1,215 @@
+package projectsvc
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"prasankit-api/internal/modules/auth"
+	"prasankit-api/internal/modules/project"
+	"prasankit-api/internal/modules/workspace"
+
+	"github.com/google/uuid"
+)
+
+const (
+	defaultProjectCodePrefix = "PRJ"
+	defaultProjectCodeLength = 4
+)
+
+var (
+	ErrAccountRequired         = errors.New("account is required")
+	ErrAccountInactive         = errors.New("account is inactive")
+	ErrTenantContextRequired   = errors.New("tenant context is required")
+	ErrProjectNameRequired     = errors.New("project name is required")
+	ErrProjectTypeInvalid      = errors.New("project type is invalid")
+	ErrProjectRoleMissing      = errors.New("project role is missing")
+	ErrProjectPriorityMissing  = errors.New("project priority is missing")
+	ErrProjectMemberCreateFail = errors.New("project member create failed")
+)
+
+type CreateProjectInput struct {
+	Account                auth.UserAccount
+	TenantContext          workspace.TenantContext
+	Name                   string
+	Type                   project.ProjectType
+	Description            string
+	ClientOrRequestingUnit string
+	ScopeOrObjective       string
+}
+
+type CreateProjectResult struct {
+	Project project.Project
+	Member  project.Member
+}
+
+type ListProjectsInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	Limit         int
+	Offset        int
+}
+
+type ListProjectsResult struct {
+	Items []project.ProjectWithMember
+	Total int
+}
+
+type Service struct {
+	repository Repository
+	clock      func() time.Time
+}
+
+type Repository interface {
+	project.Repository
+}
+
+func NewService(repository Repository) *Service {
+	return &Service{
+		repository: repository,
+		clock:      func() time.Time { return time.Now().UTC() },
+	}
+}
+
+func (s *Service) CreateProject(ctx context.Context, input CreateProjectInput) (*CreateProjectResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return nil, ErrProjectNameRequired
+	}
+
+	projectType := input.Type
+	if projectType == "" {
+		projectType = project.ProjectTypeInternal
+	}
+	if projectType != project.ProjectTypeInternal && projectType != project.ProjectTypeClient {
+		return nil, ErrProjectTypeInvalid
+	}
+
+	now := s.clock()
+	year := now.Year()
+	var createdProject project.Project
+	var ownerMember project.Member
+
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo project.Repository) error {
+		ownerRole, err := repo.FindProjectRoleByCode(ctx, project.ProjectRoleOwner)
+		if errors.Is(err, project.ErrProjectRoleNotFound) {
+			return ErrProjectRoleMissing
+		}
+		if err != nil {
+			return err
+		}
+
+		priority, err := repo.FindProjectPriorityByCode(ctx, project.ProjectPriorityMedium)
+		if errors.Is(err, project.ErrProjectPriorityNotFound) {
+			return ErrProjectPriorityMissing
+		}
+		if err != nil {
+			return err
+		}
+
+		code, err := repo.NextProjectCode(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, defaultProjectCodePrefix, year, defaultProjectCodeLength)
+		if err != nil {
+			return err
+		}
+
+		createdProject = project.Project{
+			TenantID:               input.TenantContext.TenantID,
+			WorkspaceID:            input.TenantContext.WorkspaceID,
+			Code:                   code,
+			Name:                   name,
+			Type:                   projectType,
+			Status:                 project.ProjectStatusDraft,
+			PriorityID:             priority.ID,
+			Priority:               priority.Code,
+			Description:            strings.TrimSpace(input.Description),
+			ClientOrRequestingUnit: strings.TrimSpace(input.ClientOrRequestingUnit),
+			ScopeOrObjective:       strings.TrimSpace(input.ScopeOrObjective),
+			CreatedBy:              input.Account.ID,
+			CreatedAt:              now,
+			UpdatedAt:              now,
+		}
+		if err := repo.CreateProject(ctx, &createdProject); err != nil {
+			return err
+		}
+
+		userAccountID := input.Account.ID
+		ownerMember = project.Member{
+			TenantID:              input.TenantContext.TenantID,
+			WorkspaceID:           input.TenantContext.WorkspaceID,
+			ProjectID:             createdProject.ID,
+			WorkspaceMembershipID: input.TenantContext.MembershipID,
+			UserAccountID:         &userAccountID,
+			RoleID:                ownerRole.ID,
+			Role:                  ownerRole.Code,
+			Status:                project.ProjectMemberStatusActive,
+			JoinedAt:              &now,
+			CreatedAt:             now,
+			CreatedBy:             &input.Account.ID,
+			UpdatedAt:             now,
+			UpdatedBy:             &input.Account.ID,
+		}
+		if err := repo.CreateMember(ctx, &ownerMember); err != nil {
+			return errors.Join(ErrProjectMemberCreateFail, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &CreateProjectResult{
+		Project: createdProject,
+		Member:  ownerMember,
+	}, nil
+}
+
+func (s *Service) ListProjects(ctx context.Context, input ListProjectsInput) (*ListProjectsResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	limit := input.Limit
+	if limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := input.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	items, total, err := s.repository.ListProjects(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &ListProjectsResult{Items: items, Total: total}, nil
+}
+
+func validateAccount(account auth.UserAccount) error {
+	if account.ID == uuid.Nil {
+		return ErrAccountRequired
+	}
+	if account.Status != auth.UserAccountStatusActive {
+		return ErrAccountInactive
+	}
+	return nil
+}
+
+func validateTenantContext(context workspace.TenantContext) error {
+	if context.TenantID == uuid.Nil || context.WorkspaceID == uuid.Nil || context.MembershipID == uuid.Nil {
+		return ErrTenantContextRequired
+	}
+	return nil
+}

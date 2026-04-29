@@ -307,6 +307,7 @@ Verified:
 - เพิ่ม `docs/18.8-auth-password-reset-test-examples.md` สำหรับตัวอย่างทดสอบ forgot/reset password แล้ว
 - เพิ่ม `docs/18.9-workspace-registration-test-examples.md` สำหรับตัวอย่างทดสอบ check slug/register workspace แล้ว
 - เพิ่ม `docs/18.10-workspace-current-test-examples.md` สำหรับตัวอย่างทดสอบ Tenant Context resolver แล้ว
+- เพิ่ม `docs/18.11-project-foundation-test-examples.md` สำหรับตัวอย่างทดสอบ create/list project แล้ว
 - เพิ่ม Workspace module ก้อนแรกแล้ว:
   - `GET /api/v1/workspaces/check-slug`
   - `POST /api/v1/workspaces/register`
@@ -347,6 +348,14 @@ Composition note:
 - Workspace membership role ปรับเป็น master/FK แล้ว: `workspace_roles` เป็น App Master seed, `workspace_memberships.workspace_role_id` เป็น FK, ส่วน API ยังคืน role code ให้ frontend ใช้งานได้
 - Tenant Context resolver ก้อนแรกใช้ session cookie + `X-Workspace-Slug`, ตรวจ active membership และเก็บ tenant context ภายใน backend โดยไม่รับหรือส่ง `tenant_id`
 - Permission Guard ก้อนแรกเริ่มแล้ว: เพิ่ม workspace permission policy กลาง และให้ `GET /api/v1/workspaces/current` ผ่าน `workspace.view`
+- เพิ่ม Project foundation ก้อนแรกแล้ว:
+  - migration `000006_create_project_core_tables.sql`
+  - `project_roles` เป็น App Master seed และ `project_members.project_role_id` เป็น FK
+  - `project_priorities` เป็น App Master seed และ `projects.priority_id` เป็น FK
+  - `project_code_counters` สำหรับรัน project code ใน backend transaction
+  - `GET /api/v1/workspace/projects`
+  - `POST /api/v1/workspace/projects`
+  - ทุก project route ต้องผ่าน session, Tenant Context และ Permission Guard ก่อน query
 - ตรวจกลุ่ม field ที่เป็น text แล้ว: ค่า role/master/permission ต้องเป็น master/FK, ส่วน `status`/`mode`/auth provider/type/security severity ตอนนี้ยังถือเป็น lifecycle/system state และคุมด้วย constraint ได้ก่อน
 
 หมายเหตุ:
@@ -355,7 +364,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปเริ่ม Project foundation แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
+ขั้นถัดไปต่อ Project detail/update แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -393,4 +402,7 @@ PostgreSQL connection done
 -> Workspace HTTP: GET /api/v1/workspaces/me wired
 -> Workspace HTTP: GET /api/v1/workspaces/current wired
 -> Workspace Permission Guard: workspace.view/workspace.manage policy created
+-> Migration 000006_create_project_core_tables applied
+-> Project HTTP: GET /api/v1/workspace/projects wired
+-> Project HTTP: POST /api/v1/workspace/projects wired
 ```

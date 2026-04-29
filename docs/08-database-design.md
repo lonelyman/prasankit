@@ -399,11 +399,36 @@ Token validation:
 
 | Table | Purpose |
 | --- | --- |
+| project_roles | App Master สำหรับ role ของสมาชิก project |
+| project_priorities | App Master สำหรับ priority ของ project |
 | projects | ข้อมูลหัวโปรเจคหลัก |
 | project_members | คนใน Project |
 | project_member_positions | ตำแหน่งจริงของสมาชิกใน Project แบบหลายค่า |
 | project_code_counters | รันเลข Project Code |
 | project_archives | ประวัติ archive / restore / delete project |
+
+### project_roles
+
+id
+code -- project_owner, project_manager, member, finance, viewer
+name
+description
+sort_order
+is_system
+status -- active, deprecated
+created_at
+updated_at
+
+### project_priorities
+
+id
+code -- low, medium, high
+name
+sort_order
+is_system
+status -- active, deprecated
+created_at
+updated_at
 
 ### projects
 
@@ -414,7 +439,7 @@ project_code
 project_name
 project_type -- internal, client
 project_status -- draft, planning, proposal, active, closing, maintenance, closed, archived
-priority_id
+priority_id -- FK -> project_priorities.id
 description
 client_or_requesting_unit
 scope_or_objective
@@ -439,7 +464,7 @@ workspace_id
 project_id
 profile_id
 user_account_id -- nullable ได้
-project_role -- project_owner, project_manager, member, finance, viewer
+project_role_id -- FK -> project_roles.id
 status -- active, removed
 joined_at
 removed_at
@@ -449,6 +474,12 @@ updated_by
 updated_at
 
 Project ต้องมี Project Owner อย่างน้อย 1 คน และห้าม remove Project Owner คนสุดท้าย
+
+หลักการ:
+
+1. Project Role เป็น Live Reference ผ่าน `project_role_id`
+1. Project Priority เป็น Live Reference ผ่าน `priority_id`
+1. Lifecycle เช่น project_status และ member status ยังเป็น system state ที่ควบคุมด้วย constraint ได้
 
 ### project_member_positions
 
