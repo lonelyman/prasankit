@@ -27,4 +27,6 @@ type Repository interface {
 	FindTaskByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) (*Task, error)
 	ListTasks(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, filter ListFilter, limit int, offset int) ([]Task, int, error)
 	CountTasksByStatus(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID) ([]StatusCount, error)
+	CreateTaskActivity(ctx context.Context, activity *Activity) error
+	ListTaskActivities(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, limit int, offset int) ([]Activity, int, error)
 }

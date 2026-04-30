@@ -102,3 +102,26 @@ type StatusCount struct {
 	Status Status
 	Count  int
 }
+
+type ActivityAction string
+
+const (
+	ActivityCreated       ActivityAction = "created"
+	ActivityUpdated       ActivityAction = "updated"
+	ActivityStatusChanged ActivityAction = "status_changed"
+	ActivityDeleted       ActivityAction = "deleted"
+)
+
+type Activity struct {
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	WorkspaceID    uuid.UUID
+	ProjectID      uuid.UUID
+	TaskID         uuid.UUID
+	ActorAccountID uuid.UUID
+	Action         ActivityAction
+	FromStatus     *Status
+	ToStatus       *Status
+	MetadataJSON   map[string]any
+	CreatedAt      time.Time
+}

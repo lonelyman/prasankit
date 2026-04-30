@@ -21,26 +21,29 @@ import (
 )
 
 type fakeTaskService struct {
-	createResult  *tasksvc.CreateTaskResult
-	createErr     error
-	createInput   tasksvc.CreateTaskInput
-	listResult    *tasksvc.ListTasksResult
-	listErr       error
-	listInput     tasksvc.ListTasksInput
-	summaryResult *tasksvc.GetTaskBoardSummaryResult
-	summaryErr    error
-	summaryInput  tasksvc.GetTaskBoardSummaryInput
-	getResult     *tasksvc.GetTaskResult
-	getErr        error
-	getInput      tasksvc.GetTaskInput
-	updateResult  *tasksvc.UpdateTaskResult
-	updateErr     error
-	updateInput   tasksvc.UpdateTaskInput
-	statusResult  *tasksvc.UpdateTaskStatusResult
-	statusErr     error
-	statusInput   tasksvc.UpdateTaskStatusInput
-	deleteErr     error
-	deleteInput   tasksvc.DeleteTaskInput
+	createResult   *tasksvc.CreateTaskResult
+	createErr      error
+	createInput    tasksvc.CreateTaskInput
+	listResult     *tasksvc.ListTasksResult
+	listErr        error
+	listInput      tasksvc.ListTasksInput
+	summaryResult  *tasksvc.GetTaskBoardSummaryResult
+	summaryErr     error
+	summaryInput   tasksvc.GetTaskBoardSummaryInput
+	getResult      *tasksvc.GetTaskResult
+	getErr         error
+	getInput       tasksvc.GetTaskInput
+	activityResult *tasksvc.ListTaskActivitiesResult
+	activityErr    error
+	activityInput  tasksvc.ListTaskActivitiesInput
+	updateResult   *tasksvc.UpdateTaskResult
+	updateErr      error
+	updateInput    tasksvc.UpdateTaskInput
+	statusResult   *tasksvc.UpdateTaskStatusResult
+	statusErr      error
+	statusInput    tasksvc.UpdateTaskStatusInput
+	deleteErr      error
+	deleteInput    tasksvc.DeleteTaskInput
 }
 
 func (s *fakeTaskService) CreateTask(_ context.Context, input tasksvc.CreateTaskInput) (*tasksvc.CreateTaskResult, error) {
@@ -73,6 +76,14 @@ func (s *fakeTaskService) GetTask(_ context.Context, input tasksvc.GetTaskInput)
 		return nil, s.getErr
 	}
 	return s.getResult, nil
+}
+
+func (s *fakeTaskService) ListTaskActivities(_ context.Context, input tasksvc.ListTaskActivitiesInput) (*tasksvc.ListTaskActivitiesResult, error) {
+	s.activityInput = input
+	if s.activityErr != nil {
+		return nil, s.activityErr
+	}
+	return s.activityResult, nil
 }
 
 func (s *fakeTaskService) UpdateTask(_ context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error) {
@@ -308,6 +319,59 @@ func TestGetTask(t *testing.T) {
 	}
 	if service.getInput.TaskID != taskID {
 		t.Fatalf("task ID = %s, want %s", service.getInput.TaskID, taskID)
+	}
+}
+
+func TestListTaskActivities(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	actorID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		activityResult: &tasksvc.ListTaskActivitiesResult{
+			Total: 1,
+			Items: []task.Activity{
+				{
+					ID:             uuid.Must(uuid.NewV7()),
+					ProjectID:      projectID,
+					TaskID:         taskID,
+					ActorAccountID: actorID,
+					Action:         task.ActivityCreated,
+					MetadataJSON:   map[string]any{"title": "Task A"},
+					CreatedAt:      now,
+				},
+			},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/activities?page=1&limit=10", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.activityInput.TaskID != taskID {
+		t.Fatalf("task ID = %s, want %s", service.activityInput.TaskID, taskID)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	items := data["items"].([]any)
+	first := items[0].(map[string]any)
+	if first["action"] != string(task.ActivityCreated) {
+		t.Fatalf("activity action = %v, want created", first["action"])
 	}
 }
 

@@ -21,6 +21,10 @@ type fakeRepository struct {
 	listFilter        task.ListFilter
 	statusCounts      []task.StatusCount
 	statusCountErr    error
+	activity          *task.Activity
+	activityItems     []task.Activity
+	activityTotal     int
+	activityErr       error
 	updatePatch       task.Patch
 	updateErr         error
 	statusTaskID      uuid.UUID
@@ -166,6 +170,26 @@ func (r *fakeRepository) CountTasksByStatus(_ context.Context, tenantID uuid.UUI
 	return r.statusCounts, nil
 }
 
+func (r *fakeRepository) CreateTaskActivity(_ context.Context, activity *task.Activity) error {
+	if r.activityErr != nil {
+		return r.activityErr
+	}
+	activity.ID = uuid.Must(uuid.NewV7())
+	r.activity = activity
+	return nil
+}
+
+func (r *fakeRepository) ListTaskActivities(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, _ int, _ int) ([]task.Activity, int, error) {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	if r.activityErr != nil {
+		return nil, 0, r.activityErr
+	}
+	return r.activityItems, r.activityTotal, nil
+}
+
 func TestCreateTask(t *testing.T) {
 	tenantContext := testTenantContext()
 	projectID := uuid.Must(uuid.NewV7())
@@ -201,6 +225,9 @@ func TestCreateTask(t *testing.T) {
 	}
 	if repo.assigneeID != assigneeID {
 		t.Fatalf("assignee ID = %s, want %s", repo.assigneeID, assigneeID)
+	}
+	if repo.activity == nil || repo.activity.Action != task.ActivityCreated {
+		t.Fatalf("activity = %#v, want created", repo.activity)
 	}
 }
 
@@ -390,6 +417,36 @@ func TestGetTaskBoardSummaryRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestListTaskActivities(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findTask:      &task.Task{ID: taskID, ProjectID: projectID, No: "TASK-0001", Title: "Task A"},
+		activityTotal: 1,
+		activityItems: []task.Activity{
+			{ID: uuid.Must(uuid.NewV7()), ProjectID: projectID, TaskID: taskID, Action: task.ActivityCreated},
+		},
+	}
+
+	result, err := NewService(repo).ListTaskActivities(context.Background(), ListTaskActivitiesInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Limit:         10,
+	})
+	if err != nil {
+		t.Fatalf("ListTaskActivities: %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 {
+		t.Fatalf("result = total %d len %d, want 1/1", result.Total, len(result.Items))
+	}
+	if repo.statusTaskID != taskID {
+		t.Fatalf("task ID = %s, want %s", repo.statusTaskID, taskID)
+	}
+}
+
 func TestGetTask(t *testing.T) {
 	tenantContext := testTenantContext()
 	projectID := uuid.Must(uuid.NewV7())
@@ -563,7 +620,13 @@ func TestDeleteTask(t *testing.T) {
 	tenantContext := testTenantContext()
 	projectID := uuid.Must(uuid.NewV7())
 	taskID := uuid.Must(uuid.NewV7())
-	repo := &fakeRepository{}
+	repo := &fakeRepository{findTask: &task.Task{
+		ID:          taskID,
+		TenantID:    tenantContext.TenantID,
+		WorkspaceID: tenantContext.WorkspaceID,
+		ProjectID:   projectID,
+		Status:      task.StatusTodo,
+	}}
 
 	err := NewService(repo).DeleteTask(context.Background(), DeleteTaskInput{
 		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
@@ -576,6 +639,9 @@ func TestDeleteTask(t *testing.T) {
 	}
 	if repo.deleteTaskID != taskID {
 		t.Fatalf("delete task ID = %s, want %s", repo.deleteTaskID, taskID)
+	}
+	if repo.activity == nil || repo.activity.Action != task.ActivityDeleted {
+		t.Fatalf("activity = %#v, want deleted", repo.activity)
 	}
 }
 

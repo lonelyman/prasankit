@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"prasankit-api/internal/modules/task"
+	"prasankit-api/pkg/dbtypes"
 	"prasankit-api/pkg/ids"
 
 	"github.com/google/uuid"
@@ -53,7 +54,25 @@ type priorityRow struct {
 
 type statusCountRow struct {
 	Status string `gorm:"column:status"`
-	Count  int    `gorm:"column:count"`
+	Count  int64  `gorm:"column:count"`
+}
+
+type activityRow struct {
+	ID             uuid.UUID     `gorm:"column:id;type:uuid"`
+	TenantID       uuid.UUID     `gorm:"column:tenant_id;type:uuid"`
+	WorkspaceID    uuid.UUID     `gorm:"column:workspace_id;type:uuid"`
+	ProjectID      uuid.UUID     `gorm:"column:project_id;type:uuid"`
+	TaskID         uuid.UUID     `gorm:"column:task_id;type:uuid"`
+	ActorAccountID uuid.UUID     `gorm:"column:actor_account_id;type:uuid"`
+	Action         string        `gorm:"column:action"`
+	FromStatus     *string       `gorm:"column:from_status"`
+	ToStatus       *string       `gorm:"column:to_status"`
+	MetadataJSON   dbtypes.JSONB `gorm:"column:metadata_json;type:jsonb"`
+	CreatedAt      time.Time     `gorm:"column:created_at"`
+}
+
+func (activityRow) TableName() string {
+	return "task_activities"
 }
 
 func NewRepository(db *gorm.DB) *Repository {
@@ -380,9 +399,74 @@ func (r *Repository) CountTasksByStatus(ctx context.Context, tenantID uuid.UUID,
 
 	counts := make([]task.StatusCount, 0, len(rows))
 	for _, row := range rows {
-		counts = append(counts, task.StatusCount{Status: task.Status(row.Status), Count: row.Count})
+		counts = append(counts, task.StatusCount{Status: task.Status(row.Status), Count: int(row.Count)})
 	}
 	return counts, nil
+}
+
+func (r *Repository) CreateTaskActivity(ctx context.Context, activity *task.Activity) error {
+	if err := ensureUUID(&activity.ID); err != nil {
+		return err
+	}
+	if activity.CreatedAt.IsZero() {
+		activity.CreatedAt = time.Now().UTC()
+	}
+
+	row := activityRow{
+		ID:             activity.ID,
+		TenantID:       activity.TenantID,
+		WorkspaceID:    activity.WorkspaceID,
+		ProjectID:      activity.ProjectID,
+		TaskID:         activity.TaskID,
+		ActorAccountID: activity.ActorAccountID,
+		Action:         string(activity.Action),
+		FromStatus:     statusStringPtr(activity.FromStatus),
+		ToStatus:       statusStringPtr(activity.ToStatus),
+		MetadataJSON:   dbtypes.NewJSONB(activity.MetadataJSON),
+		CreatedAt:      activity.CreatedAt,
+	}
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return err
+	}
+
+	activity.ID = row.ID
+	activity.CreatedAt = row.CreatedAt
+	return nil
+}
+
+func (r *Repository) ListTaskActivities(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, limit int, offset int) ([]task.Activity, int, error) {
+	var total int64
+	countQuery := r.db.WithContext(ctx).
+		Table("task_activities AS ta").
+		Where("ta.tenant_id = ?", tenantID).
+		Where("ta.workspace_id = ?", workspaceID).
+		Where("ta.project_id = ?", projectID).
+		Where("ta.task_id = ?", taskID)
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var rows []activityRow
+	err := r.db.WithContext(ctx).
+		Table("task_activities AS ta").
+		Where("ta.tenant_id = ?", tenantID).
+		Where("ta.workspace_id = ?", workspaceID).
+		Where("ta.project_id = ?", projectID).
+		Where("ta.task_id = ?", taskID).
+		Order("ta.created_at DESC, ta.id DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	activities := make([]task.Activity, 0, len(rows))
+	for _, row := range rows {
+		activities = append(activities, row.toDomain())
+	}
+	return activities, int(total), nil
 }
 
 func taskSelect() string {
@@ -408,6 +492,22 @@ func taskSelect() string {
 		t.deleted_by,
 		t.deleted_at
 	`
+}
+
+func statusStringPtr(value *task.Status) *string {
+	if value == nil {
+		return nil
+	}
+	status := string(*value)
+	return &status
+}
+
+func parseStatusPtr(value *string) *task.Status {
+	if value == nil {
+		return nil
+	}
+	status := task.Status(*value)
+	return &status
 }
 
 func ensureUUID(id *uuid.UUID) error {
@@ -454,5 +554,21 @@ func (r taskRow) toDomain() task.Task {
 		UpdatedAt:        r.UpdatedAt,
 		DeletedBy:        r.DeletedBy,
 		DeletedAt:        r.DeletedAt,
+	}
+}
+
+func (r activityRow) toDomain() task.Activity {
+	return task.Activity{
+		ID:             r.ID,
+		TenantID:       r.TenantID,
+		WorkspaceID:    r.WorkspaceID,
+		ProjectID:      r.ProjectID,
+		TaskID:         r.TaskID,
+		ActorAccountID: r.ActorAccountID,
+		Action:         task.ActivityAction(r.Action),
+		FromStatus:     parseStatusPtr(r.FromStatus),
+		ToStatus:       parseStatusPtr(r.ToStatus),
+		MetadataJSON:   map[string]any(r.MetadataJSON),
+		CreatedAt:      r.CreatedAt,
 	}
 }

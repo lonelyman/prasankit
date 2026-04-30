@@ -28,6 +28,7 @@ type TaskService interface {
 	ListTasks(ctx context.Context, input tasksvc.ListTasksInput) (*tasksvc.ListTasksResult, error)
 	GetTaskBoardSummary(ctx context.Context, input tasksvc.GetTaskBoardSummaryInput) (*tasksvc.GetTaskBoardSummaryResult, error)
 	GetTask(ctx context.Context, input tasksvc.GetTaskInput) (*tasksvc.GetTaskResult, error)
+	ListTaskActivities(ctx context.Context, input tasksvc.ListTaskActivitiesInput) (*tasksvc.ListTaskActivitiesResult, error)
 	UpdateTask(ctx context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error)
 	UpdateTaskStatus(ctx context.Context, input tasksvc.UpdateTaskStatusInput) (*tasksvc.UpdateTaskStatusResult, error)
 	DeleteTask(ctx context.Context, input tasksvc.DeleteTaskInput) error
@@ -97,6 +98,17 @@ type taskBoardSummaryResponse struct {
 	Counts    map[string]int `json:"counts"`
 }
 
+type taskActivityResponse struct {
+	ID             string         `json:"id"`
+	TaskID         string         `json:"task_id"`
+	ActorAccountID string         `json:"actor_account_id"`
+	Action         string         `json:"action"`
+	FromStatus     *string        `json:"from_status,omitempty"`
+	ToStatus       *string        `json:"to_status,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+	CreatedAt      string         `json:"created_at"`
+}
+
 func NewHandler(taskService TaskService, sessionService SessionService, tenantResolver TenantResolver, cookie CookieConfig) Handler {
 	return Handler{
 		tasks:   taskService,
@@ -111,6 +123,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	tasks.Get("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTasks)
 	tasks.Post("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTask)
 	tasks.Get("/summary", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTaskBoardSummary)
+	tasks.Get("/:task_id/activities", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskActivities)
 	tasks.Get("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTask)
 	tasks.Patch("/:task_id/status", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTaskStatus)
 	tasks.Patch("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTask)
@@ -268,6 +281,41 @@ func (h Handler) GetTask(c fiber.Ctx) error {
 	}
 
 	return presenter.RenderItem(c, toTaskResponse(result.Task))
+}
+
+func (h Handler) ListTaskActivities(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+
+	query := presenter.ParseOffsetQuery(c)
+	result, err := h.tasks.ListTaskActivities(c.Context(), tasksvc.ListTaskActivitiesInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Limit:         query.Limit,
+		Offset:        query.Offset,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	items := make([]taskActivityResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, toTaskActivityResponse(item))
+	}
+	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
 }
 
 func (h Handler) UpdateTask(c fiber.Ctx) error {
@@ -646,6 +694,27 @@ func toTaskBoardSummaryResponse(value tasksvc.GetTaskBoardSummaryResult) taskBoa
 		Total:     value.Total,
 		Counts:    counts,
 	}
+}
+
+func toTaskActivityResponse(value task.Activity) taskActivityResponse {
+	return taskActivityResponse{
+		ID:             value.ID.String(),
+		TaskID:         value.TaskID.String(),
+		ActorAccountID: value.ActorAccountID.String(),
+		Action:         string(value.Action),
+		FromStatus:     formatStatus(value.FromStatus),
+		ToStatus:       formatStatus(value.ToStatus),
+		Metadata:       value.MetadataJSON,
+		CreatedAt:      value.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+func formatStatus(value *task.Status) *string {
+	if value == nil {
+		return nil
+	}
+	status := string(*value)
+	return &status
 }
 
 func formatDate(value *time.Time) *string {

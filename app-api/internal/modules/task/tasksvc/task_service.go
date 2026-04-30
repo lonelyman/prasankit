@@ -89,6 +89,20 @@ type GetTaskResult struct {
 	Task task.Task
 }
 
+type ListTaskActivitiesInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	Limit         int
+	Offset        int
+}
+
+type ListTaskActivitiesResult struct {
+	Items []task.Activity
+	Total int
+}
+
 type UpdateTaskInput struct {
 	Account          auth.UserAccount
 	TenantContext    workspace.TenantContext
@@ -221,6 +235,12 @@ func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*Creat
 			if errors.Is(err, task.ErrTaskNoAlreadyTaken) {
 				return errors.Join(ErrTaskCreateFail, err)
 			}
+			return err
+		}
+		if err := createActivity(ctx, repo, created, input.Account.ID, task.ActivityCreated, nil, &created.Status, now, map[string]any{
+			"task_no": created.No,
+			"title":   created.Title,
+		}); err != nil {
 			return err
 		}
 		return nil
@@ -358,6 +378,45 @@ func (s *Service) GetTask(ctx context.Context, input GetTaskInput) (*GetTaskResu
 	return &GetTaskResult{Task: *item}, nil
 }
 
+func (s *Service) ListTaskActivities(ctx context.Context, input ListTaskActivitiesInput) (*ListTaskActivitiesResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	limit := input.Limit
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := input.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	if _, err := s.repository.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+
+	items, total, err := s.repository.ListTaskActivities(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &ListTaskActivitiesResult{Items: items, Total: total}, nil
+}
+
 func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*UpdateTaskResult, error) {
 	if err := validateAccount(input.Account); err != nil {
 		return nil, err
@@ -430,13 +489,30 @@ func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*Updat
 		return nil, ErrTaskUpdateNoFields
 	}
 
-	if err := s.repository.UpdateTask(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, patch); err != nil {
+	now := patch.UpdatedAt
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		before, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
 		if errors.Is(err, task.ErrTaskNotFound) {
-			return nil, ErrTaskNotFound
+			return ErrTaskNotFound
 		}
+		if err != nil {
+			return err
+		}
+
+		if err := repo.UpdateTask(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, patch); err != nil {
+			if errors.Is(err, task.ErrTaskNotFound) {
+				return ErrTaskNotFound
+			}
+			return err
+		}
+
+		return createActivity(ctx, repo, *before, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"changed_fields": changedFields(input),
+		})
+	})
+	if err != nil {
 		return nil, err
 	}
-
 	item, err := s.repository.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
 	if errors.Is(err, task.ErrTaskNotFound) {
 		return nil, ErrTaskNotFound
@@ -470,10 +546,24 @@ func (s *Service) UpdateTaskStatus(ctx context.Context, input UpdateTaskStatusIn
 		completedDate = &now
 	}
 
-	if err := s.repository.UpdateTaskStatus(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.Status, completedDate, input.Account.ID, now); err != nil {
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		before, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
 		if errors.Is(err, task.ErrTaskNotFound) {
-			return nil, ErrTaskNotFound
+			return ErrTaskNotFound
 		}
+		if err != nil {
+			return err
+		}
+
+		if err := repo.UpdateTaskStatus(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.Status, completedDate, input.Account.ID, now); err != nil {
+			if errors.Is(err, task.ErrTaskNotFound) {
+				return ErrTaskNotFound
+			}
+			return err
+		}
+		return createActivity(ctx, repo, *before, input.Account.ID, task.ActivityStatusChanged, &before.Status, &input.Status, now, nil)
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -501,13 +591,65 @@ func (s *Service) DeleteTask(ctx context.Context, input DeleteTaskInput) error {
 		return ErrTaskIDRequired
 	}
 
-	if err := s.repository.SoftDeleteTask(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.Account.ID); err != nil {
+	now := s.clock()
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		before, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
 		if errors.Is(err, task.ErrTaskNotFound) {
 			return ErrTaskNotFound
 		}
+		if err != nil {
+			return err
+		}
+		if err := repo.SoftDeleteTask(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.Account.ID); err != nil {
+			if errors.Is(err, task.ErrTaskNotFound) {
+				return ErrTaskNotFound
+			}
+			return err
+		}
+		return createActivity(ctx, repo, *before, input.Account.ID, task.ActivityDeleted, &before.Status, nil, now, nil)
+	})
+	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func createActivity(ctx context.Context, repo task.Repository, item task.Task, actorID uuid.UUID, action task.ActivityAction, fromStatus *task.Status, toStatus *task.Status, createdAt time.Time, metadata map[string]any) error {
+	return repo.CreateTaskActivity(ctx, &task.Activity{
+		TenantID:       item.TenantID,
+		WorkspaceID:    item.WorkspaceID,
+		ProjectID:      item.ProjectID,
+		TaskID:         item.ID,
+		ActorAccountID: actorID,
+		Action:         action,
+		FromStatus:     fromStatus,
+		ToStatus:       toStatus,
+		MetadataJSON:   metadata,
+		CreatedAt:      createdAt,
+	})
+}
+
+func changedFields(input UpdateTaskInput) []string {
+	fields := make([]string, 0, 6)
+	if input.Title != nil {
+		fields = append(fields, "title")
+	}
+	if input.Priority != nil {
+		fields = append(fields, "priority")
+	}
+	if input.AssigneeMemberID != nil {
+		fields = append(fields, "assignee_member_id")
+	}
+	if input.Description != nil {
+		fields = append(fields, "description")
+	}
+	if input.StartDate != nil {
+		fields = append(fields, "start_date")
+	}
+	if input.DueDate != nil {
+		fields = append(fields, "due_date")
+	}
+	return fields
 }
 
 func validateAccount(account auth.UserAccount) error {

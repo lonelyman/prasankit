@@ -485,8 +485,9 @@ config
 - Permission Guard ก้อนแรกอยู่ที่ `internal/modules/workspace/workspaceperm`; `GET /api/v1/workspaces/current` ใช้ permission `workspace.view`
 - Project foundation ก้อนแรกมี `project_roles`, `project_priorities`, `project_positions`, `project_code_counters`, `projects`, `project_members`, `project_member_positions`; role/priority/position ใช้ master/FK ตั้งแต่ migration แรกของแต่ละก้อน
 - Project routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects`, `POST /api/v1/workspace/projects`, `GET /api/v1/workspace/projects/{project_id}`, `PATCH /api/v1/workspace/projects/{project_id}`, `GET /api/v1/workspace/projects/{project_id}/members`, `POST /api/v1/workspace/projects/{project_id}/members`, `PATCH /api/v1/workspace/projects/{project_id}/members/{member_id}`, `DELETE /api/v1/workspace/projects/{project_id}/members/{member_id}`, `GET /api/v1/workspace/projects/{project_id}/positions` และ `PUT /api/v1/workspace/projects/{project_id}/members/{member_id}/positions`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
-- Task foundation ก้อนแรกมี `task_counters` และ `tasks`; `tasks.priority_id` reuse `project_priorities.id`, ส่วน `tasks.status` ยังเป็น system state ของ MVP
-- Task routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects/{project_id}/tasks`, `GET /api/v1/workspace/projects/{project_id}/tasks/summary`, `POST /api/v1/workspace/projects/{project_id}/tasks`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status` และ `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
+- Task foundation ก้อนแรกมี `task_counters`, `tasks` และ `task_activities`; `tasks.priority_id` reuse `project_priorities.id`, ส่วน `tasks.status` ยังเป็น system state ของ MVP
+- Task activity เขียนใน transaction เดียวกับ create/update/status/delete และอ่านผ่าน `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/activities`
+- Task routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects/{project_id}/tasks`, `GET /api/v1/workspace/projects/{project_id}/tasks/summary`, `POST /api/v1/workspace/projects/{project_id}/tasks`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/activities`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status` และ `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
 - `GET /api/v1/workspace/projects/{project_id}/tasks` filter ได้ด้วย `status`, `priority`, `assignee_member_id`
 
 ## Next Step
@@ -540,15 +541,17 @@ PostgreSQL connection done
 -> Project HTTP: GET /api/v1/workspace/projects/{project_id}/positions wired
 -> Project HTTP: PUT /api/v1/workspace/projects/{project_id}/members/{member_id}/positions wired
 -> Migration 000008_create_task_core_tables applied
+-> Migration 000009_create_task_activity_tables applied
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks filters wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/summary wired
 -> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
+-> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/activities wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
--> ต่อไปต่อ Task activity หรือ attachment foundation โดยต้องผ่าน Tenant Context + Permission Guard
+-> ต่อไปต่อ Task attachment foundation โดยต้องผ่าน Tenant Context + Permission Guard
 ```
 
 ## Do Not Do Yet
