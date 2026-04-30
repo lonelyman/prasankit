@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -13,6 +14,7 @@ var ErrProjectPriorityNotFound = errors.New("project priority not found")
 var ErrProjectCodeAlreadyTaken = errors.New("project code is already taken")
 var ErrWorkspaceMembershipNotFound = errors.New("workspace membership not found")
 var ErrProjectMemberAlreadyExists = errors.New("project member already exists")
+var ErrProjectMemberNotFound = errors.New("project member not found")
 
 type Repository interface {
 	WithinTransaction(ctx context.Context, fn func(ctx context.Context, repo Repository) error) error
@@ -26,4 +28,6 @@ type Repository interface {
 	FindProjectByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID) (*ProjectWithMember, error)
 	ListProjects(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, limit int, offset int) ([]ProjectWithMember, int, error)
 	ListProjectMembers(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, limit int, offset int) ([]Member, int, error)
+	FindProjectMemberByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID) (*Member, error)
+	UpdateProjectMemberRole(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID, roleID uuid.UUID, updatedBy uuid.UUID, updatedAt time.Time) error
 }

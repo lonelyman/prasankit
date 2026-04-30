@@ -116,6 +116,10 @@ func TestRepositoryIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find project member role: %v", err)
 	}
+	managerRole, err := repo.FindProjectRoleByCode(ctx, project.ProjectRoleManager)
+	if err != nil {
+		t.Fatalf("find project manager role: %v", err)
+	}
 	mediumPriority, err := repo.FindProjectPriorityByCode(ctx, project.ProjectPriorityMedium)
 	if err != nil {
 		t.Fatalf("find project medium priority: %v", err)
@@ -300,8 +304,21 @@ func TestRepositoryIntegration(t *testing.T) {
 	if !foundMember {
 		t.Fatalf("new member not found in list: %#v", members)
 	}
-
 	otherTenantID := mustUUID(t)
+	if err := repo.UpdateProjectMemberRole(ctx, tenantID, workspaceID, projectRecord.ID, newMember.ID, managerRole.ID, accountID, time.Now().UTC()); err != nil {
+		t.Fatalf("update project member role: %v", err)
+	}
+	updatedMember, err := repo.FindProjectMemberByID(ctx, tenantID, workspaceID, projectRecord.ID, newMember.ID)
+	if err != nil {
+		t.Fatalf("find updated project member: %v", err)
+	}
+	if updatedMember.Role != project.ProjectRoleManager {
+		t.Fatalf("updated member role = %s, want project_manager", updatedMember.Role)
+	}
+	if err := repo.UpdateProjectMemberRole(ctx, otherTenantID, workspaceID, projectRecord.ID, newMember.ID, memberRole.ID, accountID, time.Now().UTC()); !errors.Is(err, project.ErrProjectMemberNotFound) {
+		t.Fatalf("update member with wrong tenant err = %v, want ErrProjectMemberNotFound", err)
+	}
+
 	_, err = repo.FindProjectByID(ctx, otherTenantID, workspaceID, projectRecord.ID)
 	if err == nil {
 		t.Fatal("find project with wrong tenant returned nil error, want not found")

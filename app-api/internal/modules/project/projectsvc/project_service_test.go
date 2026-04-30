@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/internal/modules/project"
@@ -28,6 +29,16 @@ type fakeRepository struct {
 	memberItems                []project.Member
 	memberTotal                int
 	memberErr                  error
+	findMember                 *project.Member
+	findMemberErr              error
+	findMemberID               uuid.UUID
+	updateMemberRoleID         uuid.UUID
+	updateMemberErr            error
+	updateMemberProjectID      uuid.UUID
+	updateMemberTenantID       uuid.UUID
+	updateMemberWorkspaceID    uuid.UUID
+	updateMemberID             uuid.UUID
+	updateMemberUpdatedBy      uuid.UUID
 	memberCandidate            *project.WorkspaceMemberCandidate
 	memberCandidateErr         error
 	memberCandidateID          uuid.UUID
@@ -135,6 +146,33 @@ func (r *fakeRepository) ListProjectMembers(_ context.Context, tenantID uuid.UUI
 		return nil, 0, r.memberErr
 	}
 	return r.memberItems, r.memberTotal, nil
+}
+
+func (r *fakeRepository) FindProjectMemberByID(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID) (*project.Member, error) {
+	r.memberTenantID = tenantID
+	r.memberWorkspaceID = workspaceID
+	r.memberProjectID = projectID
+	r.findMemberID = memberID
+	if r.findMemberErr != nil {
+		return nil, r.findMemberErr
+	}
+	if r.findMember != nil {
+		return r.findMember, nil
+	}
+	return nil, project.ErrProjectMemberNotFound
+}
+
+func (r *fakeRepository) UpdateProjectMemberRole(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID, roleID uuid.UUID, updatedBy uuid.UUID, _ time.Time) error {
+	r.updateMemberTenantID = tenantID
+	r.updateMemberWorkspaceID = workspaceID
+	r.updateMemberProjectID = projectID
+	r.updateMemberID = memberID
+	r.updateMemberRoleID = roleID
+	r.updateMemberUpdatedBy = updatedBy
+	if r.updateMemberErr != nil {
+		return r.updateMemberErr
+	}
+	return nil
 }
 
 func TestCreateProject(t *testing.T) {
@@ -673,6 +711,162 @@ func TestAddProjectMemberMapsErrors(t *testing.T) {
 	if !errors.Is(err, ErrProjectMemberAlreadyExists) {
 		t.Fatalf("err = %v, want ErrProjectMemberAlreadyExists", err)
 	}
+}
+
+func TestUpdateProjectMember(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+	accountID := uuid.Must(uuid.NewV7())
+	role := project.ProjectRoleManager
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+		findMember: &project.Member{
+			ID:                    memberID,
+			TenantID:              tenantContext.TenantID,
+			WorkspaceID:           tenantContext.WorkspaceID,
+			ProjectID:             projectID,
+			WorkspaceMembershipID: uuid.Must(uuid.NewV7()),
+			Role:                  project.ProjectRoleManager,
+			Status:                project.ProjectMemberStatusActive,
+		},
+	}
+	service := NewService(repo)
+
+	result, err := service.UpdateProjectMember(context.Background(), UpdateProjectMemberInput{
+		Account:       auth.UserAccount{ID: accountID, Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+		Role:          &role,
+	})
+	if err != nil {
+		t.Fatalf("UpdateProjectMember: %v", err)
+	}
+	if !repo.transactionCalled {
+		t.Fatal("transaction was not used")
+	}
+	if repo.updateMemberTenantID != tenantContext.TenantID {
+		t.Fatalf("tenant ID = %s, want %s", repo.updateMemberTenantID, tenantContext.TenantID)
+	}
+	if repo.updateMemberWorkspaceID != tenantContext.WorkspaceID {
+		t.Fatalf("workspace ID = %s, want %s", repo.updateMemberWorkspaceID, tenantContext.WorkspaceID)
+	}
+	if repo.updateMemberProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", repo.updateMemberProjectID, projectID)
+	}
+	if repo.updateMemberID != memberID {
+		t.Fatalf("member ID = %s, want %s", repo.updateMemberID, memberID)
+	}
+	if repo.updateMemberRoleID == uuid.Nil {
+		t.Fatal("role ID was not set")
+	}
+	if repo.updateMemberUpdatedBy != accountID {
+		t.Fatalf("updated by = %s, want %s", repo.updateMemberUpdatedBy, accountID)
+	}
+	if result.Member.ID != memberID {
+		t.Fatalf("member ID = %s, want %s", result.Member.ID, memberID)
+	}
+	if result.Member.Role != project.ProjectRoleManager {
+		t.Fatalf("role = %s, want project_manager", result.Member.Role)
+	}
+}
+
+func TestUpdateProjectMemberRejectsInvalidInput(t *testing.T) {
+	service := NewService(&fakeRepository{})
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+
+	_, err := service.UpdateProjectMember(context.Background(), UpdateProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		MemberID:      memberID,
+		Role:          ptrProjectRole(project.ProjectRoleMember),
+	})
+	if !errors.Is(err, ErrProjectIDRequired) {
+		t.Fatalf("err = %v, want ErrProjectIDRequired", err)
+	}
+
+	_, err = service.UpdateProjectMember(context.Background(), UpdateProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Role:          ptrProjectRole(project.ProjectRoleMember),
+	})
+	if !errors.Is(err, ErrProjectMemberIDRequired) {
+		t.Fatalf("err = %v, want ErrProjectMemberIDRequired", err)
+	}
+
+	_, err = service.UpdateProjectMember(context.Background(), UpdateProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+	})
+	if !errors.Is(err, ErrProjectMemberUpdateNoFields) {
+		t.Fatalf("err = %v, want ErrProjectMemberUpdateNoFields", err)
+	}
+
+	invalidRole := project.ProjectRole("invalid")
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+	}
+	_, err = NewService(repo).UpdateProjectMember(context.Background(), UpdateProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+		Role:          &invalidRole,
+	})
+	if !errors.Is(err, ErrProjectRoleInvalid) {
+		t.Fatalf("err = %v, want ErrProjectRoleInvalid", err)
+	}
+}
+
+func TestUpdateProjectMemberMapsErrors(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+	role := project.ProjectRoleMember
+
+	_, err := NewService(&fakeRepository{findErr: project.ErrProjectNotFound}).UpdateProjectMember(context.Background(), UpdateProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+		Role:          &role,
+	})
+	if !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf("err = %v, want ErrProjectNotFound", err)
+	}
+
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+		updateMemberErr: project.ErrProjectMemberNotFound,
+	}
+	_, err = NewService(repo).UpdateProjectMember(context.Background(), UpdateProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+		Role:          &role,
+	})
+	if !errors.Is(err, ErrProjectMemberNotFound) {
+		t.Fatalf("err = %v, want ErrProjectMemberNotFound", err)
+	}
+}
+
+func ptrProjectRole(value project.ProjectRole) *project.ProjectRole {
+	return &value
 }
 
 func testTenantContext() workspace.TenantContext {

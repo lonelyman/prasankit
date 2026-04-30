@@ -493,6 +493,52 @@ func (r *Repository) ListProjectMembers(ctx context.Context, tenantID uuid.UUID,
 	return items, int(total), nil
 }
 
+func (r *Repository) FindProjectMemberByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID) (*project.Member, error) {
+	var row projectMemberRow
+	err := r.db.WithContext(ctx).
+		Table("project_members AS pm").
+		Select(projectMemberSelect()).
+		Joins("JOIN project_roles AS pr ON pr.id = pm.project_role_id").
+		Where("pm.tenant_id = ?", tenantID).
+		Where("pm.workspace_id = ?", workspaceID).
+		Where("pm.project_id = ?", projectID).
+		Where("pm.id = ?", memberID).
+		Where("pm.status = ?", string(project.ProjectMemberStatusActive)).
+		Take(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, project.ErrProjectMemberNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	member := row.toDomain()
+	return &member, nil
+}
+
+func (r *Repository) UpdateProjectMemberRole(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID, roleID uuid.UUID, updatedBy uuid.UUID, updatedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&projectMemberRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("id = ?", memberID).
+		Where("status = ?", string(project.ProjectMemberStatusActive)).
+		Updates(map[string]any{
+			"project_role_id": roleID,
+			"updated_by":      updatedBy,
+			"updated_at":      updatedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return project.ErrProjectMemberNotFound
+	}
+	return nil
+}
+
 func projectOwnerJoin() string {
 	return `
 		LEFT JOIN project_members AS pm
@@ -543,6 +589,27 @@ func projectListSelect() string {
 		pm.created_at AS member_created_at,
 		pm.updated_by AS member_updated_by,
 		pm.updated_at AS member_updated_at
+	`
+}
+
+func projectMemberSelect() string {
+	return `
+		pm.id,
+		pm.tenant_id,
+		pm.workspace_id,
+		pm.project_id,
+		pm.workspace_membership_id,
+		pm.profile_id,
+		pm.user_account_id,
+		pm.project_role_id,
+		pr.code AS project_role_code,
+		pm.status,
+		pm.joined_at,
+		pm.removed_at,
+		pm.created_by,
+		pm.created_at,
+		pm.updated_by,
+		pm.updated_at
 	`
 }
 

@@ -35,6 +35,9 @@ var (
 	ErrWorkspaceMembershipNotFound   = errors.New("workspace membership not found")
 	ErrProjectMemberAlreadyExists    = errors.New("project member already exists")
 	ErrProjectMemberCreateFail       = errors.New("project member create failed")
+	ErrProjectMemberIDRequired       = errors.New("project member id is required")
+	ErrProjectMemberUpdateNoFields   = errors.New("project member update has no fields")
+	ErrProjectMemberNotFound         = errors.New("project member not found")
 )
 
 type CreateProjectInput struct {
@@ -112,6 +115,18 @@ type AddProjectMemberInput struct {
 }
 
 type AddProjectMemberResult struct {
+	Member project.Member
+}
+
+type UpdateProjectMemberInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	MemberID      uuid.UUID
+	Role          *project.ProjectRole
+}
+
+type UpdateProjectMemberResult struct {
 	Member project.Member
 }
 
@@ -472,6 +487,70 @@ func (s *Service) AddProjectMember(ctx context.Context, input AddProjectMemberIn
 	}
 
 	return &AddProjectMemberResult{Member: createdMember}, nil
+}
+
+func (s *Service) UpdateProjectMember(ctx context.Context, input UpdateProjectMemberInput) (*UpdateProjectMemberResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.MemberID == uuid.Nil {
+		return nil, ErrProjectMemberIDRequired
+	}
+	if input.Role == nil {
+		return nil, ErrProjectMemberUpdateNoFields
+	}
+
+	roleCode := project.ProjectRole(strings.TrimSpace(string(*input.Role)))
+	if roleCode == "" {
+		return nil, ErrProjectRoleInvalid
+	}
+
+	now := s.clock()
+	var updatedMember project.Member
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo project.Repository) error {
+		if _, err := repo.FindProjectByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID); err != nil {
+			if errors.Is(err, project.ErrProjectNotFound) {
+				return ErrProjectNotFound
+			}
+			return err
+		}
+
+		role, err := repo.FindProjectRoleByCode(ctx, roleCode)
+		if errors.Is(err, project.ErrProjectRoleNotFound) {
+			return ErrProjectRoleInvalid
+		}
+		if err != nil {
+			return err
+		}
+
+		if err := repo.UpdateProjectMemberRole(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.MemberID, role.ID, input.Account.ID, now); err != nil {
+			if errors.Is(err, project.ErrProjectMemberNotFound) {
+				return ErrProjectMemberNotFound
+			}
+			return err
+		}
+
+		member, err := repo.FindProjectMemberByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.MemberID)
+		if errors.Is(err, project.ErrProjectMemberNotFound) {
+			return ErrProjectMemberNotFound
+		}
+		if err != nil {
+			return err
+		}
+		updatedMember = *member
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &UpdateProjectMemberResult{Member: updatedMember}, nil
 }
 
 func validateAccount(account auth.UserAccount) error {

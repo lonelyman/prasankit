@@ -360,6 +360,7 @@ Composition note:
   - `PATCH /api/v1/workspace/projects/{project_id}`
   - `GET /api/v1/workspace/projects/{project_id}/members`
   - `POST /api/v1/workspace/projects/{project_id}/members`
+  - `PATCH /api/v1/workspace/projects/{project_id}/members/{member_id}`
   - ทุก project route ต้องผ่าน session, Tenant Context และ Permission Guard ก่อน query
 - ตรวจกลุ่ม field ที่เป็น text แล้ว: ค่า role/master/permission ต้องเป็น master/FK, ส่วน `status`/`mode`/auth provider/type/security severity ตอนนี้ยังถือเป็น lifecycle/system state และคุมด้วย constraint ได้ก่อน
 
@@ -414,4 +415,5 @@ PostgreSQL connection done
 -> Project HTTP: PATCH /api/v1/workspace/projects/{project_id} wired
 -> Project HTTP: GET /api/v1/workspace/projects/{project_id}/members wired
 -> Project HTTP: POST /api/v1/workspace/projects/{project_id}/members wired
+-> Project HTTP: PATCH /api/v1/workspace/projects/{project_id}/members/{member_id} wired
 ```
