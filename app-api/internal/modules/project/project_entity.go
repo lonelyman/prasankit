@@ -51,6 +51,19 @@ const (
 	ProjectPriorityHigh   ProjectPriority = "high"
 )
 
+type ProjectPosition string
+
+const (
+	ProjectPositionLead            ProjectPosition = "project_lead"
+	ProjectPositionBusinessAnalyst ProjectPosition = "business_analyst"
+	ProjectPositionDeveloper       ProjectPosition = "developer"
+	ProjectPositionDesigner        ProjectPosition = "designer"
+	ProjectPositionTester          ProjectPosition = "tester"
+	ProjectPositionDevOps          ProjectPosition = "devops"
+	ProjectPositionFinanceContact  ProjectPosition = "finance_contact"
+	ProjectPositionStakeholder     ProjectPosition = "stakeholder"
+)
+
 type RoleMaster struct {
 	ID          uuid.UUID
 	Code        ProjectRole
@@ -72,6 +85,18 @@ type PriorityMaster struct {
 	Status    string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type PositionMaster struct {
+	ID          uuid.UUID
+	Code        ProjectPosition
+	Name        string
+	Description string
+	SortOrder   int
+	IsSystem    bool
+	Status      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type Project struct {
@@ -132,6 +157,19 @@ type Member struct {
 	CreatedAt             time.Time
 	UpdatedBy             *uuid.UUID
 	UpdatedAt             time.Time
+}
+
+type MemberPosition struct {
+	ID              uuid.UUID
+	TenantID        uuid.UUID
+	WorkspaceID     uuid.UUID
+	ProjectID       uuid.UUID
+	ProjectMemberID uuid.UUID
+	PositionID      uuid.UUID
+	Position        ProjectPosition
+	Name            string
+	CreatedBy       *uuid.UUID
+	CreatedAt       time.Time
 }
 
 type ProjectWithMember struct {

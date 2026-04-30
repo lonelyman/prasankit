@@ -97,6 +97,39 @@ func (projectPriorityRow) TableName() string {
 	return "project_priorities"
 }
 
+type projectPositionRow struct {
+	ID          uuid.UUID `gorm:"column:id;type:uuid"`
+	Code        string    `gorm:"column:code"`
+	Name        string    `gorm:"column:name"`
+	Description string    `gorm:"column:description"`
+	SortOrder   int       `gorm:"column:sort_order"`
+	IsSystem    bool      `gorm:"column:is_system"`
+	Status      string    `gorm:"column:status"`
+	CreatedAt   time.Time `gorm:"column:created_at"`
+	UpdatedAt   time.Time `gorm:"column:updated_at"`
+}
+
+func (projectPositionRow) TableName() string {
+	return "project_positions"
+}
+
+type projectMemberPositionRow struct {
+	ID              uuid.UUID  `gorm:"column:id;type:uuid"`
+	TenantID        uuid.UUID  `gorm:"column:tenant_id;type:uuid"`
+	WorkspaceID     uuid.UUID  `gorm:"column:workspace_id;type:uuid"`
+	ProjectID       uuid.UUID  `gorm:"column:project_id;type:uuid"`
+	ProjectMemberID uuid.UUID  `gorm:"column:project_member_id;type:uuid"`
+	PositionID      uuid.UUID  `gorm:"column:position_id;type:uuid"`
+	PositionCode    string     `gorm:"column:position_code;->"`
+	PositionName    string     `gorm:"column:position_name;->"`
+	CreatedAt       time.Time  `gorm:"column:created_at"`
+	CreatedBy       *uuid.UUID `gorm:"column:created_by;type:uuid"`
+}
+
+func (projectMemberPositionRow) TableName() string {
+	return "project_member_positions"
+}
+
 type workspaceMemberCandidateRow struct {
 	MembershipID  uuid.UUID  `gorm:"column:membership_id"`
 	TenantID      uuid.UUID  `gorm:"column:tenant_id"`
@@ -169,6 +202,22 @@ func (r *Repository) FindProjectRoleByCode(ctx context.Context, code project.Pro
 	return row.toDomain(), nil
 }
 
+func (r *Repository) FindProjectPositionByCode(ctx context.Context, code project.ProjectPosition) (*project.PositionMaster, error) {
+	var row projectPositionRow
+	err := r.db.WithContext(ctx).
+		Where("code = ?", string(code)).
+		Where("status = ?", "active").
+		First(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, project.ErrProjectPositionNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return row.toDomain(), nil
+}
+
 func (r *Repository) FindProjectPriorityByCode(ctx context.Context, code project.ProjectPriority) (*project.PriorityMaster, error) {
 	var row projectPriorityRow
 	err := r.db.WithContext(ctx).
@@ -183,6 +232,24 @@ func (r *Repository) FindProjectPriorityByCode(ctx context.Context, code project
 		return nil, err
 	}
 	return row.toDomain(), nil
+}
+
+func (r *Repository) ListProjectPositions(ctx context.Context) ([]project.PositionMaster, error) {
+	var rows []projectPositionRow
+	err := r.db.WithContext(ctx).
+		Where("status = ?", "active").
+		Order("sort_order ASC, code ASC").
+		Find(&rows).
+		Error
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]project.PositionMaster, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, *row.toDomain())
+	}
+	return items, nil
 }
 
 func (r *Repository) FindActiveWorkspaceMembershipByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, membershipID uuid.UUID) (*project.WorkspaceMemberCandidate, error) {
@@ -580,6 +647,76 @@ func (r *Repository) RemoveProjectMember(ctx context.Context, tenantID uuid.UUID
 	return nil
 }
 
+func (r *Repository) ListProjectMemberPositions(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID) ([]project.MemberPosition, error) {
+	var rows []projectMemberPositionRow
+	err := r.db.WithContext(ctx).
+		Table("project_member_positions AS pmp").
+		Select(`
+			pmp.id,
+			pmp.tenant_id,
+			pmp.workspace_id,
+			pmp.project_id,
+			pmp.project_member_id,
+			pmp.position_id,
+			pp.code AS position_code,
+			pp.name AS position_name,
+			pmp.created_at,
+			pmp.created_by
+		`).
+		Joins("JOIN project_positions AS pp ON pp.id = pmp.position_id").
+		Where("pmp.tenant_id = ?", tenantID).
+		Where("pmp.workspace_id = ?", workspaceID).
+		Where("pmp.project_id = ?", projectID).
+		Where("pmp.project_member_id = ?", memberID).
+		Order("pp.sort_order ASC, pp.code ASC").
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]project.MemberPosition, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, row.toDomain())
+	}
+	return items, nil
+}
+
+func (r *Repository) ReplaceProjectMemberPositions(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID, positionIDs []uuid.UUID, createdBy uuid.UUID, createdAt time.Time) error {
+	if err := r.db.WithContext(ctx).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("project_member_id = ?", memberID).
+		Delete(&projectMemberPositionRow{}).
+		Error; err != nil {
+		return err
+	}
+
+	if len(positionIDs) == 0 {
+		return nil
+	}
+
+	rows := make([]projectMemberPositionRow, 0, len(positionIDs))
+	for _, positionID := range positionIDs {
+		id, err := ids.NewUUID()
+		if err != nil {
+			return err
+		}
+		rows = append(rows, projectMemberPositionRow{
+			ID:              id,
+			TenantID:        tenantID,
+			WorkspaceID:     workspaceID,
+			ProjectID:       projectID,
+			ProjectMemberID: memberID,
+			PositionID:      positionID,
+			CreatedBy:       &createdBy,
+			CreatedAt:       createdAt,
+		})
+	}
+	return r.db.WithContext(ctx).Create(&rows).Error
+}
+
 func projectOwnerJoin() string {
 	return `
 		LEFT JOIN project_members AS pm
@@ -754,6 +891,20 @@ func (r projectRoleRow) toDomain() *project.RoleMaster {
 	}
 }
 
+func (r projectPositionRow) toDomain() *project.PositionMaster {
+	return &project.PositionMaster{
+		ID:          r.ID,
+		Code:        project.ProjectPosition(r.Code),
+		Name:        r.Name,
+		Description: r.Description,
+		SortOrder:   r.SortOrder,
+		IsSystem:    r.IsSystem,
+		Status:      r.Status,
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
+	}
+}
+
 func (r projectPriorityRow) toDomain() *project.PriorityMaster {
 	return &project.PriorityMaster{
 		ID:        r.ID,
@@ -764,6 +915,21 @@ func (r projectPriorityRow) toDomain() *project.PriorityMaster {
 		Status:    r.Status,
 		CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt,
+	}
+}
+
+func (r projectMemberPositionRow) toDomain() project.MemberPosition {
+	return project.MemberPosition{
+		ID:              r.ID,
+		TenantID:        r.TenantID,
+		WorkspaceID:     r.WorkspaceID,
+		ProjectID:       r.ProjectID,
+		ProjectMemberID: r.ProjectMemberID,
+		PositionID:      r.PositionID,
+		Position:        project.ProjectPosition(r.PositionCode),
+		Name:            r.PositionName,
+		CreatedBy:       r.CreatedBy,
+		CreatedAt:       r.CreatedAt,
 	}
 }
 

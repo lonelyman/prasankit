@@ -29,6 +29,12 @@ type fakeRepository struct {
 	memberItems                []project.Member
 	memberTotal                int
 	memberErr                  error
+	positionItems              []project.PositionMaster
+	positionErr                error
+	memberPositionItems        []project.MemberPosition
+	memberPositionErr          error
+	replacePositionIDs         []uuid.UUID
+	replacePositionErr         error
 	findMember                 *project.Member
 	findMemberErr              error
 	findMemberID               uuid.UUID
@@ -82,6 +88,21 @@ func (r *fakeRepository) FindProjectPriorityByCode(_ context.Context, code proje
 		return &project.PriorityMaster{ID: uuid.Must(uuid.NewV7()), Code: code, Name: string(code)}, nil
 	}
 	return nil, project.ErrProjectPriorityNotFound
+}
+
+func (r *fakeRepository) FindProjectPositionByCode(_ context.Context, code project.ProjectPosition) (*project.PositionMaster, error) {
+	switch code {
+	case project.ProjectPositionLead, project.ProjectPositionBusinessAnalyst, project.ProjectPositionDeveloper, project.ProjectPositionDesigner, project.ProjectPositionTester, project.ProjectPositionDevOps, project.ProjectPositionFinanceContact, project.ProjectPositionStakeholder:
+		return &project.PositionMaster{ID: uuid.Must(uuid.NewV7()), Code: code, Name: string(code)}, nil
+	}
+	return nil, project.ErrProjectPositionNotFound
+}
+
+func (r *fakeRepository) ListProjectPositions(context.Context) ([]project.PositionMaster, error) {
+	if r.positionErr != nil {
+		return nil, r.positionErr
+	}
+	return r.positionItems, nil
 }
 
 func (r *fakeRepository) NextProjectCode(context.Context, uuid.UUID, uuid.UUID, string, int, int) (string, error) {
@@ -204,6 +225,29 @@ func (r *fakeRepository) RemoveProjectMember(_ context.Context, tenantID uuid.UU
 	r.removeMemberRemovedBy = removedBy
 	if r.removeMemberErr != nil {
 		return r.removeMemberErr
+	}
+	return nil
+}
+
+func (r *fakeRepository) ListProjectMemberPositions(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID) ([]project.MemberPosition, error) {
+	r.memberTenantID = tenantID
+	r.memberWorkspaceID = workspaceID
+	r.memberProjectID = projectID
+	r.findMemberID = memberID
+	if r.memberPositionErr != nil {
+		return nil, r.memberPositionErr
+	}
+	return r.memberPositionItems, nil
+}
+
+func (r *fakeRepository) ReplaceProjectMemberPositions(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID, positionIDs []uuid.UUID, _ uuid.UUID, _ time.Time) error {
+	r.memberTenantID = tenantID
+	r.memberWorkspaceID = workspaceID
+	r.memberProjectID = projectID
+	r.findMemberID = memberID
+	r.replacePositionIDs = positionIDs
+	if r.replacePositionErr != nil {
+		return r.replacePositionErr
 	}
 	return nil
 }
@@ -1034,6 +1078,174 @@ func TestRemoveProjectMemberMapsErrors(t *testing.T) {
 	})
 	if !errors.Is(err, ErrProjectMemberNotFound) {
 		t.Fatalf("err = %v, want ErrProjectMemberNotFound", err)
+	}
+}
+
+func TestListProjectPositions(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+		positionItems: []project.PositionMaster{
+			{ID: uuid.Must(uuid.NewV7()), Code: project.ProjectPositionDeveloper, Name: "Developer"},
+		},
+	}
+
+	result, err := NewService(repo).ListProjectPositions(context.Background(), ListProjectPositionsInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+	})
+	if err != nil {
+		t.Fatalf("ListProjectPositions: %v", err)
+	}
+	if repo.findProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", repo.findProjectID, projectID)
+	}
+	if len(result.Items) != 1 || result.Items[0].Code != project.ProjectPositionDeveloper {
+		t.Fatalf("items = %#v, want developer", result.Items)
+	}
+}
+
+func TestReplaceProjectMemberPositions(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+	positionID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+		findMember: &project.Member{
+			ID:        memberID,
+			TenantID:  tenantContext.TenantID,
+			ProjectID: projectID,
+			Role:      project.ProjectRoleMember,
+			Status:    project.ProjectMemberStatusActive,
+		},
+		memberPositionItems: []project.MemberPosition{
+			{
+				ID:              uuid.Must(uuid.NewV7()),
+				TenantID:        tenantContext.TenantID,
+				ProjectID:       projectID,
+				ProjectMemberID: memberID,
+				PositionID:      positionID,
+				Position:        project.ProjectPositionDeveloper,
+				Name:            "Developer",
+			},
+		},
+	}
+	codes := []project.ProjectPosition{project.ProjectPositionDeveloper, project.ProjectPositionDeveloper}
+
+	result, err := NewService(repo).ReplaceProjectMemberPositions(context.Background(), ReplaceProjectMemberPositionsInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+		PositionCodes: codes,
+	})
+	if err != nil {
+		t.Fatalf("ReplaceProjectMemberPositions: %v", err)
+	}
+	if !repo.transactionCalled {
+		t.Fatal("transaction was not used")
+	}
+	if repo.memberTenantID != tenantContext.TenantID {
+		t.Fatalf("tenant ID = %s, want %s", repo.memberTenantID, tenantContext.TenantID)
+	}
+	if repo.memberProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", repo.memberProjectID, projectID)
+	}
+	if repo.findMemberID != memberID {
+		t.Fatalf("member ID = %s, want %s", repo.findMemberID, memberID)
+	}
+	if len(repo.replacePositionIDs) != 1 {
+		t.Fatalf("replace position IDs len = %d, want 1", len(repo.replacePositionIDs))
+	}
+	if len(result.Items) != 1 || result.Items[0].Position != project.ProjectPositionDeveloper {
+		t.Fatalf("items = %#v, want developer", result.Items)
+	}
+}
+
+func TestReplaceProjectMemberPositionsAllowsClearing(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+		findMember: &project.Member{ID: memberID, TenantID: tenantContext.TenantID, ProjectID: projectID, Status: project.ProjectMemberStatusActive},
+	}
+	emptyCodes := []project.ProjectPosition{}
+
+	_, err := NewService(repo).ReplaceProjectMemberPositions(context.Background(), ReplaceProjectMemberPositionsInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+		PositionCodes: emptyCodes,
+	})
+	if err != nil {
+		t.Fatalf("ReplaceProjectMemberPositions: %v", err)
+	}
+	if len(repo.replacePositionIDs) != 0 {
+		t.Fatalf("replace position IDs len = %d, want 0", len(repo.replacePositionIDs))
+	}
+}
+
+func TestReplaceProjectMemberPositionsRejectsInvalidInput(t *testing.T) {
+	service := NewService(&fakeRepository{})
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+
+	_, err := service.ReplaceProjectMemberPositions(context.Background(), ReplaceProjectMemberPositionsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		MemberID:      memberID,
+		PositionCodes: []project.ProjectPosition{},
+	})
+	if !errors.Is(err, ErrProjectIDRequired) {
+		t.Fatalf("err = %v, want ErrProjectIDRequired", err)
+	}
+
+	_, err = service.ReplaceProjectMemberPositions(context.Background(), ReplaceProjectMemberPositionsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		PositionCodes: []project.ProjectPosition{},
+	})
+	if !errors.Is(err, ErrProjectMemberIDRequired) {
+		t.Fatalf("err = %v, want ErrProjectMemberIDRequired", err)
+	}
+
+	_, err = service.ReplaceProjectMemberPositions(context.Background(), ReplaceProjectMemberPositionsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+	})
+	if !errors.Is(err, ErrProjectPositionCodesRequired) {
+		t.Fatalf("err = %v, want ErrProjectPositionCodesRequired", err)
+	}
+
+	repo := &fakeRepository{
+		findItem:   &project.ProjectWithMember{Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID}},
+		findMember: &project.Member{ID: memberID, TenantID: tenantContext.TenantID, ProjectID: projectID, Status: project.ProjectMemberStatusActive},
+	}
+	_, err = NewService(repo).ReplaceProjectMemberPositions(context.Background(), ReplaceProjectMemberPositionsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+		PositionCodes: []project.ProjectPosition{project.ProjectPosition("invalid")},
+	})
+	if !errors.Is(err, ErrProjectPositionInvalid) {
+		t.Fatalf("err = %v, want ErrProjectPositionInvalid", err)
 	}
 }
 

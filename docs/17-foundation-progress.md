@@ -351,8 +351,10 @@ Composition note:
 - Permission Guard ก้อนแรกเริ่มแล้ว: เพิ่ม workspace permission policy กลาง และให้ `GET /api/v1/workspaces/current` ผ่าน `workspace.view`
 - เพิ่ม Project foundation ก้อนแรกแล้ว:
   - migration `000006_create_project_core_tables.sql`
+  - migration `000007_create_project_position_tables.sql`
   - `project_roles` เป็น App Master seed และ `project_members.project_role_id` เป็น FK
   - `project_priorities` เป็น App Master seed และ `projects.priority_id` เป็น FK
+  - `project_positions` เป็น App Master seed และ `project_member_positions.position_id` เป็น FK
   - `project_code_counters` สำหรับรัน project code ใน backend transaction
   - `GET /api/v1/workspace/projects`
   - `POST /api/v1/workspace/projects`
@@ -362,6 +364,8 @@ Composition note:
   - `POST /api/v1/workspace/projects/{project_id}/members`
   - `PATCH /api/v1/workspace/projects/{project_id}/members/{member_id}`
   - `DELETE /api/v1/workspace/projects/{project_id}/members/{member_id}`
+  - `GET /api/v1/workspace/projects/{project_id}/positions`
+  - `PUT /api/v1/workspace/projects/{project_id}/members/{member_id}/positions`
   - ทุก project route ต้องผ่าน session, Tenant Context และ Permission Guard ก่อน query
 - ตรวจกลุ่ม field ที่เป็น text แล้ว: ค่า role/master/permission ต้องเป็น master/FK, ส่วน `status`/`mode`/auth provider/type/security severity ตอนนี้ยังถือเป็น lifecycle/system state และคุมด้วย constraint ได้ก่อน
 
@@ -371,7 +375,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปเริ่ม Project Member Position หรือ Task foundation แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
+ขั้นถัดไปเริ่ม Task foundation แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -410,6 +414,7 @@ PostgreSQL connection done
 -> Workspace HTTP: GET /api/v1/workspaces/current wired
 -> Workspace Permission Guard: workspace.view/workspace.manage policy created
 -> Migration 000006_create_project_core_tables applied
+-> Migration 000007_create_project_position_tables applied
 -> Project HTTP: GET /api/v1/workspace/projects wired
 -> Project HTTP: POST /api/v1/workspace/projects wired
 -> Project HTTP: GET /api/v1/workspace/projects/{project_id} wired
@@ -418,4 +423,6 @@ PostgreSQL connection done
 -> Project HTTP: POST /api/v1/workspace/projects/{project_id}/members wired
 -> Project HTTP: PATCH /api/v1/workspace/projects/{project_id}/members/{member_id} wired
 -> Project HTTP: DELETE /api/v1/workspace/projects/{project_id}/members/{member_id} wired
+-> Project HTTP: GET /api/v1/workspace/projects/{project_id}/positions wired
+-> Project HTTP: PUT /api/v1/workspace/projects/{project_id}/members/{member_id}/positions wired
 ```

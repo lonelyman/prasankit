@@ -28,6 +28,8 @@ var (
 	ErrProjectUpdateNoFields         = errors.New("project update has no fields")
 	ErrProjectRoleMissing            = errors.New("project role is missing")
 	ErrProjectRoleInvalid            = errors.New("project role is invalid")
+	ErrProjectPositionCodesRequired  = errors.New("project position codes are required")
+	ErrProjectPositionInvalid        = errors.New("project position is invalid")
 	ErrProjectPriorityMissing        = errors.New("project priority is missing")
 	ErrProjectPriorityInvalid        = errors.New("project priority is invalid")
 	ErrProjectNotFound               = errors.New("project not found")
@@ -136,6 +138,28 @@ type RemoveProjectMemberInput struct {
 	TenantContext workspace.TenantContext
 	ProjectID     uuid.UUID
 	MemberID      uuid.UUID
+}
+
+type ListProjectPositionsInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+}
+
+type ListProjectPositionsResult struct {
+	Items []project.PositionMaster
+}
+
+type ReplaceProjectMemberPositionsInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	MemberID      uuid.UUID
+	PositionCodes []project.ProjectPosition
+}
+
+type ReplaceProjectMemberPositionsResult struct {
+	Items []project.MemberPosition
 }
 
 type Service struct {
@@ -610,6 +634,103 @@ func (s *Service) RemoveProjectMember(ctx context.Context, input RemoveProjectMe
 		}
 		return nil
 	})
+}
+
+func (s *Service) ListProjectPositions(ctx context.Context, input ListProjectPositionsInput) (*ListProjectPositionsResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+
+	if _, err := s.repository.FindProjectByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID); err != nil {
+		if errors.Is(err, project.ErrProjectNotFound) {
+			return nil, ErrProjectNotFound
+		}
+		return nil, err
+	}
+
+	items, err := s.repository.ListProjectPositions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &ListProjectPositionsResult{Items: items}, nil
+}
+
+func (s *Service) ReplaceProjectMemberPositions(ctx context.Context, input ReplaceProjectMemberPositionsInput) (*ReplaceProjectMemberPositionsResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.MemberID == uuid.Nil {
+		return nil, ErrProjectMemberIDRequired
+	}
+	if input.PositionCodes == nil {
+		return nil, ErrProjectPositionCodesRequired
+	}
+
+	now := s.clock()
+	var items []project.MemberPosition
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo project.Repository) error {
+		if _, err := repo.FindProjectByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID); err != nil {
+			if errors.Is(err, project.ErrProjectNotFound) {
+				return ErrProjectNotFound
+			}
+			return err
+		}
+		if _, err := repo.FindProjectMemberByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.MemberID); err != nil {
+			if errors.Is(err, project.ErrProjectMemberNotFound) {
+				return ErrProjectMemberNotFound
+			}
+			return err
+		}
+
+		positionIDs := make([]uuid.UUID, 0, len(input.PositionCodes))
+		seen := make(map[project.ProjectPosition]struct{}, len(input.PositionCodes))
+		for _, code := range input.PositionCodes {
+			normalized := project.ProjectPosition(strings.TrimSpace(string(code)))
+			if normalized == "" {
+				return ErrProjectPositionInvalid
+			}
+			if _, ok := seen[normalized]; ok {
+				continue
+			}
+			seen[normalized] = struct{}{}
+
+			position, err := repo.FindProjectPositionByCode(ctx, normalized)
+			if errors.Is(err, project.ErrProjectPositionNotFound) {
+				return ErrProjectPositionInvalid
+			}
+			if err != nil {
+				return err
+			}
+			positionIDs = append(positionIDs, position.ID)
+		}
+
+		if err := repo.ReplaceProjectMemberPositions(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.MemberID, positionIDs, input.Account.ID, now); err != nil {
+			return err
+		}
+
+		got, err := repo.ListProjectMemberPositions(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.MemberID)
+		if err != nil {
+			return err
+		}
+		items = got
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ReplaceProjectMemberPositionsResult{Items: items}, nil
 }
 
 func validateAccount(account auth.UserAccount) error {

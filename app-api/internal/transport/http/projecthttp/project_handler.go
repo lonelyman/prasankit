@@ -31,6 +31,8 @@ type ProjectService interface {
 	AddProjectMember(ctx context.Context, input projectsvc.AddProjectMemberInput) (*projectsvc.AddProjectMemberResult, error)
 	UpdateProjectMember(ctx context.Context, input projectsvc.UpdateProjectMemberInput) (*projectsvc.UpdateProjectMemberResult, error)
 	RemoveProjectMember(ctx context.Context, input projectsvc.RemoveProjectMemberInput) error
+	ListProjectPositions(ctx context.Context, input projectsvc.ListProjectPositionsInput) (*projectsvc.ListProjectPositionsResult, error)
+	ReplaceProjectMemberPositions(ctx context.Context, input projectsvc.ReplaceProjectMemberPositionsInput) (*projectsvc.ReplaceProjectMemberPositionsResult, error)
 }
 
 type SessionService interface {
@@ -81,6 +83,10 @@ type updateProjectMemberRequest struct {
 	Role *string `json:"role"`
 }
 
+type replaceProjectMemberPositionsRequest struct {
+	PositionCodes *[]string `json:"position_codes"`
+}
+
 type createProjectResponse struct {
 	Project projectResponse `json:"project"`
 	Member  memberResponse  `json:"member"`
@@ -114,6 +120,21 @@ type memberResponse struct {
 	Status                string  `json:"status"`
 }
 
+type projectPositionResponse struct {
+	ID          string `json:"id"`
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+type memberPositionResponse struct {
+	ID         string `json:"id"`
+	MemberID   string `json:"member_id"`
+	PositionID string `json:"position_id"`
+	Code       string `json:"code"`
+	Name       string `json:"name"`
+}
+
 func NewHandler(projectService ProjectService, sessionService SessionService, tenantResolver TenantResolver, cookie CookieConfig) Handler {
 	return Handler{
 		projects: projectService,
@@ -131,6 +152,8 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	projects.Post("/:project_id/members", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.AddProjectMember)
 	projects.Patch("/:project_id/members/:member_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateProjectMember)
 	projects.Delete("/:project_id/members/:member_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.RemoveProjectMember)
+	projects.Put("/:project_id/members/:member_id/positions", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.ReplaceProjectMemberPositions)
+	projects.Get("/:project_id/positions", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListProjectPositions)
 	projects.Get("/:project_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetProject)
 	projects.Patch("/:project_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateProject)
 }
@@ -432,6 +455,87 @@ func (h Handler) RemoveProjectMember(c fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+func (h Handler) ListProjectPositions(c fiber.Ctx) error {
+	if h.projects == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+
+	result, err := h.projects.ListProjectPositions(c.Context(), projectsvc.ListProjectPositionsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+	})
+	if err != nil {
+		return renderProjectError(c, err)
+	}
+
+	items := make([]projectPositionResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, toProjectPositionResponse(item))
+	}
+	return presenter.RenderList(c, items)
+}
+
+func (h Handler) ReplaceProjectMemberPositions(c fiber.Ctx) error {
+	if h.projects == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+	memberID, err := uuid.Parse(c.Params("member_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_MEMBER_ID_INVALID", "Project member id is invalid")
+	}
+
+	var req replaceProjectMemberPositionsRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+
+	var positionCodes []project.ProjectPosition
+	if req.PositionCodes != nil {
+		positionCodes = make([]project.ProjectPosition, 0, len(*req.PositionCodes))
+		for _, item := range *req.PositionCodes {
+			positionCodes = append(positionCodes, project.ProjectPosition(item))
+		}
+	}
+
+	result, err := h.projects.ReplaceProjectMemberPositions(c.Context(), projectsvc.ReplaceProjectMemberPositionsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+		PositionCodes: positionCodes,
+	})
+	if err != nil {
+		return renderProjectError(c, err)
+	}
+
+	items := make([]memberPositionResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, toMemberPositionResponse(item))
+	}
+	return presenter.RenderList(c, items)
+}
+
 func (h Handler) requireSession(c fiber.Ctx) error {
 	if h.session == nil {
 		return presenter.RenderError(c, fiber.StatusUnauthorized, "AUTH_SESSION_REQUIRED", "Authentication session is required")
@@ -510,6 +614,10 @@ func renderProjectError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_TYPE_INVALID", "Project type is invalid")
 	case errors.Is(err, projectsvc.ErrProjectRoleInvalid):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ROLE_INVALID", "Project role is invalid")
+	case errors.Is(err, projectsvc.ErrProjectPositionCodesRequired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_POSITION_CODES_REQUIRED", "Project position codes are required")
+	case errors.Is(err, projectsvc.ErrProjectPositionInvalid):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_POSITION_INVALID", "Project position is invalid")
 	case errors.Is(err, projectsvc.ErrProjectPriorityInvalid):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_PRIORITY_INVALID", "Project priority is invalid")
 	case errors.Is(err, projectsvc.ErrProjectUpdateNoFields):
@@ -609,5 +717,24 @@ func toMemberResponse(value project.Member) memberResponse {
 		UserAccountID:         userAccountID,
 		Role:                  string(value.Role),
 		Status:                string(value.Status),
+	}
+}
+
+func toProjectPositionResponse(value project.PositionMaster) projectPositionResponse {
+	return projectPositionResponse{
+		ID:          value.ID.String(),
+		Code:        string(value.Code),
+		Name:        value.Name,
+		Description: value.Description,
+	}
+}
+
+func toMemberPositionResponse(value project.MemberPosition) memberPositionResponse {
+	return memberPositionResponse{
+		ID:         value.ID.String(),
+		MemberID:   value.ProjectMemberID.String(),
+		PositionID: value.PositionID.String(),
+		Code:       string(value.Position),
+		Name:       value.Name,
 	}
 }

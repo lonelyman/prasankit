@@ -483,8 +483,8 @@ config
 - Auth ยังล็อกเป็น Session-based Auth + Redis + httpOnly Cookie ไม่ใช้ JWT เป็น auth หลัก
 - ค่า role/master/permission ให้ใช้ master/FK; ค่า `status`/`mode` ที่เป็น lifecycle/system state ยังใช้ text + constraint ได้จนกว่าจะมีเหตุผลให้ยกเป็น master
 - Permission Guard ก้อนแรกอยู่ที่ `internal/modules/workspace/workspaceperm`; `GET /api/v1/workspaces/current` ใช้ permission `workspace.view`
-- Project foundation ก้อนแรกมี `project_roles`, `project_priorities`, `project_code_counters`, `projects`, `project_members`; role/priority ใช้ master/FK ตั้งแต่ migration แรก
-- Project routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects`, `POST /api/v1/workspace/projects`, `GET /api/v1/workspace/projects/{project_id}`, `PATCH /api/v1/workspace/projects/{project_id}`, `GET /api/v1/workspace/projects/{project_id}/members`, `POST /api/v1/workspace/projects/{project_id}/members`, `PATCH /api/v1/workspace/projects/{project_id}/members/{member_id}` และ `DELETE /api/v1/workspace/projects/{project_id}/members/{member_id}`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
+- Project foundation ก้อนแรกมี `project_roles`, `project_priorities`, `project_positions`, `project_code_counters`, `projects`, `project_members`, `project_member_positions`; role/priority/position ใช้ master/FK ตั้งแต่ migration แรกของแต่ละก้อน
+- Project routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects`, `POST /api/v1/workspace/projects`, `GET /api/v1/workspace/projects/{project_id}`, `PATCH /api/v1/workspace/projects/{project_id}`, `GET /api/v1/workspace/projects/{project_id}/members`, `POST /api/v1/workspace/projects/{project_id}/members`, `PATCH /api/v1/workspace/projects/{project_id}/members/{member_id}`, `DELETE /api/v1/workspace/projects/{project_id}/members/{member_id}`, `GET /api/v1/workspace/projects/{project_id}/positions` และ `PUT /api/v1/workspace/projects/{project_id}/members/{member_id}/positions`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
 
 ## Next Step
 
@@ -525,6 +525,7 @@ PostgreSQL connection done
 -> Workspace HTTP: GET /api/v1/workspaces/current wired
 -> Workspace Permission Guard: workspace.view/workspace.manage policy created
 -> Migration 000006_create_project_core_tables applied
+-> Migration 000007_create_project_position_tables applied
 -> Project HTTP: GET /api/v1/workspace/projects wired
 -> Project HTTP: POST /api/v1/workspace/projects wired
 -> Project HTTP: GET /api/v1/workspace/projects/{project_id} wired
@@ -533,13 +534,15 @@ PostgreSQL connection done
 -> Project HTTP: POST /api/v1/workspace/projects/{project_id}/members wired
 -> Project HTTP: PATCH /api/v1/workspace/projects/{project_id}/members/{member_id} wired
 -> Project HTTP: DELETE /api/v1/workspace/projects/{project_id}/members/{member_id} wired
--> ต่อไปเริ่ม Project Member Position หรือ Task foundation โดยต้องผ่าน Tenant Context + Permission Guard
+-> Project HTTP: GET /api/v1/workspace/projects/{project_id}/positions wired
+-> Project HTTP: PUT /api/v1/workspace/projects/{project_id}/members/{member_id}/positions wired
+-> ต่อไปเริ่ม Task foundation โดยต้องผ่าน Tenant Context + Permission Guard
 ```
 
 ## Do Not Do Yet
 
 - อย่าเริ่ม Workspace/Project แบบข้าม Tenant Context/Permission Guard
-- อย่าเริ่ม Task
+- อย่าเริ่ม Task แบบข้าม Tenant Context/Permission Guard
 - อย่าเพิ่ม Finance
 - อย่าเพิ่ม Deliverable
 - อย่าเพิ่ม Notification

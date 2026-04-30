@@ -21,29 +21,35 @@ import (
 )
 
 type fakeProjectService struct {
-	createResult       *projectsvc.CreateProjectResult
-	createErr          error
-	createInput        projectsvc.CreateProjectInput
-	listResult         *projectsvc.ListProjectsResult
-	listErr            error
-	listInput          projectsvc.ListProjectsInput
-	getResult          *projectsvc.GetProjectResult
-	getErr             error
-	getInput           projectsvc.GetProjectInput
-	updateResult       *projectsvc.UpdateProjectResult
-	updateErr          error
-	updateInput        projectsvc.UpdateProjectInput
-	membersResult      *projectsvc.ListProjectMembersResult
-	membersErr         error
-	membersInput       projectsvc.ListProjectMembersInput
-	addMemberResult    *projectsvc.AddProjectMemberResult
-	addMemberErr       error
-	addMemberInput     projectsvc.AddProjectMemberInput
-	updateMemberResult *projectsvc.UpdateProjectMemberResult
-	updateMemberErr    error
-	updateMemberInput  projectsvc.UpdateProjectMemberInput
-	removeMemberErr    error
-	removeMemberInput  projectsvc.RemoveProjectMemberInput
+	createResult           *projectsvc.CreateProjectResult
+	createErr              error
+	createInput            projectsvc.CreateProjectInput
+	listResult             *projectsvc.ListProjectsResult
+	listErr                error
+	listInput              projectsvc.ListProjectsInput
+	getResult              *projectsvc.GetProjectResult
+	getErr                 error
+	getInput               projectsvc.GetProjectInput
+	updateResult           *projectsvc.UpdateProjectResult
+	updateErr              error
+	updateInput            projectsvc.UpdateProjectInput
+	membersResult          *projectsvc.ListProjectMembersResult
+	membersErr             error
+	membersInput           projectsvc.ListProjectMembersInput
+	addMemberResult        *projectsvc.AddProjectMemberResult
+	addMemberErr           error
+	addMemberInput         projectsvc.AddProjectMemberInput
+	updateMemberResult     *projectsvc.UpdateProjectMemberResult
+	updateMemberErr        error
+	updateMemberInput      projectsvc.UpdateProjectMemberInput
+	removeMemberErr        error
+	removeMemberInput      projectsvc.RemoveProjectMemberInput
+	positionsResult        *projectsvc.ListProjectPositionsResult
+	positionsErr           error
+	positionsInput         projectsvc.ListProjectPositionsInput
+	replacePositionsResult *projectsvc.ReplaceProjectMemberPositionsResult
+	replacePositionsErr    error
+	replacePositionsInput  projectsvc.ReplaceProjectMemberPositionsInput
 }
 
 func (s *fakeProjectService) CreateProject(_ context.Context, input projectsvc.CreateProjectInput) (*projectsvc.CreateProjectResult, error) {
@@ -105,6 +111,22 @@ func (s *fakeProjectService) UpdateProjectMember(_ context.Context, input projec
 func (s *fakeProjectService) RemoveProjectMember(_ context.Context, input projectsvc.RemoveProjectMemberInput) error {
 	s.removeMemberInput = input
 	return s.removeMemberErr
+}
+
+func (s *fakeProjectService) ListProjectPositions(_ context.Context, input projectsvc.ListProjectPositionsInput) (*projectsvc.ListProjectPositionsResult, error) {
+	s.positionsInput = input
+	if s.positionsErr != nil {
+		return nil, s.positionsErr
+	}
+	return s.positionsResult, nil
+}
+
+func (s *fakeProjectService) ReplaceProjectMemberPositions(_ context.Context, input projectsvc.ReplaceProjectMemberPositionsInput) (*projectsvc.ReplaceProjectMemberPositionsResult, error) {
+	s.replacePositionsInput = input
+	if s.replacePositionsErr != nil {
+		return nil, s.replacePositionsErr
+	}
+	return s.replacePositionsResult, nil
 }
 
 type fakeSessionService struct {
@@ -1044,6 +1066,224 @@ func TestRemoveProjectMemberMapsErrors(t *testing.T) {
 			))
 
 			req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspace/projects/"+uuid.Must(uuid.NewV7()).String()+"/members/"+uuid.Must(uuid.NewV7()).String(), nil)
+			req.Header.Set("X-Workspace-Slug", "team-one")
+			req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			assertProjectError(t, resp, tt.wantStatus, tt.wantCode)
+		})
+	}
+}
+
+func TestListProjectPositions(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	positionID := uuid.Must(uuid.NewV7())
+	service := &fakeProjectService{
+		positionsResult: &projectsvc.ListProjectPositionsResult{
+			Items: []project.PositionMaster{
+				{ID: positionID, Code: project.ProjectPositionDeveloper, Name: "Developer"},
+			},
+		},
+	}
+	session := &fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: accountID, Status: auth.UserAccountStatusActive}}}
+	tenant := &fakeTenantResolver{result: &workspacesvc.ResolveTenantContextResult{Context: tenantContext}}
+	app := newProjectTestApp(newTestHandler(service, session, tenant))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/positions", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.positionsInput.ProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", service.positionsInput.ProjectID, projectID)
+	}
+	if service.positionsInput.TenantContext.TenantID != tenantContext.TenantID {
+		t.Fatalf("tenant ID = %s, want %s", service.positionsInput.TenantContext.TenantID, tenantContext.TenantID)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	items := data["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	item := items[0].(map[string]any)
+	if item["code"] != "developer" {
+		t.Fatalf("code = %v, want developer", item["code"])
+	}
+}
+
+func TestReplaceProjectMemberPositions(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+	positionID := uuid.Must(uuid.NewV7())
+	service := &fakeProjectService{
+		replacePositionsResult: &projectsvc.ReplaceProjectMemberPositionsResult{
+			Items: []project.MemberPosition{
+				{
+					ID:              uuid.Must(uuid.NewV7()),
+					TenantID:        tenantContext.TenantID,
+					ProjectID:       projectID,
+					ProjectMemberID: memberID,
+					PositionID:      positionID,
+					Position:        project.ProjectPositionDeveloper,
+					Name:            "Developer",
+				},
+			},
+		},
+	}
+	session := &fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: accountID, Status: auth.UserAccountStatusActive}}}
+	tenant := &fakeTenantResolver{result: &workspacesvc.ResolveTenantContextResult{Context: tenantContext}}
+	app := newProjectTestApp(newTestHandler(service, session, tenant))
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspace/projects/"+projectID.String()+"/members/"+memberID.String()+"/positions", bytes.NewBufferString(`{"position_codes":["developer"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.replacePositionsInput.ProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", service.replacePositionsInput.ProjectID, projectID)
+	}
+	if service.replacePositionsInput.MemberID != memberID {
+		t.Fatalf("member ID = %s, want %s", service.replacePositionsInput.MemberID, memberID)
+	}
+	if len(service.replacePositionsInput.PositionCodes) != 1 || service.replacePositionsInput.PositionCodes[0] != project.ProjectPositionDeveloper {
+		t.Fatalf("position codes = %#v, want developer", service.replacePositionsInput.PositionCodes)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	items := data["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	item := items[0].(map[string]any)
+	if item["code"] != "developer" {
+		t.Fatalf("code = %v, want developer", item["code"])
+	}
+	if _, ok := item["tenant_id"]; ok {
+		t.Fatalf("response must not expose tenant_id: %#v", item)
+	}
+}
+
+func TestReplaceProjectMemberPositionsRequiresManagePermission(t *testing.T) {
+	app := newProjectTestApp(newTestHandler(
+		&fakeProjectService{},
+		&fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}}},
+		&fakeTenantResolver{result: &workspacesvc.ResolveTenantContextResult{Context: testTenantContext(workspace.WorkspaceRoleUser)}},
+	))
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspace/projects/"+uuid.Must(uuid.NewV7()).String()+"/members/"+uuid.Must(uuid.NewV7()).String()+"/positions", bytes.NewBufferString(`{"position_codes":["developer"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertProjectError(t, resp, http.StatusForbidden, "PERMISSION_DENIED")
+}
+
+func TestReplaceProjectMemberPositionsRejectsInvalidIDs(t *testing.T) {
+	app := newProjectTestApp(newTestHandler(
+		&fakeProjectService{},
+		&fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}}},
+		&fakeTenantResolver{result: &workspacesvc.ResolveTenantContextResult{Context: testTenantContext(workspace.WorkspaceRoleOwner)}},
+	))
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspace/projects/not-a-uuid/members/"+uuid.Must(uuid.NewV7()).String()+"/positions", bytes.NewBufferString(`{"position_codes":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertProjectError(t, resp, http.StatusBadRequest, "PROJECT_ID_INVALID")
+
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/workspace/projects/"+uuid.Must(uuid.NewV7()).String()+"/members/not-a-uuid/positions", bytes.NewBufferString(`{"position_codes":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertProjectError(t, resp, http.StatusBadRequest, "PROJECT_MEMBER_ID_INVALID")
+}
+
+func TestReplaceProjectMemberPositionsMapsErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "codes missing",
+			err:        projectsvc.ErrProjectPositionCodesRequired,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "PROJECT_POSITION_CODES_REQUIRED",
+		},
+		{
+			name:       "position invalid",
+			err:        projectsvc.ErrProjectPositionInvalid,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "PROJECT_POSITION_INVALID",
+		},
+		{
+			name:       "member not found",
+			err:        projectsvc.ErrProjectMemberNotFound,
+			wantStatus: http.StatusNotFound,
+			wantCode:   "PROJECT_MEMBER_NOT_FOUND",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := newProjectTestApp(newTestHandler(
+				&fakeProjectService{replacePositionsErr: tt.err},
+				&fakeSessionService{result: &authsvc.CurrentAccountResult{Account: auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}}},
+				&fakeTenantResolver{result: &workspacesvc.ResolveTenantContextResult{Context: testTenantContext(workspace.WorkspaceRoleOwner)}},
+			))
+
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/workspace/projects/"+uuid.Must(uuid.NewV7()).String()+"/members/"+uuid.Must(uuid.NewV7()).String()+"/positions", bytes.NewBufferString(`{"position_codes":["developer"]}`))
+			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Workspace-Slug", "team-one")
 			req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
 			resp, err := app.Test(req)
