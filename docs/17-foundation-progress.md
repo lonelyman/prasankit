@@ -361,6 +361,7 @@ Composition note:
   - `GET /api/v1/workspace/projects/{project_id}/members`
   - `POST /api/v1/workspace/projects/{project_id}/members`
   - `PATCH /api/v1/workspace/projects/{project_id}/members/{member_id}`
+  - `DELETE /api/v1/workspace/projects/{project_id}/members/{member_id}`
   - ทุก project route ต้องผ่าน session, Tenant Context และ Permission Guard ก่อน query
 - ตรวจกลุ่ม field ที่เป็น text แล้ว: ค่า role/master/permission ต้องเป็น master/FK, ส่วน `status`/`mode`/auth provider/type/security severity ตอนนี้ยังถือเป็น lifecycle/system state และคุมด้วย constraint ได้ก่อน
 
@@ -370,7 +371,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปต่อ Change/Remove Project Member แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
+ขั้นถัดไปเริ่ม Project Member Position หรือ Task foundation แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -416,4 +417,5 @@ PostgreSQL connection done
 -> Project HTTP: GET /api/v1/workspace/projects/{project_id}/members wired
 -> Project HTTP: POST /api/v1/workspace/projects/{project_id}/members wired
 -> Project HTTP: PATCH /api/v1/workspace/projects/{project_id}/members/{member_id} wired
+-> Project HTTP: DELETE /api/v1/workspace/projects/{project_id}/members/{member_id} wired
 ```

@@ -30,6 +30,7 @@ type ProjectService interface {
 	ListProjectMembers(ctx context.Context, input projectsvc.ListProjectMembersInput) (*projectsvc.ListProjectMembersResult, error)
 	AddProjectMember(ctx context.Context, input projectsvc.AddProjectMemberInput) (*projectsvc.AddProjectMemberResult, error)
 	UpdateProjectMember(ctx context.Context, input projectsvc.UpdateProjectMemberInput) (*projectsvc.UpdateProjectMemberResult, error)
+	RemoveProjectMember(ctx context.Context, input projectsvc.RemoveProjectMemberInput) error
 }
 
 type SessionService interface {
@@ -129,6 +130,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	projects.Get("/:project_id/members", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListProjectMembers)
 	projects.Post("/:project_id/members", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.AddProjectMember)
 	projects.Patch("/:project_id/members/:member_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateProjectMember)
+	projects.Delete("/:project_id/members/:member_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.RemoveProjectMember)
 	projects.Get("/:project_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetProject)
 	projects.Patch("/:project_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateProject)
 }
@@ -399,6 +401,37 @@ func (h Handler) UpdateProjectMember(c fiber.Ctx) error {
 	return presenter.RenderItem(c, toMemberResponse(result.Member))
 }
 
+func (h Handler) RemoveProjectMember(c fiber.Ctx) error {
+	if h.projects == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+	memberID, err := uuid.Parse(c.Params("member_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_MEMBER_ID_INVALID", "Project member id is invalid")
+	}
+
+	if err := h.projects.RemoveProjectMember(c.Context(), projectsvc.RemoveProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+	}); err != nil {
+		return renderProjectError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
 func (h Handler) requireSession(c fiber.Ctx) error {
 	if h.session == nil {
 		return presenter.RenderError(c, fiber.StatusUnauthorized, "AUTH_SESSION_REQUIRED", "Authentication session is required")
@@ -493,6 +526,8 @@ func renderProjectError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_MEMBER_UPDATE_NO_FIELDS", "Project member update has no fields")
 	case errors.Is(err, projectsvc.ErrProjectMemberNotFound):
 		return presenter.RenderError(c, fiber.StatusNotFound, "PROJECT_MEMBER_NOT_FOUND", "Project member not found")
+	case errors.Is(err, projectsvc.ErrProjectMemberLastOwner):
+		return presenter.RenderError(c, fiber.StatusConflict, "PROJECT_MEMBER_LAST_OWNER", "Project must have at least one owner")
 	case errors.Is(err, projectsvc.ErrAccountInactive):
 		return presenter.RenderError(c, fiber.StatusForbidden, "ACCOUNT_INACTIVE", "Account is inactive")
 	case errors.Is(err, projectsvc.ErrTenantContextRequired):

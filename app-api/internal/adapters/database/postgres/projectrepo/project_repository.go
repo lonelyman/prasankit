@@ -517,6 +517,24 @@ func (r *Repository) FindProjectMemberByID(ctx context.Context, tenantID uuid.UU
 	return &member, nil
 }
 
+func (r *Repository) CountActiveProjectMembersByRole(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, role project.ProjectRole) (int, error) {
+	var total int64
+	err := r.db.WithContext(ctx).
+		Table("project_members AS pm").
+		Joins("JOIN project_roles AS pr ON pr.id = pm.project_role_id").
+		Where("pm.tenant_id = ?", tenantID).
+		Where("pm.workspace_id = ?", workspaceID).
+		Where("pm.project_id = ?", projectID).
+		Where("pm.status = ?", string(project.ProjectMemberStatusActive)).
+		Where("pr.code = ?", string(role)).
+		Count(&total).
+		Error
+	if err != nil {
+		return 0, err
+	}
+	return int(total), nil
+}
+
 func (r *Repository) UpdateProjectMemberRole(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID, roleID uuid.UUID, updatedBy uuid.UUID, updatedAt time.Time) error {
 	result := r.db.WithContext(ctx).
 		Model(&projectMemberRow{}).
@@ -529,6 +547,29 @@ func (r *Repository) UpdateProjectMemberRole(ctx context.Context, tenantID uuid.
 			"project_role_id": roleID,
 			"updated_by":      updatedBy,
 			"updated_at":      updatedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return project.ErrProjectMemberNotFound
+	}
+	return nil
+}
+
+func (r *Repository) RemoveProjectMember(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID, removedBy uuid.UUID, removedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&projectMemberRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("id = ?", memberID).
+		Where("status = ?", string(project.ProjectMemberStatusActive)).
+		Updates(map[string]any{
+			"status":     string(project.ProjectMemberStatusRemoved),
+			"removed_at": removedAt,
+			"updated_by": removedBy,
+			"updated_at": removedAt,
 		})
 	if result.Error != nil {
 		return result.Error

@@ -39,6 +39,14 @@ type fakeRepository struct {
 	updateMemberWorkspaceID    uuid.UUID
 	updateMemberID             uuid.UUID
 	updateMemberUpdatedBy      uuid.UUID
+	ownerCount                 int
+	ownerCountErr              error
+	removeMemberErr            error
+	removeMemberProjectID      uuid.UUID
+	removeMemberTenantID       uuid.UUID
+	removeMemberWorkspaceID    uuid.UUID
+	removeMemberID             uuid.UUID
+	removeMemberRemovedBy      uuid.UUID
 	memberCandidate            *project.WorkspaceMemberCandidate
 	memberCandidateErr         error
 	memberCandidateID          uuid.UUID
@@ -171,6 +179,31 @@ func (r *fakeRepository) UpdateProjectMemberRole(_ context.Context, tenantID uui
 	r.updateMemberUpdatedBy = updatedBy
 	if r.updateMemberErr != nil {
 		return r.updateMemberErr
+	}
+	return nil
+}
+
+func (r *fakeRepository) CountActiveProjectMembersByRole(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, role project.ProjectRole) (int, error) {
+	r.memberTenantID = tenantID
+	r.memberWorkspaceID = workspaceID
+	r.memberProjectID = projectID
+	if r.ownerCountErr != nil {
+		return 0, r.ownerCountErr
+	}
+	if role == project.ProjectRoleOwner {
+		return r.ownerCount, nil
+	}
+	return 0, nil
+}
+
+func (r *fakeRepository) RemoveProjectMember(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID, removedBy uuid.UUID, _ time.Time) error {
+	r.removeMemberTenantID = tenantID
+	r.removeMemberWorkspaceID = workspaceID
+	r.removeMemberProjectID = projectID
+	r.removeMemberID = memberID
+	r.removeMemberRemovedBy = removedBy
+	if r.removeMemberErr != nil {
+		return r.removeMemberErr
 	}
 	return nil
 }
@@ -859,6 +892,145 @@ func TestUpdateProjectMemberMapsErrors(t *testing.T) {
 		ProjectID:     projectID,
 		MemberID:      memberID,
 		Role:          &role,
+	})
+	if !errors.Is(err, ErrProjectMemberNotFound) {
+		t.Fatalf("err = %v, want ErrProjectMemberNotFound", err)
+	}
+}
+
+func TestRemoveProjectMember(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+	accountID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+		findMember: &project.Member{
+			ID:        memberID,
+			TenantID:  tenantContext.TenantID,
+			ProjectID: projectID,
+			Role:      project.ProjectRoleMember,
+			Status:    project.ProjectMemberStatusActive,
+		},
+	}
+	service := NewService(repo)
+
+	err := service.RemoveProjectMember(context.Background(), RemoveProjectMemberInput{
+		Account:       auth.UserAccount{ID: accountID, Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+	})
+	if err != nil {
+		t.Fatalf("RemoveProjectMember: %v", err)
+	}
+	if !repo.transactionCalled {
+		t.Fatal("transaction was not used")
+	}
+	if repo.removeMemberTenantID != tenantContext.TenantID {
+		t.Fatalf("tenant ID = %s, want %s", repo.removeMemberTenantID, tenantContext.TenantID)
+	}
+	if repo.removeMemberWorkspaceID != tenantContext.WorkspaceID {
+		t.Fatalf("workspace ID = %s, want %s", repo.removeMemberWorkspaceID, tenantContext.WorkspaceID)
+	}
+	if repo.removeMemberProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", repo.removeMemberProjectID, projectID)
+	}
+	if repo.removeMemberID != memberID {
+		t.Fatalf("member ID = %s, want %s", repo.removeMemberID, memberID)
+	}
+	if repo.removeMemberRemovedBy != accountID {
+		t.Fatalf("removed by = %s, want %s", repo.removeMemberRemovedBy, accountID)
+	}
+}
+
+func TestRemoveProjectMemberRejectsInvalidInput(t *testing.T) {
+	service := NewService(&fakeRepository{})
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+
+	err := service.RemoveProjectMember(context.Background(), RemoveProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		MemberID:      memberID,
+	})
+	if !errors.Is(err, ErrProjectIDRequired) {
+		t.Fatalf("err = %v, want ErrProjectIDRequired", err)
+	}
+
+	err = service.RemoveProjectMember(context.Background(), RemoveProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+	})
+	if !errors.Is(err, ErrProjectMemberIDRequired) {
+		t.Fatalf("err = %v, want ErrProjectMemberIDRequired", err)
+	}
+}
+
+func TestRemoveProjectMemberRejectsLastOwner(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+		findMember: &project.Member{
+			ID:        memberID,
+			TenantID:  tenantContext.TenantID,
+			ProjectID: projectID,
+			Role:      project.ProjectRoleOwner,
+			Status:    project.ProjectMemberStatusActive,
+		},
+		ownerCount: 1,
+	}
+
+	err := NewService(repo).RemoveProjectMember(context.Background(), RemoveProjectMemberInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+	})
+	if !errors.Is(err, ErrProjectMemberLastOwner) {
+		t.Fatalf("err = %v, want ErrProjectMemberLastOwner", err)
+	}
+	if repo.removeMemberID != uuid.Nil {
+		t.Fatalf("member should not be removed, got %s", repo.removeMemberID)
+	}
+}
+
+func TestRemoveProjectMemberMapsErrors(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	memberID := uuid.Must(uuid.NewV7())
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+
+	err := NewService(&fakeRepository{findErr: project.ErrProjectNotFound}).RemoveProjectMember(context.Background(), RemoveProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
+	})
+	if !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf("err = %v, want ErrProjectNotFound", err)
+	}
+
+	repo := &fakeRepository{
+		findItem: &project.ProjectWithMember{
+			Project: project.Project{ID: projectID, TenantID: tenantContext.TenantID, WorkspaceID: tenantContext.WorkspaceID},
+		},
+		findMemberErr: project.ErrProjectMemberNotFound,
+	}
+	err = NewService(repo).RemoveProjectMember(context.Background(), RemoveProjectMemberInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		MemberID:      memberID,
 	})
 	if !errors.Is(err, ErrProjectMemberNotFound) {
 		t.Fatalf("err = %v, want ErrProjectMemberNotFound", err)

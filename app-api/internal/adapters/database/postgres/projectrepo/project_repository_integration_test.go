@@ -315,8 +315,28 @@ func TestRepositoryIntegration(t *testing.T) {
 	if updatedMember.Role != project.ProjectRoleManager {
 		t.Fatalf("updated member role = %s, want project_manager", updatedMember.Role)
 	}
+	managerCount, err := repo.CountActiveProjectMembersByRole(ctx, tenantID, workspaceID, projectRecord.ID, project.ProjectRoleManager)
+	if err != nil {
+		t.Fatalf("count project managers: %v", err)
+	}
+	if managerCount != 1 {
+		t.Fatalf("manager count = %d, want 1", managerCount)
+	}
 	if err := repo.UpdateProjectMemberRole(ctx, otherTenantID, workspaceID, projectRecord.ID, newMember.ID, memberRole.ID, accountID, time.Now().UTC()); !errors.Is(err, project.ErrProjectMemberNotFound) {
 		t.Fatalf("update member with wrong tenant err = %v, want ErrProjectMemberNotFound", err)
+	}
+	if err := repo.RemoveProjectMember(ctx, tenantID, workspaceID, projectRecord.ID, newMember.ID, accountID, time.Now().UTC()); err != nil {
+		t.Fatalf("remove project member: %v", err)
+	}
+	if _, err := repo.FindProjectMemberByID(ctx, tenantID, workspaceID, projectRecord.ID, newMember.ID); !errors.Is(err, project.ErrProjectMemberNotFound) {
+		t.Fatalf("find removed project member err = %v, want ErrProjectMemberNotFound", err)
+	}
+	managerCount, err = repo.CountActiveProjectMembersByRole(ctx, tenantID, workspaceID, projectRecord.ID, project.ProjectRoleManager)
+	if err != nil {
+		t.Fatalf("count project managers after remove: %v", err)
+	}
+	if managerCount != 0 {
+		t.Fatalf("manager count after remove = %d, want 0", managerCount)
 	}
 
 	_, err = repo.FindProjectByID(ctx, otherTenantID, workspaceID, projectRecord.ID)

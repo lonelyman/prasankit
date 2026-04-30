@@ -38,6 +38,7 @@ var (
 	ErrProjectMemberIDRequired       = errors.New("project member id is required")
 	ErrProjectMemberUpdateNoFields   = errors.New("project member update has no fields")
 	ErrProjectMemberNotFound         = errors.New("project member not found")
+	ErrProjectMemberLastOwner        = errors.New("project member is the last project owner")
 )
 
 type CreateProjectInput struct {
@@ -128,6 +129,13 @@ type UpdateProjectMemberInput struct {
 
 type UpdateProjectMemberResult struct {
 	Member project.Member
+}
+
+type RemoveProjectMemberInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	MemberID      uuid.UUID
 }
 
 type Service struct {
@@ -551,6 +559,57 @@ func (s *Service) UpdateProjectMember(ctx context.Context, input UpdateProjectMe
 	}
 
 	return &UpdateProjectMemberResult{Member: updatedMember}, nil
+}
+
+func (s *Service) RemoveProjectMember(ctx context.Context, input RemoveProjectMemberInput) error {
+	if err := validateAccount(input.Account); err != nil {
+		return err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return err
+	}
+	if input.ProjectID == uuid.Nil {
+		return ErrProjectIDRequired
+	}
+	if input.MemberID == uuid.Nil {
+		return ErrProjectMemberIDRequired
+	}
+
+	now := s.clock()
+	return s.repository.WithinTransaction(ctx, func(ctx context.Context, repo project.Repository) error {
+		if _, err := repo.FindProjectByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID); err != nil {
+			if errors.Is(err, project.ErrProjectNotFound) {
+				return ErrProjectNotFound
+			}
+			return err
+		}
+
+		member, err := repo.FindProjectMemberByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.MemberID)
+		if errors.Is(err, project.ErrProjectMemberNotFound) {
+			return ErrProjectMemberNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		if member.Role == project.ProjectRoleOwner {
+			ownerCount, err := repo.CountActiveProjectMembersByRole(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, project.ProjectRoleOwner)
+			if err != nil {
+				return err
+			}
+			if ownerCount <= 1 {
+				return ErrProjectMemberLastOwner
+			}
+		}
+
+		if err := repo.RemoveProjectMember(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.MemberID, input.Account.ID, now); err != nil {
+			if errors.Is(err, project.ErrProjectMemberNotFound) {
+				return ErrProjectMemberNotFound
+			}
+			return err
+		}
+		return nil
+	})
 }
 
 func validateAccount(account auth.UserAccount) error {

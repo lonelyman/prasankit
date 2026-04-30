@@ -29,5 +29,7 @@ type Repository interface {
 	ListProjects(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, limit int, offset int) ([]ProjectWithMember, int, error)
 	ListProjectMembers(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, limit int, offset int) ([]Member, int, error)
 	FindProjectMemberByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID) (*Member, error)
+	CountActiveProjectMembersByRole(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, role ProjectRole) (int, error)
 	UpdateProjectMemberRole(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID, roleID uuid.UUID, updatedBy uuid.UUID, updatedAt time.Time) error
+	RemoveProjectMember(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, memberID uuid.UUID, removedBy uuid.UUID, removedAt time.Time) error
 }
