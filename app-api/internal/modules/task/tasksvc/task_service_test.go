@@ -17,6 +17,10 @@ type fakeRepository struct {
 	taskItems         []task.Task
 	taskTotal         int
 	taskErr           error
+	updatePatch       task.Patch
+	updateErr         error
+	deleteTaskID      uuid.UUID
+	deleteErr         error
 	findTask          *task.Task
 	findTaskErr       error
 	projectExists     bool
@@ -82,6 +86,28 @@ func (r *fakeRepository) CreateTask(_ context.Context, item *task.Task) error {
 	}
 	item.ID = uuid.Must(uuid.NewV7())
 	r.task = item
+	return nil
+}
+
+func (r *fakeRepository) UpdateTask(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, _ uuid.UUID, patch task.Patch) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.updatePatch = patch
+	if r.updateErr != nil {
+		return r.updateErr
+	}
+	return nil
+}
+
+func (r *fakeRepository) SoftDeleteTask(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, _ uuid.UUID) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.deleteTaskID = taskID
+	if r.deleteErr != nil {
+		return r.deleteErr
+	}
 	return nil
 }
 
@@ -257,6 +283,112 @@ func TestGetTask(t *testing.T) {
 	if result.Task.ID != taskID {
 		t.Fatalf("task ID = %s, want %s", result.Task.ID, taskID)
 	}
+}
+
+func TestUpdateTask(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	assigneeID := uuid.Must(uuid.NewV7())
+	title := "Task B"
+	priority := task.PriorityHigh
+	description := "Updated"
+	repo := &fakeRepository{
+		assigneeExists: true,
+		findTask:       &task.Task{ID: taskID, ProjectID: projectID, No: "TASK-0001", Title: "Task B", Priority: task.PriorityHigh},
+	}
+
+	result, err := NewService(repo).UpdateTask(context.Background(), UpdateTaskInput{
+		Account:          auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext:    tenantContext,
+		ProjectID:        projectID,
+		TaskID:           taskID,
+		Title:            &title,
+		Priority:         &priority,
+		AssigneeMemberID: ptrUUIDPtr(&assigneeID),
+		Description:      &description,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if repo.updatePatch.Title == nil || *repo.updatePatch.Title != "Task B" {
+		t.Fatalf("title patch = %#v, want Task B", repo.updatePatch.Title)
+	}
+	if repo.updatePatch.PriorityID == nil {
+		t.Fatal("priority ID patch was not set")
+	}
+	if repo.updatePatch.AssigneeMemberID == nil || *repo.updatePatch.AssigneeMemberID == nil || **repo.updatePatch.AssigneeMemberID != assigneeID {
+		t.Fatalf("assignee patch = %#v, want %s", repo.updatePatch.AssigneeMemberID, assigneeID)
+	}
+	if result.Task.ID != taskID {
+		t.Fatalf("task ID = %s, want %s", result.Task.ID, taskID)
+	}
+}
+
+func TestUpdateTaskRejectsInvalidInput(t *testing.T) {
+	service := NewService(&fakeRepository{})
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+
+	_, err := service.UpdateTask(context.Background(), UpdateTaskInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		TaskID:        taskID,
+		Title:         ptrString("Task B"),
+	})
+	if !errors.Is(err, ErrProjectIDRequired) {
+		t.Fatalf("err = %v, want ErrProjectIDRequired", err)
+	}
+
+	_, err = service.UpdateTask(context.Background(), UpdateTaskInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Title:         ptrString("Task B"),
+	})
+	if !errors.Is(err, ErrTaskIDRequired) {
+		t.Fatalf("err = %v, want ErrTaskIDRequired", err)
+	}
+
+	_, err = service.UpdateTask(context.Background(), UpdateTaskInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+	})
+	if !errors.Is(err, ErrTaskUpdateNoFields) {
+		t.Fatalf("err = %v, want ErrTaskUpdateNoFields", err)
+	}
+}
+
+func TestDeleteTask(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{}
+
+	err := NewService(repo).DeleteTask(context.Background(), DeleteTaskInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+	})
+	if err != nil {
+		t.Fatalf("DeleteTask: %v", err)
+	}
+	if repo.deleteTaskID != taskID {
+		t.Fatalf("delete task ID = %s, want %s", repo.deleteTaskID, taskID)
+	}
+}
+
+func ptrString(value string) *string {
+	return &value
+}
+
+func ptrUUIDPtr(value *uuid.UUID) **uuid.UUID {
+	return &value
 }
 
 func testTenantContext() workspace.TenantContext {

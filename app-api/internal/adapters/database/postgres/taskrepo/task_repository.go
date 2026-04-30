@@ -193,6 +193,71 @@ func (r *Repository) CreateTask(ctx context.Context, item *task.Task) error {
 	return nil
 }
 
+func (r *Repository) UpdateTask(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, patch task.Patch) error {
+	updates := map[string]any{
+		"updated_by": patch.UpdatedBy,
+		"updated_at": patch.UpdatedAt,
+	}
+	if patch.Title != nil {
+		updates["task_title"] = *patch.Title
+	}
+	if patch.PriorityID != nil {
+		updates["priority_id"] = *patch.PriorityID
+	}
+	if patch.AssigneeMemberID != nil {
+		updates["assignee_member_id"] = *patch.AssigneeMemberID
+	}
+	if patch.Description != nil {
+		updates["description"] = *patch.Description
+	}
+	if patch.StartDate != nil {
+		updates["start_date"] = *patch.StartDate
+	}
+	if patch.DueDate != nil {
+		updates["due_date"] = *patch.DueDate
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&taskRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("id = ?", taskID).
+		Where("deleted_at IS NULL").
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrTaskNotFound
+	}
+	return nil
+}
+
+func (r *Repository) SoftDeleteTask(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, deletedBy uuid.UUID) error {
+	now := time.Now().UTC()
+	result := r.db.WithContext(ctx).
+		Model(&taskRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("id = ?", taskID).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"deleted_by": deletedBy,
+			"deleted_at": now,
+			"updated_by": deletedBy,
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrTaskNotFound
+	}
+	return nil
+}
+
 func (r *Repository) FindTaskByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) (*task.Task, error) {
 	var row taskRow
 	err := r.db.WithContext(ctx).

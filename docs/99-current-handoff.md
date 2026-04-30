@@ -486,7 +486,7 @@ config
 - Project foundation ก้อนแรกมี `project_roles`, `project_priorities`, `project_positions`, `project_code_counters`, `projects`, `project_members`, `project_member_positions`; role/priority/position ใช้ master/FK ตั้งแต่ migration แรกของแต่ละก้อน
 - Project routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects`, `POST /api/v1/workspace/projects`, `GET /api/v1/workspace/projects/{project_id}`, `PATCH /api/v1/workspace/projects/{project_id}`, `GET /api/v1/workspace/projects/{project_id}/members`, `POST /api/v1/workspace/projects/{project_id}/members`, `PATCH /api/v1/workspace/projects/{project_id}/members/{member_id}`, `DELETE /api/v1/workspace/projects/{project_id}/members/{member_id}`, `GET /api/v1/workspace/projects/{project_id}/positions` และ `PUT /api/v1/workspace/projects/{project_id}/members/{member_id}/positions`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
 - Task foundation ก้อนแรกมี `task_counters` และ `tasks`; `tasks.priority_id` reuse `project_priorities.id`, ส่วน `tasks.status` ยังเป็น system state ของ MVP
-- Task routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects/{project_id}/tasks`, `POST /api/v1/workspace/projects/{project_id}/tasks` และ `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
+- Task routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects/{project_id}/tasks`, `POST /api/v1/workspace/projects/{project_id}/tasks`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}` และ `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
 
 ## Next Step
 
@@ -542,7 +542,9 @@ PostgreSQL connection done
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks wired
 -> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
--> ต่อไปต่อ Task update/delete/status/reassign โดยต้องผ่าน Tenant Context + Permission Guard
+-> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
+-> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
+-> ต่อไปต่อ Task status/reassign โดยต้องผ่าน Tenant Context + Permission Guard
 ```
 
 ## Do Not Do Yet

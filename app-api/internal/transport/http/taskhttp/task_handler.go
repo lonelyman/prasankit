@@ -26,6 +26,8 @@ type TaskService interface {
 	CreateTask(ctx context.Context, input tasksvc.CreateTaskInput) (*tasksvc.CreateTaskResult, error)
 	ListTasks(ctx context.Context, input tasksvc.ListTasksInput) (*tasksvc.ListTasksResult, error)
 	GetTask(ctx context.Context, input tasksvc.GetTaskInput) (*tasksvc.GetTaskResult, error)
+	UpdateTask(ctx context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error)
+	DeleteTask(ctx context.Context, input tasksvc.DeleteTaskInput) error
 }
 
 type SessionService interface {
@@ -59,6 +61,15 @@ type createTaskRequest struct {
 	DueDate          *string `json:"due_date"`
 }
 
+type updateTaskRequest struct {
+	Title            *string `json:"title"`
+	Priority         *string `json:"priority"`
+	AssigneeMemberID *string `json:"assignee_member_id"`
+	Description      *string `json:"description"`
+	StartDate        *string `json:"start_date"`
+	DueDate          *string `json:"due_date"`
+}
+
 type taskResponse struct {
 	ID               string  `json:"id"`
 	ProjectID        string  `json:"project_id"`
@@ -87,6 +98,8 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	tasks.Get("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTasks)
 	tasks.Post("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTask)
 	tasks.Get("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTask)
+	tasks.Patch("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTask)
+	tasks.Delete("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.DeleteTask)
 }
 
 func (h Handler) CreateTask(c fiber.Ctx) error {
@@ -206,6 +219,91 @@ func (h Handler) GetTask(c fiber.Ctx) error {
 	return presenter.RenderItem(c, toTaskResponse(result.Task))
 }
 
+func (h Handler) UpdateTask(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+
+	var req updateTaskRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+
+	assigneeMemberID, err := parsePatchUUID(req.AssigneeMemberID)
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ASSIGNEE_MEMBER_ID_INVALID", "Task assignee member id is invalid")
+	}
+	startDate, err := parsePatchDate(req.StartDate)
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_START_DATE_INVALID", "Task start date is invalid")
+	}
+	dueDate, err := parsePatchDate(req.DueDate)
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_DUE_DATE_INVALID", "Task due date is invalid")
+	}
+
+	var priority *task.Priority
+	if req.Priority != nil {
+		value := task.Priority(*req.Priority)
+		priority = &value
+	}
+
+	result, err := h.tasks.UpdateTask(c.Context(), tasksvc.UpdateTaskInput{
+		Account:          account,
+		TenantContext:    tenantContext,
+		ProjectID:        projectID,
+		TaskID:           taskID,
+		Title:            req.Title,
+		Priority:         priority,
+		AssigneeMemberID: assigneeMemberID,
+		Description:      req.Description,
+		StartDate:        startDate,
+		DueDate:          dueDate,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, toTaskResponse(result.Task))
+}
+
+func (h Handler) DeleteTask(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+
+	if err := h.tasks.DeleteTask(c.Context(), tasksvc.DeleteTaskInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+	}); err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
 func (h Handler) requireSession(c fiber.Ctx) error {
 	if h.session == nil {
 		return presenter.RenderError(c, fiber.StatusUnauthorized, "AUTH_SESSION_REQUIRED", "Authentication session is required")
@@ -280,6 +378,8 @@ func renderTaskError(c fiber.Ctx, err error) error {
 	switch {
 	case errors.Is(err, tasksvc.ErrTaskTitleRequired):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_TITLE_REQUIRED", "Task title is required")
+	case errors.Is(err, tasksvc.ErrTaskUpdateNoFields):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_UPDATE_NO_FIELDS", "Task update has no fields")
 	case errors.Is(err, tasksvc.ErrTaskPriorityInvalid):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_PRIORITY_INVALID", "Task priority is invalid")
 	case errors.Is(err, tasksvc.ErrTaskAssigneeNotFound):
@@ -351,6 +451,50 @@ func parseOptionalDate(value *string) (*time.Time, error) {
 		return nil, err
 	}
 	return &parsed, nil
+}
+
+func parsePatchUUID(value *string) (**uuid.UUID, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if *value == "" {
+		var id *uuid.UUID
+		return &id, nil
+	}
+	id, err := uuid.Parse(*value)
+	if err != nil {
+		return nil, err
+	}
+	idPtr := &id
+	return &idPtr, nil
+}
+
+func parsePatchDate(value *string) (**time.Time, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if *value == "" {
+		var date *time.Time
+		return &date, nil
+	}
+	parsed, err := time.Parse(time.DateOnly, *value)
+	if err != nil {
+		return nil, err
+	}
+	datePtr := &parsed
+	return &datePtr, nil
+}
+
+func parseProjectAndTaskIDs(c fiber.Ctx) (uuid.UUID, uuid.UUID, error) {
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+	taskID, err := uuid.Parse(c.Params("task_id"))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ID_INVALID", "Task id is invalid")
+	}
+	return projectID, taskID, nil
 }
 
 func toTaskResponse(value task.Task) taskResponse {

@@ -47,6 +47,17 @@ type Task struct {
 	DeletedAt        *time.Time
 }
 
+type Patch struct {
+	Title            *string
+	PriorityID       *uuid.UUID
+	AssigneeMemberID **uuid.UUID
+	Description      *string
+	StartDate        **time.Time
+	DueDate          **time.Time
+	UpdatedBy        uuid.UUID
+	UpdatedAt        time.Time
+}
+
 type PriorityMaster struct {
 	ID   uuid.UUID
 	Code Priority

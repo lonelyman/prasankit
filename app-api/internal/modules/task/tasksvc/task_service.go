@@ -27,6 +27,7 @@ var (
 	ErrTaskIDRequired        = errors.New("task id is required")
 	ErrTaskNotFound          = errors.New("task not found")
 	ErrTaskTitleRequired     = errors.New("task title is required")
+	ErrTaskUpdateNoFields    = errors.New("task update has no fields")
 	ErrTaskPriorityInvalid   = errors.New("task priority is invalid")
 	ErrTaskAssigneeNotFound  = errors.New("task assignee not found")
 	ErrTaskCreateFail        = errors.New("task create failed")
@@ -70,6 +71,30 @@ type GetTaskInput struct {
 
 type GetTaskResult struct {
 	Task task.Task
+}
+
+type UpdateTaskInput struct {
+	Account          auth.UserAccount
+	TenantContext    workspace.TenantContext
+	ProjectID        uuid.UUID
+	TaskID           uuid.UUID
+	Title            *string
+	Priority         *task.Priority
+	AssigneeMemberID **uuid.UUID
+	Description      *string
+	StartDate        **time.Time
+	DueDate          **time.Time
+}
+
+type UpdateTaskResult struct {
+	Task task.Task
+}
+
+type DeleteTaskInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
 }
 
 type Repository interface {
@@ -237,6 +262,118 @@ func (s *Service) GetTask(ctx context.Context, input GetTaskInput) (*GetTaskResu
 		return nil, err
 	}
 	return &GetTaskResult{Task: *item}, nil
+}
+
+func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*UpdateTaskResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+
+	patch := task.Patch{
+		UpdatedBy: input.Account.ID,
+		UpdatedAt: s.clock(),
+	}
+	hasField := false
+
+	if input.Title != nil {
+		title := strings.TrimSpace(*input.Title)
+		if title == "" {
+			return nil, ErrTaskTitleRequired
+		}
+		patch.Title = &title
+		hasField = true
+	}
+	if input.Priority != nil {
+		priority, err := s.repository.FindPriorityByCode(ctx, *input.Priority)
+		if errors.Is(err, task.ErrPriorityNotFound) {
+			return nil, ErrTaskPriorityInvalid
+		}
+		if err != nil {
+			return nil, err
+		}
+		patch.PriorityID = &priority.ID
+		hasField = true
+	}
+	if input.AssigneeMemberID != nil {
+		if *input.AssigneeMemberID != nil {
+			if **input.AssigneeMemberID == uuid.Nil {
+				return nil, ErrTaskAssigneeNotFound
+			}
+			exists, err := s.repository.FindActiveProjectMemberByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, **input.AssigneeMemberID)
+			if err != nil {
+				return nil, err
+			}
+			if !exists {
+				return nil, ErrTaskAssigneeNotFound
+			}
+		}
+		patch.AssigneeMemberID = input.AssigneeMemberID
+		hasField = true
+	}
+	if input.Description != nil {
+		description := strings.TrimSpace(*input.Description)
+		patch.Description = &description
+		hasField = true
+	}
+	if input.StartDate != nil {
+		patch.StartDate = input.StartDate
+		hasField = true
+	}
+	if input.DueDate != nil {
+		patch.DueDate = input.DueDate
+		hasField = true
+	}
+	if !hasField {
+		return nil, ErrTaskUpdateNoFields
+	}
+
+	if err := s.repository.UpdateTask(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, patch); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+
+	item, err := s.repository.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+	if errors.Is(err, task.ErrTaskNotFound) {
+		return nil, ErrTaskNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &UpdateTaskResult{Task: *item}, nil
+}
+
+func (s *Service) DeleteTask(ctx context.Context, input DeleteTaskInput) error {
+	if err := validateAccount(input.Account); err != nil {
+		return err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return err
+	}
+	if input.ProjectID == uuid.Nil {
+		return ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return ErrTaskIDRequired
+	}
+
+	if err := s.repository.SoftDeleteTask(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.Account.ID); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 func validateAccount(account auth.UserAccount) error {

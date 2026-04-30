@@ -30,6 +30,11 @@ type fakeTaskService struct {
 	getResult    *tasksvc.GetTaskResult
 	getErr       error
 	getInput     tasksvc.GetTaskInput
+	updateResult *tasksvc.UpdateTaskResult
+	updateErr    error
+	updateInput  tasksvc.UpdateTaskInput
+	deleteErr    error
+	deleteInput  tasksvc.DeleteTaskInput
 }
 
 func (s *fakeTaskService) CreateTask(_ context.Context, input tasksvc.CreateTaskInput) (*tasksvc.CreateTaskResult, error) {
@@ -54,6 +59,19 @@ func (s *fakeTaskService) GetTask(_ context.Context, input tasksvc.GetTaskInput)
 		return nil, s.getErr
 	}
 	return s.getResult, nil
+}
+
+func (s *fakeTaskService) UpdateTask(_ context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error) {
+	s.updateInput = input
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	return s.updateResult, nil
+}
+
+func (s *fakeTaskService) DeleteTask(_ context.Context, input tasksvc.DeleteTaskInput) error {
+	s.deleteInput = input
+	return s.deleteErr
 }
 
 type fakeSessionService struct {
@@ -211,6 +229,73 @@ func TestCreateTaskRequiresManagePermission(t *testing.T) {
 	defer resp.Body.Close()
 
 	assertTaskError(t, resp, http.StatusForbidden, "PERMISSION_DENIED")
+}
+
+func TestUpdateTask(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	assigneeID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{
+		updateResult: &tasksvc.UpdateTaskResult{
+			Task: task.Task{
+				ID:               taskID,
+				ProjectID:        projectID,
+				No:               "TASK-0001",
+				Title:            "Task B",
+				Status:           task.StatusTodo,
+				Priority:         task.PriorityHigh,
+				AssigneeMemberID: &assigneeID,
+			},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String(), bytes.NewBufferString(`{"title":"Task B","priority":"high","assignee_member_id":"`+assigneeID.String()+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.updateInput.TaskID != taskID {
+		t.Fatalf("task ID = %s, want %s", service.updateInput.TaskID, taskID)
+	}
+	if service.updateInput.AssigneeMemberID == nil || *service.updateInput.AssigneeMemberID == nil || **service.updateInput.AssigneeMemberID != assigneeID {
+		t.Fatalf("assignee member ID = %#v, want %s", service.updateInput.AssigneeMemberID, assigneeID)
+	}
+}
+
+func TestDeleteTask(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String(), nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+	if service.deleteInput.TaskID != taskID {
+		t.Fatalf("task ID = %s, want %s", service.deleteInput.TaskID, taskID)
+	}
 }
 
 func newTestHandler(taskService TaskService, accountID uuid.UUID, tenantContext workspace.TenantContext) Handler {
