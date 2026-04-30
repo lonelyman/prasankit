@@ -234,6 +234,29 @@ func (r *Repository) UpdateTask(ctx context.Context, tenantID uuid.UUID, workspa
 	return nil
 }
 
+func (r *Repository) UpdateTaskStatus(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, status task.Status, completedDate *time.Time, updatedBy uuid.UUID, updatedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&taskRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("id = ?", taskID).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"status":         string(status),
+			"completed_date": completedDate,
+			"updated_by":     updatedBy,
+			"updated_at":     updatedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrTaskNotFound
+	}
+	return nil
+}
+
 func (r *Repository) SoftDeleteTask(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, deletedBy uuid.UUID) error {
 	now := time.Now().UTC()
 	result := r.db.WithContext(ctx).

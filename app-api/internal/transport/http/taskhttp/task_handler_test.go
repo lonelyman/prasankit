@@ -33,6 +33,9 @@ type fakeTaskService struct {
 	updateResult *tasksvc.UpdateTaskResult
 	updateErr    error
 	updateInput  tasksvc.UpdateTaskInput
+	statusResult *tasksvc.UpdateTaskStatusResult
+	statusErr    error
+	statusInput  tasksvc.UpdateTaskStatusInput
 	deleteErr    error
 	deleteInput  tasksvc.DeleteTaskInput
 }
@@ -67,6 +70,14 @@ func (s *fakeTaskService) UpdateTask(_ context.Context, input tasksvc.UpdateTask
 		return nil, s.updateErr
 	}
 	return s.updateResult, nil
+}
+
+func (s *fakeTaskService) UpdateTaskStatus(_ context.Context, input tasksvc.UpdateTaskStatusInput) (*tasksvc.UpdateTaskStatusResult, error) {
+	s.statusInput = input
+	if s.statusErr != nil {
+		return nil, s.statusErr
+	}
+	return s.statusResult, nil
 }
 
 func (s *fakeTaskService) DeleteTask(_ context.Context, input tasksvc.DeleteTaskInput) error {
@@ -271,6 +282,67 @@ func TestUpdateTask(t *testing.T) {
 	if service.updateInput.AssigneeMemberID == nil || *service.updateInput.AssigneeMemberID == nil || **service.updateInput.AssigneeMemberID != assigneeID {
 		t.Fatalf("assignee member ID = %#v, want %s", service.updateInput.AssigneeMemberID, assigneeID)
 	}
+}
+
+func TestUpdateTaskStatus(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{
+		statusResult: &tasksvc.UpdateTaskStatusResult{
+			Task: task.Task{
+				ID:        taskID,
+				ProjectID: projectID,
+				No:        "TASK-0001",
+				Title:     "Task A",
+				Status:    task.StatusInProgress,
+				Priority:  task.PriorityMedium,
+			},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/status", bytes.NewBufferString(`{"status":"in_progress"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.statusInput.TaskID != taskID {
+		t.Fatalf("task ID = %s, want %s", service.statusInput.TaskID, taskID)
+	}
+	if service.statusInput.Status != task.StatusInProgress {
+		t.Fatalf("status = %s, want in_progress", service.statusInput.Status)
+	}
+}
+
+func TestUpdateTaskStatusRejectsInvalidStatus(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{statusErr: tasksvc.ErrTaskStatusInvalid}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/status", bytes.NewBufferString(`{"status":"invalid"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertTaskError(t, resp, http.StatusBadRequest, "TASK_STATUS_INVALID")
 }
 
 func TestDeleteTask(t *testing.T) {

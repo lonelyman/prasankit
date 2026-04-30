@@ -376,6 +376,7 @@ Composition note:
   - `POST /api/v1/workspace/projects/{project_id}/tasks`
   - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
   - `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
+  - `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status`
   - `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
   - ทุก task route ต้องผ่าน session, Tenant Context และ Permission Guard ก่อน query
 - ตรวจกลุ่ม field ที่เป็น text แล้ว: ค่า role/master/permission ต้องเป็น master/FK, ส่วน `status`/`mode`/auth provider/type/security severity ตอนนี้ยังถือเป็น lifecycle/system state และคุมด้วย constraint ได้ก่อน
@@ -386,7 +387,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปต่อ Task status/reassign แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
+ขั้นถัดไปต่อ Task reassign/filters แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -441,5 +442,6 @@ PostgreSQL connection done
 -> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
+-> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
 ```

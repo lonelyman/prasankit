@@ -16,6 +16,15 @@ const (
 	StatusCancelled  Status = "cancelled"
 )
 
+func (s Status) IsValid() bool {
+	switch s {
+	case StatusTodo, StatusInProgress, StatusBlocked, StatusDone, StatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
 type Priority string
 
 const (

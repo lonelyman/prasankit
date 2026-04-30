@@ -28,6 +28,7 @@ var (
 	ErrTaskNotFound          = errors.New("task not found")
 	ErrTaskTitleRequired     = errors.New("task title is required")
 	ErrTaskUpdateNoFields    = errors.New("task update has no fields")
+	ErrTaskStatusInvalid     = errors.New("task status is invalid")
 	ErrTaskPriorityInvalid   = errors.New("task priority is invalid")
 	ErrTaskAssigneeNotFound  = errors.New("task assignee not found")
 	ErrTaskCreateFail        = errors.New("task create failed")
@@ -87,6 +88,18 @@ type UpdateTaskInput struct {
 }
 
 type UpdateTaskResult struct {
+	Task task.Task
+}
+
+type UpdateTaskStatusInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	Status        task.Status
+}
+
+type UpdateTaskStatusResult struct {
 	Task task.Task
 }
 
@@ -351,6 +364,46 @@ func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*Updat
 		return nil, err
 	}
 	return &UpdateTaskResult{Task: *item}, nil
+}
+
+func (s *Service) UpdateTaskStatus(ctx context.Context, input UpdateTaskStatusInput) (*UpdateTaskStatusResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	if !input.Status.IsValid() {
+		return nil, ErrTaskStatusInvalid
+	}
+
+	now := s.clock()
+	var completedDate *time.Time
+	if input.Status == task.StatusDone {
+		completedDate = &now
+	}
+
+	if err := s.repository.UpdateTaskStatus(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.Status, completedDate, input.Account.ID, now); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+
+	item, err := s.repository.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+	if errors.Is(err, task.ErrTaskNotFound) {
+		return nil, ErrTaskNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &UpdateTaskStatusResult{Task: *item}, nil
 }
 
 func (s *Service) DeleteTask(ctx context.Context, input DeleteTaskInput) error {

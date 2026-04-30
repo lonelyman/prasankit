@@ -27,6 +27,7 @@ type TaskService interface {
 	ListTasks(ctx context.Context, input tasksvc.ListTasksInput) (*tasksvc.ListTasksResult, error)
 	GetTask(ctx context.Context, input tasksvc.GetTaskInput) (*tasksvc.GetTaskResult, error)
 	UpdateTask(ctx context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error)
+	UpdateTaskStatus(ctx context.Context, input tasksvc.UpdateTaskStatusInput) (*tasksvc.UpdateTaskStatusResult, error)
 	DeleteTask(ctx context.Context, input tasksvc.DeleteTaskInput) error
 }
 
@@ -70,6 +71,10 @@ type updateTaskRequest struct {
 	DueDate          *string `json:"due_date"`
 }
 
+type updateTaskStatusRequest struct {
+	Status string `json:"status"`
+}
+
 type taskResponse struct {
 	ID               string  `json:"id"`
 	ProjectID        string  `json:"project_id"`
@@ -98,6 +103,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	tasks.Get("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTasks)
 	tasks.Post("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTask)
 	tasks.Get("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTask)
+	tasks.Patch("/:task_id/status", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTaskStatus)
 	tasks.Patch("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTask)
 	tasks.Delete("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.DeleteTask)
 }
@@ -277,6 +283,40 @@ func (h Handler) UpdateTask(c fiber.Ctx) error {
 	return presenter.RenderItem(c, toTaskResponse(result.Task))
 }
 
+func (h Handler) UpdateTaskStatus(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+
+	var req updateTaskStatusRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+
+	result, err := h.tasks.UpdateTaskStatus(c.Context(), tasksvc.UpdateTaskStatusInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Status:        task.Status(req.Status),
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, toTaskResponse(result.Task))
+}
+
 func (h Handler) DeleteTask(c fiber.Ctx) error {
 	if h.tasks == nil {
 		return h.NotImplemented(c)
@@ -380,6 +420,8 @@ func renderTaskError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_TITLE_REQUIRED", "Task title is required")
 	case errors.Is(err, tasksvc.ErrTaskUpdateNoFields):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_UPDATE_NO_FIELDS", "Task update has no fields")
+	case errors.Is(err, tasksvc.ErrTaskStatusInvalid):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_STATUS_INVALID", "Task status is invalid")
 	case errors.Is(err, tasksvc.ErrTaskPriorityInvalid):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_PRIORITY_INVALID", "Task priority is invalid")
 	case errors.Is(err, tasksvc.ErrTaskAssigneeNotFound):

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/internal/modules/task"
@@ -19,6 +20,10 @@ type fakeRepository struct {
 	taskErr           error
 	updatePatch       task.Patch
 	updateErr         error
+	statusTaskID      uuid.UUID
+	statusValue       task.Status
+	completedDate     *time.Time
+	statusErr         error
 	deleteTaskID      uuid.UUID
 	deleteErr         error
 	findTask          *task.Task
@@ -96,6 +101,19 @@ func (r *fakeRepository) UpdateTask(_ context.Context, tenantID uuid.UUID, works
 	r.updatePatch = patch
 	if r.updateErr != nil {
 		return r.updateErr
+	}
+	return nil
+}
+
+func (r *fakeRepository) UpdateTaskStatus(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, status task.Status, completedDate *time.Time, _ uuid.UUID, _ time.Time) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	r.statusValue = status
+	r.completedDate = completedDate
+	if r.statusErr != nil {
+		return r.statusErr
 	}
 	return nil
 }
@@ -360,6 +378,77 @@ func TestUpdateTaskRejectsInvalidInput(t *testing.T) {
 	})
 	if !errors.Is(err, ErrTaskUpdateNoFields) {
 		t.Fatalf("err = %v, want ErrTaskUpdateNoFields", err)
+	}
+}
+
+func TestUpdateTaskStatus(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findTask: &task.Task{ID: taskID, ProjectID: projectID, No: "TASK-0001", Title: "Task A", Status: task.StatusDone},
+	}
+
+	result, err := NewService(repo).UpdateTaskStatus(context.Background(), UpdateTaskStatusInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Status:        task.StatusDone,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+	if repo.statusTaskID != taskID {
+		t.Fatalf("task ID = %s, want %s", repo.statusTaskID, taskID)
+	}
+	if repo.statusValue != task.StatusDone {
+		t.Fatalf("status = %s, want done", repo.statusValue)
+	}
+	if repo.completedDate == nil {
+		t.Fatal("completed date was not set for done status")
+	}
+	if result.Task.Status != task.StatusDone {
+		t.Fatalf("result status = %s, want done", result.Task.Status)
+	}
+}
+
+func TestUpdateTaskStatusRejectsInvalidInput(t *testing.T) {
+	service := NewService(&fakeRepository{})
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+
+	_, err := service.UpdateTaskStatus(context.Background(), UpdateTaskStatusInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		TaskID:        taskID,
+		Status:        task.StatusDone,
+	})
+	if !errors.Is(err, ErrProjectIDRequired) {
+		t.Fatalf("err = %v, want ErrProjectIDRequired", err)
+	}
+
+	_, err = service.UpdateTaskStatus(context.Background(), UpdateTaskStatusInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Status:        task.StatusDone,
+	})
+	if !errors.Is(err, ErrTaskIDRequired) {
+		t.Fatalf("err = %v, want ErrTaskIDRequired", err)
+	}
+
+	_, err = service.UpdateTaskStatus(context.Background(), UpdateTaskStatusInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Status:        task.Status("invalid"),
+	})
+	if !errors.Is(err, ErrTaskStatusInvalid) {
+		t.Fatalf("err = %v, want ErrTaskStatusInvalid", err)
 	}
 }
 
