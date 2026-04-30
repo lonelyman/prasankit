@@ -66,6 +66,18 @@ type ListTasksResult struct {
 	Total int
 }
 
+type GetTaskBoardSummaryInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+}
+
+type GetTaskBoardSummaryResult struct {
+	ProjectID uuid.UUID
+	Counts    []task.StatusCount
+	Total     int
+}
+
 type GetTaskInput struct {
 	Account       auth.UserAccount
 	TenantContext workspace.TenantContext
@@ -275,6 +287,51 @@ func (s *Service) ListTasks(ctx context.Context, input ListTasksInput) (*ListTas
 		return nil, err
 	}
 	return &ListTasksResult{Items: items, Total: total}, nil
+}
+
+func (s *Service) GetTaskBoardSummary(ctx context.Context, input GetTaskBoardSummaryInput) (*GetTaskBoardSummaryResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+
+	exists, err := s.repository.ProjectExists(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrProjectNotFound
+	}
+
+	rows, err := s.repository.CountTasksByStatus(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+
+	countsByStatus := make(map[task.Status]int, len(task.AllStatuses()))
+	for _, status := range task.AllStatuses() {
+		countsByStatus[status] = 0
+	}
+	for _, row := range rows {
+		if row.Status.IsValid() {
+			countsByStatus[row.Status] = row.Count
+		}
+	}
+
+	counts := make([]task.StatusCount, 0, len(task.AllStatuses()))
+	total := 0
+	for _, status := range task.AllStatuses() {
+		count := countsByStatus[status]
+		total += count
+		counts = append(counts, task.StatusCount{Status: status, Count: count})
+	}
+
+	return &GetTaskBoardSummaryResult{ProjectID: input.ProjectID, Counts: counts, Total: total}, nil
 }
 
 func (s *Service) GetTask(ctx context.Context, input GetTaskInput) (*GetTaskResult, error) {

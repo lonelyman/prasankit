@@ -16,6 +16,16 @@ const (
 	StatusCancelled  Status = "cancelled"
 )
 
+func AllStatuses() []Status {
+	return []Status{
+		StatusTodo,
+		StatusInProgress,
+		StatusBlocked,
+		StatusDone,
+		StatusCancelled,
+	}
+}
+
 func (s Status) IsValid() bool {
 	switch s {
 	case StatusTodo, StatusInProgress, StatusBlocked, StatusDone, StatusCancelled:
@@ -86,4 +96,9 @@ type ListFilter struct {
 	Status           *Status
 	PriorityID       *uuid.UUID
 	AssigneeMemberID *uuid.UUID
+}
+
+type StatusCount struct {
+	Status Status
+	Count  int
 }

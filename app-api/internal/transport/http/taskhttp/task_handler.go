@@ -26,6 +26,7 @@ const workspaceSlugHeader = "X-Workspace-Slug"
 type TaskService interface {
 	CreateTask(ctx context.Context, input tasksvc.CreateTaskInput) (*tasksvc.CreateTaskResult, error)
 	ListTasks(ctx context.Context, input tasksvc.ListTasksInput) (*tasksvc.ListTasksResult, error)
+	GetTaskBoardSummary(ctx context.Context, input tasksvc.GetTaskBoardSummaryInput) (*tasksvc.GetTaskBoardSummaryResult, error)
 	GetTask(ctx context.Context, input tasksvc.GetTaskInput) (*tasksvc.GetTaskResult, error)
 	UpdateTask(ctx context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error)
 	UpdateTaskStatus(ctx context.Context, input tasksvc.UpdateTaskStatusInput) (*tasksvc.UpdateTaskStatusResult, error)
@@ -90,6 +91,12 @@ type taskResponse struct {
 	CompletedDate    *string `json:"completed_date,omitempty"`
 }
 
+type taskBoardSummaryResponse struct {
+	ProjectID string         `json:"project_id"`
+	Total     int            `json:"total"`
+	Counts    map[string]int `json:"counts"`
+}
+
 func NewHandler(taskService TaskService, sessionService SessionService, tenantResolver TenantResolver, cookie CookieConfig) Handler {
 	return Handler{
 		tasks:   taskService,
@@ -103,6 +110,7 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	tasks := router.Group("/workspace/projects/:project_id/tasks")
 	tasks.Get("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTasks)
 	tasks.Post("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTask)
+	tasks.Get("/summary", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTaskBoardSummary)
 	tasks.Get("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTask)
 	tasks.Patch("/:task_id/status", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTaskStatus)
 	tasks.Patch("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTask)
@@ -201,6 +209,33 @@ func (h Handler) ListTasks(c fiber.Ctx) error {
 		items = append(items, toTaskResponse(item))
 	}
 	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
+}
+
+func (h Handler) GetTaskBoardSummary(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+
+	result, err := h.tasks.GetTaskBoardSummary(c.Context(), tasksvc.GetTaskBoardSummaryInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, toTaskBoardSummaryResponse(*result))
 }
 
 func (h Handler) GetTask(c fiber.Ctx) error {
@@ -598,6 +633,18 @@ func toTaskResponse(value task.Task) taskResponse {
 		StartDate:        formatDate(value.StartDate),
 		DueDate:          formatDate(value.DueDate),
 		CompletedDate:    formatDate(value.CompletedDate),
+	}
+}
+
+func toTaskBoardSummaryResponse(value tasksvc.GetTaskBoardSummaryResult) taskBoardSummaryResponse {
+	counts := make(map[string]int, len(value.Counts))
+	for _, item := range value.Counts {
+		counts[string(item.Status)] = item.Count
+	}
+	return taskBoardSummaryResponse{
+		ProjectID: value.ProjectID.String(),
+		Total:     value.Total,
+		Counts:    counts,
 	}
 }
 

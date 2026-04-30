@@ -51,6 +51,11 @@ type priorityRow struct {
 	Name string    `gorm:"column:name"`
 }
 
+type statusCountRow struct {
+	Status string `gorm:"column:status"`
+	Count  int    `gorm:"column:count"`
+}
+
 func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -355,6 +360,29 @@ func applyListFilter(query *gorm.DB, filter task.ListFilter) *gorm.DB {
 		query = query.Where("t.assignee_member_id = ?", *filter.AssigneeMemberID)
 	}
 	return query
+}
+
+func (r *Repository) CountTasksByStatus(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID) ([]task.StatusCount, error) {
+	var rows []statusCountRow
+	err := r.db.WithContext(ctx).
+		Table("tasks AS t").
+		Select("t.status, COUNT(*) AS count").
+		Where("t.tenant_id = ?", tenantID).
+		Where("t.workspace_id = ?", workspaceID).
+		Where("t.project_id = ?", projectID).
+		Where("t.deleted_at IS NULL").
+		Group("t.status").
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, err
+	}
+
+	counts := make([]task.StatusCount, 0, len(rows))
+	for _, row := range rows {
+		counts = append(counts, task.StatusCount{Status: task.Status(row.Status), Count: row.Count})
+	}
+	return counts, nil
 }
 
 func taskSelect() string {

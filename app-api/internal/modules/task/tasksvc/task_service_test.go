@@ -19,6 +19,8 @@ type fakeRepository struct {
 	taskTotal         int
 	taskErr           error
 	listFilter        task.ListFilter
+	statusCounts      []task.StatusCount
+	statusCountErr    error
 	updatePatch       task.Patch
 	updateErr         error
 	statusTaskID      uuid.UUID
@@ -152,6 +154,16 @@ func (r *fakeRepository) ListTasks(_ context.Context, tenantID uuid.UUID, worksp
 		return nil, 0, r.taskErr
 	}
 	return r.taskItems, r.taskTotal, nil
+}
+
+func (r *fakeRepository) CountTasksByStatus(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID) ([]task.StatusCount, error) {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	if r.statusCountErr != nil {
+		return nil, r.statusCountErr
+	}
+	return r.statusCounts, nil
 }
 
 func TestCreateTask(t *testing.T) {
@@ -325,6 +337,56 @@ func TestListTasksRejectsInvalidFilters(t *testing.T) {
 	})
 	if !errors.Is(err, ErrTaskPriorityInvalid) {
 		t.Fatalf("err = %v, want ErrTaskPriorityInvalid", err)
+	}
+}
+
+func TestGetTaskBoardSummary(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		projectExists: true,
+		statusCounts: []task.StatusCount{
+			{Status: task.StatusTodo, Count: 2},
+			{Status: task.StatusDone, Count: 1},
+		},
+	}
+
+	result, err := NewService(repo).GetTaskBoardSummary(context.Background(), GetTaskBoardSummaryInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+	})
+	if err != nil {
+		t.Fatalf("GetTaskBoardSummary: %v", err)
+	}
+	if result.ProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", result.ProjectID, projectID)
+	}
+	if result.Total != 3 {
+		t.Fatalf("total = %d, want 3", result.Total)
+	}
+	if len(result.Counts) != len(task.AllStatuses()) {
+		t.Fatalf("counts len = %d, want %d", len(result.Counts), len(task.AllStatuses()))
+	}
+	got := make(map[task.Status]int, len(result.Counts))
+	for _, item := range result.Counts {
+		got[item.Status] = item.Count
+	}
+	if got[task.StatusTodo] != 2 || got[task.StatusDone] != 1 || got[task.StatusBlocked] != 0 {
+		t.Fatalf("counts = %#v, want todo=2 done=1 blocked=0", got)
+	}
+}
+
+func TestGetTaskBoardSummaryRejectsInvalidInput(t *testing.T) {
+	service := NewService(&fakeRepository{})
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+
+	_, err := service.GetTaskBoardSummary(context.Background(), GetTaskBoardSummaryInput{
+		Account:       account,
+		TenantContext: testTenantContext(),
+	})
+	if !errors.Is(err, ErrProjectIDRequired) {
+		t.Fatalf("err = %v, want ErrProjectIDRequired", err)
 	}
 }
 

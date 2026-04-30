@@ -21,23 +21,26 @@ import (
 )
 
 type fakeTaskService struct {
-	createResult *tasksvc.CreateTaskResult
-	createErr    error
-	createInput  tasksvc.CreateTaskInput
-	listResult   *tasksvc.ListTasksResult
-	listErr      error
-	listInput    tasksvc.ListTasksInput
-	getResult    *tasksvc.GetTaskResult
-	getErr       error
-	getInput     tasksvc.GetTaskInput
-	updateResult *tasksvc.UpdateTaskResult
-	updateErr    error
-	updateInput  tasksvc.UpdateTaskInput
-	statusResult *tasksvc.UpdateTaskStatusResult
-	statusErr    error
-	statusInput  tasksvc.UpdateTaskStatusInput
-	deleteErr    error
-	deleteInput  tasksvc.DeleteTaskInput
+	createResult  *tasksvc.CreateTaskResult
+	createErr     error
+	createInput   tasksvc.CreateTaskInput
+	listResult    *tasksvc.ListTasksResult
+	listErr       error
+	listInput     tasksvc.ListTasksInput
+	summaryResult *tasksvc.GetTaskBoardSummaryResult
+	summaryErr    error
+	summaryInput  tasksvc.GetTaskBoardSummaryInput
+	getResult     *tasksvc.GetTaskResult
+	getErr        error
+	getInput      tasksvc.GetTaskInput
+	updateResult  *tasksvc.UpdateTaskResult
+	updateErr     error
+	updateInput   tasksvc.UpdateTaskInput
+	statusResult  *tasksvc.UpdateTaskStatusResult
+	statusErr     error
+	statusInput   tasksvc.UpdateTaskStatusInput
+	deleteErr     error
+	deleteInput   tasksvc.DeleteTaskInput
 }
 
 func (s *fakeTaskService) CreateTask(_ context.Context, input tasksvc.CreateTaskInput) (*tasksvc.CreateTaskResult, error) {
@@ -54,6 +57,14 @@ func (s *fakeTaskService) ListTasks(_ context.Context, input tasksvc.ListTasksIn
 		return nil, s.listErr
 	}
 	return s.listResult, nil
+}
+
+func (s *fakeTaskService) GetTaskBoardSummary(_ context.Context, input tasksvc.GetTaskBoardSummaryInput) (*tasksvc.GetTaskBoardSummaryResult, error) {
+	s.summaryInput = input
+	if s.summaryErr != nil {
+		return nil, s.summaryErr
+	}
+	return s.summaryResult, nil
 }
 
 func (s *fakeTaskService) GetTask(_ context.Context, input tasksvc.GetTaskInput) (*tasksvc.GetTaskResult, error) {
@@ -220,6 +231,55 @@ func TestListTasksRejectsInvalidAssigneeFilter(t *testing.T) {
 	defer resp.Body.Close()
 
 	assertTaskError(t, resp, http.StatusBadRequest, "TASK_ASSIGNEE_MEMBER_ID_INVALID")
+}
+
+func TestGetTaskBoardSummary(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{
+		summaryResult: &tasksvc.GetTaskBoardSummaryResult{
+			ProjectID: projectID,
+			Total:     3,
+			Counts: []task.StatusCount{
+				{Status: task.StatusTodo, Count: 2},
+				{Status: task.StatusInProgress, Count: 1},
+				{Status: task.StatusBlocked, Count: 0},
+				{Status: task.StatusDone, Count: 0},
+				{Status: task.StatusCancelled, Count: 0},
+			},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/summary", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.summaryInput.ProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", service.summaryInput.ProjectID, projectID)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := body["data"].(map[string]any)
+	if data["total"].(float64) != 3 {
+		t.Fatalf("total = %v, want 3", data["total"])
+	}
+	counts := data["counts"].(map[string]any)
+	if counts["todo"].(float64) != 2 || counts["in_progress"].(float64) != 1 {
+		t.Fatalf("counts = %#v, want todo=2 in_progress=1", counts)
+	}
 }
 
 func TestGetTask(t *testing.T) {
