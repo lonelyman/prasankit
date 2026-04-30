@@ -13,14 +13,17 @@ import (
 	"prasankit-api/internal/adapters/cache/redis/sessionstore"
 	"prasankit-api/internal/adapters/database/postgres/authrepo"
 	"prasankit-api/internal/adapters/database/postgres/projectrepo"
+	"prasankit-api/internal/adapters/database/postgres/taskrepo"
 	"prasankit-api/internal/adapters/database/postgres/workspacerepo"
 	"prasankit-api/internal/adapters/email/smtpemail"
 	"prasankit-api/internal/config"
 	"prasankit-api/internal/modules/auth/authsvc"
 	"prasankit-api/internal/modules/project/projectsvc"
+	"prasankit-api/internal/modules/task/tasksvc"
 	"prasankit-api/internal/modules/workspace/workspacesvc"
 	"prasankit-api/internal/transport/http/authhttp"
 	"prasankit-api/internal/transport/http/projecthttp"
+	"prasankit-api/internal/transport/http/taskhttp"
 	"prasankit-api/internal/transport/http/workspacehttp"
 	"prasankit-api/pkg/passwordhash"
 
@@ -102,10 +105,18 @@ func InitializeApp(cfg config.Config) (*App, error) {
 		Secure:   cfg.Cookie.Secure,
 		SameSite: cfg.Cookie.SameSite,
 	})
+	taskRepository := taskrepo.NewRepository(postgresDB)
+	taskService := tasksvc.NewService(taskRepository)
+	taskHandler := taskhttp.NewHandler(taskService, authService, workspaceService, taskhttp.CookieConfig{
+		Name:     cfg.Session.CookieName,
+		TTL:      cfg.Session.TTL,
+		Secure:   cfg.Cookie.Secure,
+		SameSite: cfg.Cookie.SameSite,
+	})
 
 	return &App{
 		config:      cfg,
-		httpApp:     NewHTTPApp(postgresSQLDB, redisClient, storageClient, authHandler, workspaceHandler, projectHandler),
+		httpApp:     NewHTTPApp(postgresSQLDB, redisClient, storageClient, authHandler, workspaceHandler, projectHandler, taskHandler),
 		postgres:    postgresDB,
 		postgresSQL: postgresSQLDB,
 		redis:       redisClient,

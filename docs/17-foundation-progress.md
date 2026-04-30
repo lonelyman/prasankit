@@ -367,6 +367,15 @@ Composition note:
   - `GET /api/v1/workspace/projects/{project_id}/positions`
   - `PUT /api/v1/workspace/projects/{project_id}/members/{member_id}/positions`
   - ทุก project route ต้องผ่าน session, Tenant Context และ Permission Guard ก่อน query
+- เพิ่ม Task foundation ก้อนแรกแล้ว:
+  - migration `000008_create_task_core_tables.sql`
+  - `task_counters` สำหรับรัน task no ใน backend transaction
+  - `tasks.priority_id` reuse `project_priorities.id`
+  - `tasks.status` เป็น system state ของ MVP: `todo`, `in_progress`, `blocked`, `done`, `cancelled`
+  - `GET /api/v1/workspace/projects/{project_id}/tasks`
+  - `POST /api/v1/workspace/projects/{project_id}/tasks`
+  - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
+  - ทุก task route ต้องผ่าน session, Tenant Context และ Permission Guard ก่อน query
 - ตรวจกลุ่ม field ที่เป็น text แล้ว: ค่า role/master/permission ต้องเป็น master/FK, ส่วน `status`/`mode`/auth provider/type/security severity ตอนนี้ยังถือเป็น lifecycle/system state และคุมด้วย constraint ได้ก่อน
 
 หมายเหตุ:
@@ -375,7 +384,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปเริ่ม Task foundation แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
+ขั้นถัดไปต่อ Task update/delete/status/reassign แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -425,4 +434,8 @@ PostgreSQL connection done
 -> Project HTTP: DELETE /api/v1/workspace/projects/{project_id}/members/{member_id} wired
 -> Project HTTP: GET /api/v1/workspace/projects/{project_id}/positions wired
 -> Project HTTP: PUT /api/v1/workspace/projects/{project_id}/members/{member_id}/positions wired
+-> Migration 000008_create_task_core_tables applied
+-> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks wired
+-> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks wired
+-> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
 ```

@@ -5,12 +5,13 @@ import (
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
 	"prasankit-api/internal/transport/http/projecthttp"
+	"prasankit-api/internal/transport/http/taskhttp"
 	"prasankit-api/internal/transport/http/workspacehttp"
 
 	"github.com/gofiber/fiber/v3"
 )
 
-func RegisterRoutes(app *fiber.App, healthHandler health.Handler, authHandler authhttp.Handler, workspaceHandler workspacehttp.Handler, projectHandler projecthttp.Handler) {
+func RegisterRoutes(app *fiber.App, healthHandler health.Handler, authHandler authhttp.Handler, workspaceHandler workspacehttp.Handler, projectHandler projecthttp.Handler, taskHandler taskhttp.Handler) {
 	app.Use(middlewares.RequestID)
 
 	api := app.Group("/api/v1")
@@ -20,4 +21,5 @@ func RegisterRoutes(app *fiber.App, healthHandler health.Handler, authHandler au
 	authHandler.RegisterRoutes(api)
 	workspaceHandler.RegisterRoutes(api)
 	projectHandler.RegisterRoutes(api)
+	taskHandler.RegisterRoutes(api)
 }

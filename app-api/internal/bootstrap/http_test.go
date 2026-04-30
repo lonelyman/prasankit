@@ -13,6 +13,7 @@ import (
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
 	"prasankit-api/internal/transport/http/projecthttp"
+	"prasankit-api/internal/transport/http/taskhttp"
 	"prasankit-api/internal/transport/http/workspacehttp"
 
 	"github.com/gofiber/fiber/v3"
@@ -281,6 +282,10 @@ func newTestHTTPApp(checks map[string]healthCheck) *fiber.App {
 			SameSite: "Lax",
 		}),
 		projecthttp.NewHandler(nil, nil, nil, projecthttp.CookieConfig{
+			Name:     "prasankit_session",
+			SameSite: "Lax",
+		}),
+		taskhttp.NewHandler(nil, nil, nil, taskhttp.CookieConfig{
 			Name:     "prasankit_session",
 			SameSite: "Lax",
 		}),

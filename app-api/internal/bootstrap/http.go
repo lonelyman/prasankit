@@ -9,6 +9,7 @@ import (
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
 	"prasankit-api/internal/transport/http/projecthttp"
+	"prasankit-api/internal/transport/http/taskhttp"
 	"prasankit-api/internal/transport/http/workspacehttp"
 
 	"github.com/gofiber/fiber/v3"
@@ -23,6 +24,7 @@ func NewHTTPApp(
 	authHandler authhttp.Handler,
 	workspaceHandler workspacehttp.Handler,
 	projectHandler projecthttp.Handler,
+	taskHandler taskhttp.Handler,
 ) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:      "prasankit-api",
@@ -40,7 +42,7 @@ func NewHTTPApp(
 		},
 	})
 
-	httptransport.RegisterRoutes(app, healthHandler, authHandler, workspaceHandler, projectHandler)
+	httptransport.RegisterRoutes(app, healthHandler, authHandler, workspaceHandler, projectHandler, taskHandler)
 
 	return app
 }
