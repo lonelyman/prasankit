@@ -33,6 +33,15 @@ const (
 	PriorityHigh   Priority = "high"
 )
 
+func (p Priority) IsValid() bool {
+	switch p {
+	case PriorityLow, PriorityMedium, PriorityHigh:
+		return true
+	default:
+		return false
+	}
+}
+
 type Task struct {
 	ID               uuid.UUID
 	TenantID         uuid.UUID
@@ -71,4 +80,10 @@ type PriorityMaster struct {
 	ID   uuid.UUID
 	Code Priority
 	Name string
+}
+
+type ListFilter struct {
+	Status           *Status
+	PriorityID       *uuid.UUID
+	AssigneeMemberID *uuid.UUID
 }

@@ -51,11 +51,14 @@ type CreateTaskResult struct {
 }
 
 type ListTasksInput struct {
-	Account       auth.UserAccount
-	TenantContext workspace.TenantContext
-	ProjectID     uuid.UUID
-	Limit         int
-	Offset        int
+	Account          auth.UserAccount
+	TenantContext    workspace.TenantContext
+	ProjectID        uuid.UUID
+	Status           *task.Status
+	Priority         *task.Priority
+	AssigneeMemberID *uuid.UUID
+	Limit            int
+	Offset           int
 }
 
 type ListTasksResult struct {
@@ -246,7 +249,28 @@ func (s *Service) ListTasks(ctx context.Context, input ListTasksInput) (*ListTas
 		return nil, ErrProjectNotFound
 	}
 
-	items, total, err := s.repository.ListTasks(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, limit, offset)
+	filter := task.ListFilter{
+		Status:           input.Status,
+		AssigneeMemberID: input.AssigneeMemberID,
+	}
+	if input.Status != nil && !input.Status.IsValid() {
+		return nil, ErrTaskStatusInvalid
+	}
+	if input.Priority != nil {
+		if !input.Priority.IsValid() {
+			return nil, ErrTaskPriorityInvalid
+		}
+		priority, err := s.repository.FindPriorityByCode(ctx, *input.Priority)
+		if errors.Is(err, task.ErrPriorityNotFound) {
+			return nil, ErrTaskPriorityInvalid
+		}
+		if err != nil {
+			return nil, err
+		}
+		filter.PriorityID = &priority.ID
+	}
+
+	items, total, err := s.repository.ListTasks(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, filter, limit, offset)
 	if err != nil {
 		return nil, err
 	}

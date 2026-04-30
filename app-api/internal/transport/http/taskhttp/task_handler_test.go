@@ -167,6 +167,7 @@ func TestListTasks(t *testing.T) {
 	accountID := uuid.Must(uuid.NewV7())
 	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
 	projectID := uuid.Must(uuid.NewV7())
+	assigneeID := uuid.Must(uuid.NewV7())
 	service := &fakeTaskService{
 		listResult: &tasksvc.ListTasksResult{
 			Total: 1,
@@ -177,7 +178,7 @@ func TestListTasks(t *testing.T) {
 	}
 	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks?page=1&limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks?page=1&limit=10&status=todo&priority=medium&assignee_member_id="+assigneeID.String(), nil)
 	req.Header.Set("X-Workspace-Slug", "team-one")
 	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
 	resp, err := app.Test(req)
@@ -195,6 +196,30 @@ func TestListTasks(t *testing.T) {
 	if service.listInput.Limit != 10 || service.listInput.Offset != 0 {
 		t.Fatalf("pagination = limit %d offset %d, want 10/0", service.listInput.Limit, service.listInput.Offset)
 	}
+	if service.listInput.Status == nil || *service.listInput.Status != task.StatusTodo {
+		t.Fatalf("status filter = %#v, want todo", service.listInput.Status)
+	}
+	if service.listInput.Priority == nil || *service.listInput.Priority != task.PriorityMedium {
+		t.Fatalf("priority filter = %#v, want medium", service.listInput.Priority)
+	}
+	if service.listInput.AssigneeMemberID == nil || *service.listInput.AssigneeMemberID != assigneeID {
+		t.Fatalf("assignee filter = %#v, want %s", service.listInput.AssigneeMemberID, assigneeID)
+	}
+}
+
+func TestListTasksRejectsInvalidAssigneeFilter(t *testing.T) {
+	app := newTaskTestApp(newTestHandler(&fakeTaskService{}, uuid.Must(uuid.NewV7()), testTenantContext(workspace.WorkspaceRoleUser)))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+uuid.Must(uuid.NewV7()).String()+"/tasks?assignee_member_id=invalid", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertTaskError(t, resp, http.StatusBadRequest, "TASK_ASSIGNEE_MEMBER_ID_INVALID")
 }
 
 func TestGetTask(t *testing.T) {

@@ -18,6 +18,7 @@ type fakeRepository struct {
 	taskItems         []task.Task
 	taskTotal         int
 	taskErr           error
+	listFilter        task.ListFilter
 	updatePatch       task.Patch
 	updateErr         error
 	statusTaskID      uuid.UUID
@@ -142,10 +143,11 @@ func (r *fakeRepository) FindTaskByID(_ context.Context, tenantID uuid.UUID, wor
 	return nil, task.ErrTaskNotFound
 }
 
-func (r *fakeRepository) ListTasks(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, _ int, _ int) ([]task.Task, int, error) {
+func (r *fakeRepository) ListTasks(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, filter task.ListFilter, _ int, _ int) ([]task.Task, int, error) {
 	r.tenantID = tenantID
 	r.workspaceID = workspaceID
 	r.projectID = projectID
+	r.listFilter = filter
 	if r.taskErr != nil {
 		return nil, 0, r.taskErr
 	}
@@ -258,6 +260,9 @@ func TestCreateTaskMapsErrors(t *testing.T) {
 func TestListTasks(t *testing.T) {
 	tenantContext := testTenantContext()
 	projectID := uuid.Must(uuid.NewV7())
+	assigneeID := uuid.Must(uuid.NewV7())
+	status := task.StatusInProgress
+	priority := task.PriorityHigh
 	repo := &fakeRepository{
 		projectExists: true,
 		taskTotal:     1,
@@ -267,10 +272,13 @@ func TestListTasks(t *testing.T) {
 	}
 
 	result, err := NewService(repo).ListTasks(context.Background(), ListTasksInput{
-		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
-		TenantContext: tenantContext,
-		ProjectID:     projectID,
-		Limit:         10,
+		Account:          auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext:    tenantContext,
+		ProjectID:        projectID,
+		Status:           &status,
+		Priority:         &priority,
+		AssigneeMemberID: &assigneeID,
+		Limit:            10,
 	})
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
@@ -280,6 +288,43 @@ func TestListTasks(t *testing.T) {
 	}
 	if repo.projectID != projectID {
 		t.Fatalf("project ID = %s, want %s", repo.projectID, projectID)
+	}
+	if repo.listFilter.Status == nil || *repo.listFilter.Status != task.StatusInProgress {
+		t.Fatalf("status filter = %#v, want in_progress", repo.listFilter.Status)
+	}
+	if repo.listFilter.PriorityID == nil {
+		t.Fatal("priority ID filter was not set")
+	}
+	if repo.listFilter.AssigneeMemberID == nil || *repo.listFilter.AssigneeMemberID != assigneeID {
+		t.Fatalf("assignee filter = %#v, want %s", repo.listFilter.AssigneeMemberID, assigneeID)
+	}
+}
+
+func TestListTasksRejectsInvalidFilters(t *testing.T) {
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	invalidStatus := task.Status("invalid")
+	invalidPriority := task.Priority("urgent")
+
+	_, err := NewService(&fakeRepository{projectExists: true}).ListTasks(context.Background(), ListTasksInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Status:        &invalidStatus,
+	})
+	if !errors.Is(err, ErrTaskStatusInvalid) {
+		t.Fatalf("err = %v, want ErrTaskStatusInvalid", err)
+	}
+
+	_, err = NewService(&fakeRepository{projectExists: true}).ListTasks(context.Background(), ListTasksInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Priority:      &invalidPriority,
+	})
+	if !errors.Is(err, ErrTaskPriorityInvalid) {
+		t.Fatalf("err = %v, want ErrTaskPriorityInvalid", err)
 	}
 }
 

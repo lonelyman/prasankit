@@ -3,6 +3,7 @@ package taskhttp
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"prasankit-api/internal/modules/auth"
@@ -175,12 +176,21 @@ func (h Handler) ListTasks(c fiber.Ctx) error {
 	}
 
 	query := presenter.ParseOffsetQuery(c)
+	status := parseTaskStatusQuery(c.Query("status"))
+	priority := parseTaskPriorityQuery(c.Query("priority"))
+	assigneeMemberID, err := parseTaskAssigneeQuery(c.Query("assignee_member_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ASSIGNEE_MEMBER_ID_INVALID", "Task assignee member id is invalid")
+	}
 	result, err := h.tasks.ListTasks(c.Context(), tasksvc.ListTasksInput{
-		Account:       account,
-		TenantContext: tenantContext,
-		ProjectID:     projectID,
-		Limit:         query.Limit,
-		Offset:        query.Offset,
+		Account:          account,
+		TenantContext:    tenantContext,
+		ProjectID:        projectID,
+		Status:           status,
+		Priority:         priority,
+		AssigneeMemberID: assigneeMemberID,
+		Limit:            query.Limit,
+		Offset:           query.Offset,
 	})
 	if err != nil {
 		return renderTaskError(c, err)
@@ -525,6 +535,36 @@ func parsePatchDate(value *string) (**time.Time, error) {
 	}
 	datePtr := &parsed
 	return &datePtr, nil
+}
+
+func parseTaskStatusQuery(value string) *task.Status {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	status := task.Status(value)
+	return &status
+}
+
+func parseTaskPriorityQuery(value string) *task.Priority {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	priority := task.Priority(value)
+	return &priority
+}
+
+func parseTaskAssigneeQuery(value string) (*uuid.UUID, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(value)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
 }
 
 func parseProjectAndTaskIDs(c fiber.Ctx) (uuid.UUID, uuid.UUID, error) {

@@ -305,7 +305,7 @@ func (r *Repository) FindTaskByID(ctx context.Context, tenantID uuid.UUID, works
 	return &item, nil
 }
 
-func (r *Repository) ListTasks(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, limit int, offset int) ([]task.Task, int, error) {
+func (r *Repository) ListTasks(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, filter task.ListFilter, limit int, offset int) ([]task.Task, int, error) {
 	var total int64
 	countQuery := r.db.WithContext(ctx).
 		Table("tasks AS t").
@@ -313,19 +313,21 @@ func (r *Repository) ListTasks(ctx context.Context, tenantID uuid.UUID, workspac
 		Where("t.workspace_id = ?", workspaceID).
 		Where("t.project_id = ?", projectID).
 		Where("t.deleted_at IS NULL")
+	countQuery = applyListFilter(countQuery, filter)
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	var rows []taskRow
-	err := r.db.WithContext(ctx).
+	query := r.db.WithContext(ctx).
 		Table("tasks AS t").
 		Select(taskSelect()).
 		Joins("JOIN project_priorities AS pp ON pp.id = t.priority_id").
 		Where("t.tenant_id = ?", tenantID).
 		Where("t.workspace_id = ?", workspaceID).
 		Where("t.project_id = ?", projectID).
-		Where("t.deleted_at IS NULL").
+		Where("t.deleted_at IS NULL")
+	err := applyListFilter(query, filter).
 		Order("t.created_at DESC, t.id DESC").
 		Limit(limit).
 		Offset(offset).
@@ -340,6 +342,19 @@ func (r *Repository) ListTasks(ctx context.Context, tenantID uuid.UUID, workspac
 		items = append(items, row.toDomain())
 	}
 	return items, int(total), nil
+}
+
+func applyListFilter(query *gorm.DB, filter task.ListFilter) *gorm.DB {
+	if filter.Status != nil {
+		query = query.Where("t.status = ?", string(*filter.Status))
+	}
+	if filter.PriorityID != nil {
+		query = query.Where("t.priority_id = ?", *filter.PriorityID)
+	}
+	if filter.AssigneeMemberID != nil {
+		query = query.Where("t.assignee_member_id = ?", *filter.AssigneeMemberID)
+	}
+	return query
 }
 
 func taskSelect() string {
