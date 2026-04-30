@@ -3,12 +3,14 @@ package tasksvc
 import (
 	"context"
 	"errors"
+	"path"
 	"strings"
 	"time"
 
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/internal/modules/task"
 	"prasankit-api/internal/modules/workspace"
+	"prasankit-api/pkg/ids"
 
 	"github.com/google/uuid"
 )
@@ -19,19 +21,24 @@ const (
 )
 
 var (
-	ErrAccountRequired       = errors.New("account is required")
-	ErrAccountInactive       = errors.New("account is inactive")
-	ErrTenantContextRequired = errors.New("tenant context is required")
-	ErrProjectIDRequired     = errors.New("project id is required")
-	ErrProjectNotFound       = errors.New("project not found")
-	ErrTaskIDRequired        = errors.New("task id is required")
-	ErrTaskNotFound          = errors.New("task not found")
-	ErrTaskTitleRequired     = errors.New("task title is required")
-	ErrTaskUpdateNoFields    = errors.New("task update has no fields")
-	ErrTaskStatusInvalid     = errors.New("task status is invalid")
-	ErrTaskPriorityInvalid   = errors.New("task priority is invalid")
-	ErrTaskAssigneeNotFound  = errors.New("task assignee not found")
-	ErrTaskCreateFail        = errors.New("task create failed")
+	ErrAccountRequired                = errors.New("account is required")
+	ErrAccountInactive                = errors.New("account is inactive")
+	ErrTenantContextRequired          = errors.New("tenant context is required")
+	ErrProjectIDRequired              = errors.New("project id is required")
+	ErrProjectNotFound                = errors.New("project not found")
+	ErrTaskIDRequired                 = errors.New("task id is required")
+	ErrTaskNotFound                   = errors.New("task not found")
+	ErrTaskTitleRequired              = errors.New("task title is required")
+	ErrTaskUpdateNoFields             = errors.New("task update has no fields")
+	ErrTaskStatusInvalid              = errors.New("task status is invalid")
+	ErrTaskPriorityInvalid            = errors.New("task priority is invalid")
+	ErrTaskAssigneeNotFound           = errors.New("task assignee not found")
+	ErrTaskCreateFail                 = errors.New("task create failed")
+	ErrTaskAttachmentNotFound         = errors.New("task attachment not found")
+	ErrAttachmentFileNameRequired     = errors.New("attachment file name is required")
+	ErrAttachmentContentTypeRequired  = errors.New("attachment content type is required")
+	ErrAttachmentSizeInvalid          = errors.New("attachment size is invalid")
+	ErrAttachmentStorageNotConfigured = errors.New("attachment storage is not configured")
 )
 
 type CreateTaskInput struct {
@@ -103,6 +110,43 @@ type ListTaskActivitiesResult struct {
 	Total int
 }
 
+type CreateTaskAttachmentUploadInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	FileName      string
+	ContentType   string
+	SizeBytes     int64
+}
+
+type CreateTaskAttachmentUploadResult struct {
+	Attachment task.Attachment
+	UploadURL  task.AttachmentUploadURL
+}
+
+type CompleteTaskAttachmentUploadInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	AttachmentID  uuid.UUID
+}
+
+type ListTaskAttachmentsInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	Limit         int
+	Offset        int
+}
+
+type ListTaskAttachmentsResult struct {
+	Items []task.Attachment
+	Total int
+}
+
 type UpdateTaskInput struct {
 	Account          auth.UserAccount
 	TenantContext    workspace.TenantContext
@@ -143,16 +187,34 @@ type Repository interface {
 	task.Repository
 }
 
-type Service struct {
-	repository Repository
-	clock      func() time.Time
+type AttachmentStorage interface {
+	PresignUpload(ctx context.Context, objectKey string, contentType string) (*task.AttachmentUploadURL, error)
+	Bucket() string
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{
+type Service struct {
+	repository        Repository
+	attachmentStorage AttachmentStorage
+	clock             func() time.Time
+}
+
+type Option func(*Service)
+
+func WithAttachmentStorage(storage AttachmentStorage) Option {
+	return func(s *Service) {
+		s.attachmentStorage = storage
+	}
+}
+
+func NewService(repository Repository, opts ...Option) *Service {
+	service := &Service{
 		repository: repository,
 		clock:      func() time.Time { return time.Now().UTC() },
 	}
+	for _, opt := range opts {
+		opt(service)
+	}
+	return service
 }
 
 func (s *Service) CreateTask(ctx context.Context, input CreateTaskInput) (*CreateTaskResult, error) {
@@ -417,6 +479,169 @@ func (s *Service) ListTaskActivities(ctx context.Context, input ListTaskActiviti
 	return &ListTaskActivitiesResult{Items: items, Total: total}, nil
 }
 
+func (s *Service) CreateTaskAttachmentUpload(ctx context.Context, input CreateTaskAttachmentUploadInput) (*CreateTaskAttachmentUploadResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if s.attachmentStorage == nil {
+		return nil, ErrAttachmentStorageNotConfigured
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+
+	fileName := strings.TrimSpace(input.FileName)
+	if fileName == "" {
+		return nil, ErrAttachmentFileNameRequired
+	}
+	contentType := strings.TrimSpace(input.ContentType)
+	if contentType == "" {
+		return nil, ErrAttachmentContentTypeRequired
+	}
+	if input.SizeBytes <= 0 {
+		return nil, ErrAttachmentSizeInvalid
+	}
+
+	item, err := s.repository.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+	if errors.Is(err, task.ErrTaskNotFound) {
+		return nil, ErrTaskNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	attachmentID, err := ids.NewUUID()
+	if err != nil {
+		return nil, err
+	}
+	now := s.clock()
+	objectKey := buildAttachmentObjectKey(input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, attachmentID, fileName)
+	attachment := task.Attachment{
+		ID:            attachmentID,
+		TenantID:      input.TenantContext.TenantID,
+		WorkspaceID:   input.TenantContext.WorkspaceID,
+		ProjectID:     input.ProjectID,
+		TaskID:        input.TaskID,
+		FileName:      fileName,
+		ContentType:   contentType,
+		SizeBytes:     input.SizeBytes,
+		StorageBucket: s.attachmentStorage.Bucket(),
+		ObjectKey:     objectKey,
+		UploadStatus:  task.AttachmentPending,
+		UploadedBy:    input.Account.ID,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	uploadURL, err := s.attachmentStorage.PresignUpload(ctx, objectKey, contentType)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		if err := repo.CreateTaskAttachment(ctx, &attachment); err != nil {
+			return err
+		}
+		return createActivity(ctx, repo, *item, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"attachment_id": attachment.ID.String(),
+			"file_name":     attachment.FileName,
+			"action":        "attachment_created",
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &CreateTaskAttachmentUploadResult{Attachment: attachment, UploadURL: *uploadURL}, nil
+}
+
+func (s *Service) CompleteTaskAttachmentUpload(ctx context.Context, input CompleteTaskAttachmentUploadInput) error {
+	if err := validateAccount(input.Account); err != nil {
+		return err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return err
+	}
+	if input.ProjectID == uuid.Nil {
+		return ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return ErrTaskIDRequired
+	}
+	if input.AttachmentID == uuid.Nil {
+		return ErrTaskAttachmentNotFound
+	}
+	now := s.clock()
+
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		item, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		if err := repo.MarkTaskAttachmentUploaded(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.AttachmentID, now); err != nil {
+			if errors.Is(err, task.ErrAttachmentNotFound) {
+				return ErrTaskAttachmentNotFound
+			}
+			return err
+		}
+
+		return createActivity(ctx, repo, *item, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"attachment_id": input.AttachmentID.String(),
+			"action":        "attachment_uploaded",
+		})
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) ListTaskAttachments(ctx context.Context, input ListTaskAttachmentsInput) (*ListTaskAttachmentsResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	limit := input.Limit
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := input.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if _, err := s.repository.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+	items, total, err := s.repository.ListTaskAttachments(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &ListTaskAttachmentsResult{Items: items, Total: total}, nil
+}
+
 func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*UpdateTaskResult, error) {
 	if err := validateAccount(input.Account); err != nil {
 		return nil, err
@@ -650,6 +875,44 @@ func changedFields(input UpdateTaskInput) []string {
 		fields = append(fields, "due_date")
 	}
 	return fields
+}
+
+func buildAttachmentObjectKey(tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID, fileName string) string {
+	return path.Join(
+		"tenants", tenantID.String(),
+		"workspaces", workspaceID.String(),
+		"projects", projectID.String(),
+		"tasks", taskID.String(),
+		"attachments", attachmentID.String(),
+		sanitizeFileName(fileName),
+	)
+}
+
+func sanitizeFileName(value string) string {
+	value = path.Base(strings.TrimSpace(value))
+	if value == "." || value == "/" || value == "" {
+		return "attachment"
+	}
+	var builder strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '.', r == '-', r == '_':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('_')
+		}
+	}
+	sanitized := strings.Trim(builder.String(), "._-")
+	if sanitized == "" {
+		return "attachment"
+	}
+	return sanitized
 }
 
 func validateAccount(account auth.UserAccount) error {

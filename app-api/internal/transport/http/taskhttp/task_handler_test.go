@@ -21,29 +21,37 @@ import (
 )
 
 type fakeTaskService struct {
-	createResult   *tasksvc.CreateTaskResult
-	createErr      error
-	createInput    tasksvc.CreateTaskInput
-	listResult     *tasksvc.ListTasksResult
-	listErr        error
-	listInput      tasksvc.ListTasksInput
-	summaryResult  *tasksvc.GetTaskBoardSummaryResult
-	summaryErr     error
-	summaryInput   tasksvc.GetTaskBoardSummaryInput
-	getResult      *tasksvc.GetTaskResult
-	getErr         error
-	getInput       tasksvc.GetTaskInput
-	activityResult *tasksvc.ListTaskActivitiesResult
-	activityErr    error
-	activityInput  tasksvc.ListTaskActivitiesInput
-	updateResult   *tasksvc.UpdateTaskResult
-	updateErr      error
-	updateInput    tasksvc.UpdateTaskInput
-	statusResult   *tasksvc.UpdateTaskStatusResult
-	statusErr      error
-	statusInput    tasksvc.UpdateTaskStatusInput
-	deleteErr      error
-	deleteInput    tasksvc.DeleteTaskInput
+	createResult     *tasksvc.CreateTaskResult
+	createErr        error
+	createInput      tasksvc.CreateTaskInput
+	listResult       *tasksvc.ListTasksResult
+	listErr          error
+	listInput        tasksvc.ListTasksInput
+	summaryResult    *tasksvc.GetTaskBoardSummaryResult
+	summaryErr       error
+	summaryInput     tasksvc.GetTaskBoardSummaryInput
+	getResult        *tasksvc.GetTaskResult
+	getErr           error
+	getInput         tasksvc.GetTaskInput
+	activityResult   *tasksvc.ListTaskActivitiesResult
+	activityErr      error
+	activityInput    tasksvc.ListTaskActivitiesInput
+	uploadResult     *tasksvc.CreateTaskAttachmentUploadResult
+	uploadErr        error
+	uploadInput      tasksvc.CreateTaskAttachmentUploadInput
+	completeErr      error
+	completeInput    tasksvc.CompleteTaskAttachmentUploadInput
+	attachmentResult *tasksvc.ListTaskAttachmentsResult
+	attachmentErr    error
+	attachmentInput  tasksvc.ListTaskAttachmentsInput
+	updateResult     *tasksvc.UpdateTaskResult
+	updateErr        error
+	updateInput      tasksvc.UpdateTaskInput
+	statusResult     *tasksvc.UpdateTaskStatusResult
+	statusErr        error
+	statusInput      tasksvc.UpdateTaskStatusInput
+	deleteErr        error
+	deleteInput      tasksvc.DeleteTaskInput
 }
 
 func (s *fakeTaskService) CreateTask(_ context.Context, input tasksvc.CreateTaskInput) (*tasksvc.CreateTaskResult, error) {
@@ -84,6 +92,27 @@ func (s *fakeTaskService) ListTaskActivities(_ context.Context, input tasksvc.Li
 		return nil, s.activityErr
 	}
 	return s.activityResult, nil
+}
+
+func (s *fakeTaskService) CreateTaskAttachmentUpload(_ context.Context, input tasksvc.CreateTaskAttachmentUploadInput) (*tasksvc.CreateTaskAttachmentUploadResult, error) {
+	s.uploadInput = input
+	if s.uploadErr != nil {
+		return nil, s.uploadErr
+	}
+	return s.uploadResult, nil
+}
+
+func (s *fakeTaskService) CompleteTaskAttachmentUpload(_ context.Context, input tasksvc.CompleteTaskAttachmentUploadInput) error {
+	s.completeInput = input
+	return s.completeErr
+}
+
+func (s *fakeTaskService) ListTaskAttachments(_ context.Context, input tasksvc.ListTaskAttachmentsInput) (*tasksvc.ListTaskAttachmentsResult, error) {
+	s.attachmentInput = input
+	if s.attachmentErr != nil {
+		return nil, s.attachmentErr
+	}
+	return s.attachmentResult, nil
 }
 
 func (s *fakeTaskService) UpdateTask(_ context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error) {
@@ -372,6 +401,107 @@ func TestListTaskActivities(t *testing.T) {
 	first := items[0].(map[string]any)
 	if first["action"] != string(task.ActivityCreated) {
 		t.Fatalf("activity action = %v, want created", first["action"])
+	}
+}
+
+func TestCreateTaskAttachmentUpload(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	attachmentID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		uploadResult: &tasksvc.CreateTaskAttachmentUploadResult{
+			Attachment: task.Attachment{
+				ID:           attachmentID,
+				ProjectID:    projectID,
+				TaskID:       taskID,
+				FileName:     "spec.pdf",
+				ContentType:  "application/pdf",
+				SizeBytes:    1024,
+				UploadStatus: task.AttachmentPending,
+				UploadedBy:   accountID,
+				CreatedAt:    now,
+			},
+			UploadURL: task.AttachmentUploadURL{URL: "http://minio/upload", ExpiresAt: now.Add(15 * time.Minute)},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/attachments/uploads", bytes.NewBufferString(`{"file_name":"spec.pdf","content_type":"application/pdf","size_bytes":1024}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	if service.uploadInput.FileName != "spec.pdf" || service.uploadInput.SizeBytes != 1024 {
+		t.Fatalf("upload input = %#v, want file spec.pdf size 1024", service.uploadInput)
+	}
+}
+
+func TestCompleteTaskAttachmentUpload(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	attachmentID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/attachments/"+attachmentID.String()+"/complete", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+	if service.completeInput.AttachmentID != attachmentID {
+		t.Fatalf("attachment ID = %s, want %s", service.completeInput.AttachmentID, attachmentID)
+	}
+}
+
+func TestListTaskAttachments(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{
+		attachmentResult: &tasksvc.ListTaskAttachmentsResult{
+			Total: 1,
+			Items: []task.Attachment{
+				{ID: uuid.Must(uuid.NewV7()), ProjectID: projectID, TaskID: taskID, FileName: "spec.pdf", UploadStatus: task.AttachmentUploaded, UploadedBy: accountID, CreatedAt: time.Now().UTC()},
+			},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/attachments?page=1&limit=10", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.attachmentInput.TaskID != taskID {
+		t.Fatalf("task ID = %s, want %s", service.attachmentInput.TaskID, taskID)
 	}
 }
 

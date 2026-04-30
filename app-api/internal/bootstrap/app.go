@@ -16,6 +16,7 @@ import (
 	"prasankit-api/internal/adapters/database/postgres/taskrepo"
 	"prasankit-api/internal/adapters/database/postgres/workspacerepo"
 	"prasankit-api/internal/adapters/email/smtpemail"
+	"prasankit-api/internal/adapters/storage/minioattachment"
 	"prasankit-api/internal/config"
 	"prasankit-api/internal/modules/auth/authsvc"
 	"prasankit-api/internal/modules/project/projectsvc"
@@ -106,7 +107,10 @@ func InitializeApp(cfg config.Config) (*App, error) {
 		SameSite: cfg.Cookie.SameSite,
 	})
 	taskRepository := taskrepo.NewRepository(postgresDB)
-	taskService := tasksvc.NewService(taskRepository)
+	taskService := tasksvc.NewService(
+		taskRepository,
+		tasksvc.WithAttachmentStorage(minioattachment.NewSigner(storageClient, cfg.Storage.Bucket, cfg.Storage.PresignTTL)),
+	)
 	taskHandler := taskhttp.NewHandler(taskService, authService, workspaceService, taskhttp.CookieConfig{
 		Name:     cfg.Session.CookieName,
 		TTL:      cfg.Session.TTL,

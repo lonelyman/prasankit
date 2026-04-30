@@ -25,6 +25,11 @@ type fakeRepository struct {
 	activityItems     []task.Activity
 	activityTotal     int
 	activityErr       error
+	attachment        *task.Attachment
+	attachmentItems   []task.Attachment
+	attachmentTotal   int
+	attachmentID      uuid.UUID
+	attachmentErr     error
 	updatePatch       task.Patch
 	updateErr         error
 	statusTaskID      uuid.UUID
@@ -188,6 +193,55 @@ func (r *fakeRepository) ListTaskActivities(_ context.Context, tenantID uuid.UUI
 		return nil, 0, r.activityErr
 	}
 	return r.activityItems, r.activityTotal, nil
+}
+
+func (r *fakeRepository) CreateTaskAttachment(_ context.Context, attachment *task.Attachment) error {
+	if r.attachmentErr != nil {
+		return r.attachmentErr
+	}
+	r.attachment = attachment
+	return nil
+}
+
+func (r *fakeRepository) MarkTaskAttachmentUploaded(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID, _ time.Time) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	r.attachmentID = attachmentID
+	return r.attachmentErr
+}
+
+func (r *fakeRepository) ListTaskAttachments(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, _ int, _ int) ([]task.Attachment, int, error) {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	if r.attachmentErr != nil {
+		return nil, 0, r.attachmentErr
+	}
+	return r.attachmentItems, r.attachmentTotal, nil
+}
+
+type fakeAttachmentStorage struct {
+	bucket string
+	err    error
+	key    string
+}
+
+func (s *fakeAttachmentStorage) Bucket() string {
+	if s.bucket == "" {
+		return "prasankit"
+	}
+	return s.bucket
+}
+
+func (s *fakeAttachmentStorage) PresignUpload(_ context.Context, objectKey string, _ string) (*task.AttachmentUploadURL, error) {
+	s.key = objectKey
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &task.AttachmentUploadURL{URL: "http://minio/upload", ExpiresAt: time.Now().UTC().Add(15 * time.Minute)}, nil
 }
 
 func TestCreateTask(t *testing.T) {
@@ -444,6 +498,100 @@ func TestListTaskActivities(t *testing.T) {
 	}
 	if repo.statusTaskID != taskID {
 		t.Fatalf("task ID = %s, want %s", repo.statusTaskID, taskID)
+	}
+}
+
+func TestCreateTaskAttachmentUpload(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	storage := &fakeAttachmentStorage{bucket: "prasankit"}
+	repo := &fakeRepository{findTask: &task.Task{
+		ID:          taskID,
+		TenantID:    tenantContext.TenantID,
+		WorkspaceID: tenantContext.WorkspaceID,
+		ProjectID:   projectID,
+		Status:      task.StatusTodo,
+	}}
+
+	result, err := NewService(repo, WithAttachmentStorage(storage)).CreateTaskAttachmentUpload(context.Background(), CreateTaskAttachmentUploadInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		FileName:      "spec.pdf",
+		ContentType:   "application/pdf",
+		SizeBytes:     1024,
+	})
+	if err != nil {
+		t.Fatalf("CreateTaskAttachmentUpload: %v", err)
+	}
+	if result.Attachment.ID == uuid.Nil {
+		t.Fatal("attachment ID was not set")
+	}
+	if result.Attachment.UploadStatus != task.AttachmentPending {
+		t.Fatalf("status = %s, want pending", result.Attachment.UploadStatus)
+	}
+	if storage.key == "" || result.UploadURL.URL == "" {
+		t.Fatalf("storage key/url = %q/%q, want non-empty", storage.key, result.UploadURL.URL)
+	}
+}
+
+func TestCompleteTaskAttachmentUpload(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	attachmentID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{findTask: &task.Task{
+		ID:          taskID,
+		TenantID:    tenantContext.TenantID,
+		WorkspaceID: tenantContext.WorkspaceID,
+		ProjectID:   projectID,
+		Status:      task.StatusTodo,
+	}}
+
+	err := NewService(repo).CompleteTaskAttachmentUpload(context.Background(), CompleteTaskAttachmentUploadInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		AttachmentID:  attachmentID,
+	})
+	if err != nil {
+		t.Fatalf("CompleteTaskAttachmentUpload: %v", err)
+	}
+	if repo.attachmentID != attachmentID {
+		t.Fatalf("attachment ID = %s, want %s", repo.attachmentID, attachmentID)
+	}
+	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "attachment_uploaded" {
+		t.Fatalf("activity metadata = %#v, want attachment_uploaded", repo.activity)
+	}
+}
+
+func TestListTaskAttachments(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findTask:        &task.Task{ID: taskID, ProjectID: projectID, No: "TASK-0001", Title: "Task A"},
+		attachmentTotal: 1,
+		attachmentItems: []task.Attachment{
+			{ID: uuid.Must(uuid.NewV7()), ProjectID: projectID, TaskID: taskID, FileName: "spec.pdf"},
+		},
+	}
+
+	result, err := NewService(repo).ListTaskAttachments(context.Background(), ListTaskAttachmentsInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Limit:         10,
+	})
+	if err != nil {
+		t.Fatalf("ListTaskAttachments: %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 {
+		t.Fatalf("result = total %d len %d, want 1/1", result.Total, len(result.Items))
 	}
 }
 

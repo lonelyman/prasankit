@@ -370,8 +370,10 @@ Composition note:
 - เพิ่ม Task foundation ก้อนแรกแล้ว:
   - migration `000008_create_task_core_tables.sql`
   - migration `000009_create_task_activity_tables.sql`
+  - migration `000010_create_task_attachment_tables.sql`
   - `task_counters` สำหรับรัน task no ใน backend transaction
   - `task_activities` สำหรับ append-only activity log ของ task
+  - `task_attachments` สำหรับ metadata ไฟล์แนบ task และ presigned upload flow
   - `tasks.priority_id` reuse `project_priorities.id`
   - `tasks.status` เป็น system state ของ MVP: `todo`, `in_progress`, `blocked`, `done`, `cancelled`
   - `GET /api/v1/workspace/projects/{project_id}/tasks`
@@ -380,6 +382,9 @@ Composition note:
   - `POST /api/v1/workspace/projects/{project_id}/tasks`
   - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
   - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/activities`
+  - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments`
+  - `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/uploads`
+  - `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/complete`
   - `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
   - `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status`
   - `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
@@ -392,7 +397,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปต่อ Task attachment foundation แบบช้า ๆ โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
+ขั้นถัดไปต่อ Task comment/checklist foundation หรือ file download/delete policy โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -443,12 +448,17 @@ PostgreSQL connection done
 -> Project HTTP: GET /api/v1/workspace/projects/{project_id}/positions wired
 -> Project HTTP: PUT /api/v1/workspace/projects/{project_id}/members/{member_id}/positions wired
 -> Migration 000008_create_task_core_tables applied
+-> Migration 000009_create_task_activity_tables applied
+-> Migration 000010_create_task_attachment_tables applied
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks filters wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/summary wired
 -> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/activities wired
+-> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments wired
+-> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/uploads wired
+-> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/complete wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired

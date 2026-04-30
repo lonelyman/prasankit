@@ -28,6 +28,15 @@ func OpenMinIO(cfg config.Config) (*minio.Client, error) {
 	if _, err := client.ListBuckets(ctx); err != nil {
 		return nil, fmt.Errorf("check minio connection: %w", err)
 	}
+	exists, err := client.BucketExists(ctx, cfg.Storage.Bucket)
+	if err != nil {
+		return nil, fmt.Errorf("check minio bucket: %w", err)
+	}
+	if !exists {
+		if err := client.MakeBucket(ctx, cfg.Storage.Bucket, minio.MakeBucketOptions{}); err != nil {
+			return nil, fmt.Errorf("create minio bucket: %w", err)
+		}
+	}
 
 	return client, nil
 }

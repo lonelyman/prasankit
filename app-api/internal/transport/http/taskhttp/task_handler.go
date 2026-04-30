@@ -29,6 +29,9 @@ type TaskService interface {
 	GetTaskBoardSummary(ctx context.Context, input tasksvc.GetTaskBoardSummaryInput) (*tasksvc.GetTaskBoardSummaryResult, error)
 	GetTask(ctx context.Context, input tasksvc.GetTaskInput) (*tasksvc.GetTaskResult, error)
 	ListTaskActivities(ctx context.Context, input tasksvc.ListTaskActivitiesInput) (*tasksvc.ListTaskActivitiesResult, error)
+	CreateTaskAttachmentUpload(ctx context.Context, input tasksvc.CreateTaskAttachmentUploadInput) (*tasksvc.CreateTaskAttachmentUploadResult, error)
+	CompleteTaskAttachmentUpload(ctx context.Context, input tasksvc.CompleteTaskAttachmentUploadInput) error
+	ListTaskAttachments(ctx context.Context, input tasksvc.ListTaskAttachmentsInput) (*tasksvc.ListTaskAttachmentsResult, error)
 	UpdateTask(ctx context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error)
 	UpdateTaskStatus(ctx context.Context, input tasksvc.UpdateTaskStatusInput) (*tasksvc.UpdateTaskStatusResult, error)
 	DeleteTask(ctx context.Context, input tasksvc.DeleteTaskInput) error
@@ -78,6 +81,12 @@ type updateTaskStatusRequest struct {
 	Status string `json:"status"`
 }
 
+type createTaskAttachmentUploadRequest struct {
+	FileName    string `json:"file_name"`
+	ContentType string `json:"content_type"`
+	SizeBytes   int64  `json:"size_bytes"`
+}
+
 type taskResponse struct {
 	ID               string  `json:"id"`
 	ProjectID        string  `json:"project_id"`
@@ -109,6 +118,24 @@ type taskActivityResponse struct {
 	CreatedAt      string         `json:"created_at"`
 }
 
+type taskAttachmentResponse struct {
+	ID          string  `json:"id"`
+	TaskID      string  `json:"task_id"`
+	FileName    string  `json:"file_name"`
+	ContentType string  `json:"content_type"`
+	SizeBytes   int64   `json:"size_bytes"`
+	Status      string  `json:"status"`
+	UploadedBy  string  `json:"uploaded_by"`
+	UploadedAt  *string `json:"uploaded_at,omitempty"`
+	CreatedAt   string  `json:"created_at"`
+}
+
+type taskAttachmentUploadResponse struct {
+	Attachment taskAttachmentResponse `json:"attachment"`
+	UploadURL  string                 `json:"upload_url"`
+	ExpiresAt  string                 `json:"expires_at"`
+}
+
 func NewHandler(taskService TaskService, sessionService SessionService, tenantResolver TenantResolver, cookie CookieConfig) Handler {
 	return Handler{
 		tasks:   taskService,
@@ -124,6 +151,9 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	tasks.Post("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTask)
 	tasks.Get("/summary", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTaskBoardSummary)
 	tasks.Get("/:task_id/activities", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskActivities)
+	tasks.Get("/:task_id/attachments", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskAttachments)
+	tasks.Post("/:task_id/attachments/uploads", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTaskAttachmentUpload)
+	tasks.Patch("/:task_id/attachments/:attachment_id/complete", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CompleteTaskAttachmentUpload)
 	tasks.Get("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTask)
 	tasks.Patch("/:task_id/status", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTaskStatus)
 	tasks.Patch("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTask)
@@ -314,6 +344,109 @@ func (h Handler) ListTaskActivities(c fiber.Ctx) error {
 	items := make([]taskActivityResponse, 0, len(result.Items))
 	for _, item := range result.Items {
 		items = append(items, toTaskActivityResponse(item))
+	}
+	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
+}
+
+func (h Handler) CreateTaskAttachmentUpload(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	var req createTaskAttachmentUploadRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+
+	result, err := h.tasks.CreateTaskAttachmentUpload(c.Context(), tasksvc.CreateTaskAttachmentUploadInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		FileName:      req.FileName,
+		ContentType:   req.ContentType,
+		SizeBytes:     req.SizeBytes,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, taskAttachmentUploadResponse{
+		Attachment: toTaskAttachmentResponse(result.Attachment),
+		UploadURL:  result.UploadURL.URL,
+		ExpiresAt:  result.UploadURL.ExpiresAt.Format(time.RFC3339),
+	}, fiber.StatusCreated)
+}
+
+func (h Handler) CompleteTaskAttachmentUpload(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	attachmentID, err := uuid.Parse(c.Params("attachment_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ATTACHMENT_ID_INVALID", "Task attachment id is invalid")
+	}
+
+	if err := h.tasks.CompleteTaskAttachmentUpload(c.Context(), tasksvc.CompleteTaskAttachmentUploadInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		AttachmentID:  attachmentID,
+	}); err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (h Handler) ListTaskAttachments(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+
+	query := presenter.ParseOffsetQuery(c)
+	result, err := h.tasks.ListTaskAttachments(c.Context(), tasksvc.ListTaskAttachmentsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Limit:         query.Limit,
+		Offset:        query.Offset,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	items := make([]taskAttachmentResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, toTaskAttachmentResponse(item))
 	}
 	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
 }
@@ -519,6 +652,16 @@ func renderTaskError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_PRIORITY_INVALID", "Task priority is invalid")
 	case errors.Is(err, tasksvc.ErrTaskAssigneeNotFound):
 		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_ASSIGNEE_NOT_FOUND", "Task assignee not found")
+	case errors.Is(err, tasksvc.ErrTaskAttachmentNotFound):
+		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_ATTACHMENT_NOT_FOUND", "Task attachment not found")
+	case errors.Is(err, tasksvc.ErrAttachmentFileNameRequired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ATTACHMENT_FILE_NAME_REQUIRED", "Task attachment file name is required")
+	case errors.Is(err, tasksvc.ErrAttachmentContentTypeRequired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ATTACHMENT_CONTENT_TYPE_REQUIRED", "Task attachment content type is required")
+	case errors.Is(err, tasksvc.ErrAttachmentSizeInvalid):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ATTACHMENT_SIZE_INVALID", "Task attachment size is invalid")
+	case errors.Is(err, tasksvc.ErrAttachmentStorageNotConfigured):
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "TASK_ATTACHMENT_STORAGE_NOT_CONFIGURED", "Task attachment storage is not configured")
 	case errors.Is(err, tasksvc.ErrTaskIDRequired):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ID_REQUIRED", "Task id is required")
 	case errors.Is(err, tasksvc.ErrTaskNotFound):
@@ -707,6 +850,28 @@ func toTaskActivityResponse(value task.Activity) taskActivityResponse {
 		Metadata:       value.MetadataJSON,
 		CreatedAt:      value.CreatedAt.Format(time.RFC3339),
 	}
+}
+
+func toTaskAttachmentResponse(value task.Attachment) taskAttachmentResponse {
+	return taskAttachmentResponse{
+		ID:          value.ID.String(),
+		TaskID:      value.TaskID.String(),
+		FileName:    value.FileName,
+		ContentType: value.ContentType,
+		SizeBytes:   value.SizeBytes,
+		Status:      string(value.UploadStatus),
+		UploadedBy:  value.UploadedBy.String(),
+		UploadedAt:  formatDateTime(value.UploadedAt),
+		CreatedAt:   value.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+func formatDateTime(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := value.Format(time.RFC3339)
+	return &formatted
 }
 
 func formatStatus(value *task.Status) *string {

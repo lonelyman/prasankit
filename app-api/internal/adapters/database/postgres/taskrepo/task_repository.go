@@ -75,6 +75,28 @@ func (activityRow) TableName() string {
 	return "task_activities"
 }
 
+type attachmentRow struct {
+	ID            uuid.UUID  `gorm:"column:id;type:uuid"`
+	TenantID      uuid.UUID  `gorm:"column:tenant_id;type:uuid"`
+	WorkspaceID   uuid.UUID  `gorm:"column:workspace_id;type:uuid"`
+	ProjectID     uuid.UUID  `gorm:"column:project_id;type:uuid"`
+	TaskID        uuid.UUID  `gorm:"column:task_id;type:uuid"`
+	FileName      string     `gorm:"column:file_name"`
+	ContentType   string     `gorm:"column:content_type"`
+	SizeBytes     int64      `gorm:"column:size_bytes"`
+	StorageBucket string     `gorm:"column:storage_bucket"`
+	ObjectKey     string     `gorm:"column:object_key"`
+	UploadStatus  string     `gorm:"column:upload_status"`
+	UploadedBy    uuid.UUID  `gorm:"column:uploaded_by;type:uuid"`
+	UploadedAt    *time.Time `gorm:"column:uploaded_at"`
+	CreatedAt     time.Time  `gorm:"column:created_at"`
+	UpdatedAt     time.Time  `gorm:"column:updated_at"`
+}
+
+func (attachmentRow) TableName() string {
+	return "task_attachments"
+}
+
 func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -276,7 +298,7 @@ func (r *Repository) UpdateTaskStatus(ctx context.Context, tenantID uuid.UUID, w
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return task.ErrTaskNotFound
+		return task.ErrAttachmentNotFound
 	}
 	return nil
 }
@@ -469,6 +491,103 @@ func (r *Repository) ListTaskActivities(ctx context.Context, tenantID uuid.UUID,
 	return activities, int(total), nil
 }
 
+func (r *Repository) CreateTaskAttachment(ctx context.Context, attachment *task.Attachment) error {
+	if err := ensureUUID(&attachment.ID); err != nil {
+		return err
+	}
+	if attachment.UploadStatus == "" {
+		attachment.UploadStatus = task.AttachmentPending
+	}
+	if attachment.CreatedAt.IsZero() {
+		attachment.CreatedAt = time.Now().UTC()
+	}
+	if attachment.UpdatedAt.IsZero() {
+		attachment.UpdatedAt = attachment.CreatedAt
+	}
+
+	row := attachmentRow{
+		ID:            attachment.ID,
+		TenantID:      attachment.TenantID,
+		WorkspaceID:   attachment.WorkspaceID,
+		ProjectID:     attachment.ProjectID,
+		TaskID:        attachment.TaskID,
+		FileName:      attachment.FileName,
+		ContentType:   attachment.ContentType,
+		SizeBytes:     attachment.SizeBytes,
+		StorageBucket: attachment.StorageBucket,
+		ObjectKey:     attachment.ObjectKey,
+		UploadStatus:  string(attachment.UploadStatus),
+		UploadedBy:    attachment.UploadedBy,
+		UploadedAt:    attachment.UploadedAt,
+		CreatedAt:     attachment.CreatedAt,
+		UpdatedAt:     attachment.UpdatedAt,
+	}
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return err
+	}
+	attachment.ID = row.ID
+	attachment.CreatedAt = row.CreatedAt
+	attachment.UpdatedAt = row.UpdatedAt
+	return nil
+}
+
+func (r *Repository) MarkTaskAttachmentUploaded(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID, uploadedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&attachmentRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("task_id = ?", taskID).
+		Where("id = ?", attachmentID).
+		Updates(map[string]any{
+			"upload_status": string(task.AttachmentUploaded),
+			"uploaded_at":   uploadedAt,
+			"updated_at":    uploadedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrTaskNotFound
+	}
+	return nil
+}
+
+func (r *Repository) ListTaskAttachments(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, limit int, offset int) ([]task.Attachment, int, error) {
+	var total int64
+	countQuery := r.db.WithContext(ctx).
+		Table("task_attachments AS ta").
+		Where("ta.tenant_id = ?", tenantID).
+		Where("ta.workspace_id = ?", workspaceID).
+		Where("ta.project_id = ?", projectID).
+		Where("ta.task_id = ?", taskID)
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var rows []attachmentRow
+	err := r.db.WithContext(ctx).
+		Table("task_attachments AS ta").
+		Where("ta.tenant_id = ?", tenantID).
+		Where("ta.workspace_id = ?", workspaceID).
+		Where("ta.project_id = ?", projectID).
+		Where("ta.task_id = ?", taskID).
+		Order("ta.created_at DESC, ta.id DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	attachments := make([]task.Attachment, 0, len(rows))
+	for _, row := range rows {
+		attachments = append(attachments, row.toDomain())
+	}
+	return attachments, int(total), nil
+}
+
 func taskSelect() string {
 	return `
 		t.id,
@@ -570,5 +689,25 @@ func (r activityRow) toDomain() task.Activity {
 		ToStatus:       parseStatusPtr(r.ToStatus),
 		MetadataJSON:   map[string]any(r.MetadataJSON),
 		CreatedAt:      r.CreatedAt,
+	}
+}
+
+func (r attachmentRow) toDomain() task.Attachment {
+	return task.Attachment{
+		ID:            r.ID,
+		TenantID:      r.TenantID,
+		WorkspaceID:   r.WorkspaceID,
+		ProjectID:     r.ProjectID,
+		TaskID:        r.TaskID,
+		FileName:      r.FileName,
+		ContentType:   r.ContentType,
+		SizeBytes:     r.SizeBytes,
+		StorageBucket: r.StorageBucket,
+		ObjectKey:     r.ObjectKey,
+		UploadStatus:  task.AttachmentStatus(r.UploadStatus),
+		UploadedBy:    r.UploadedBy,
+		UploadedAt:    r.UploadedAt,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
 	}
 }

@@ -125,3 +125,33 @@ type Activity struct {
 	MetadataJSON   map[string]any
 	CreatedAt      time.Time
 }
+
+type AttachmentStatus string
+
+const (
+	AttachmentPending  AttachmentStatus = "pending"
+	AttachmentUploaded AttachmentStatus = "uploaded"
+)
+
+type Attachment struct {
+	ID            uuid.UUID
+	TenantID      uuid.UUID
+	WorkspaceID   uuid.UUID
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	FileName      string
+	ContentType   string
+	SizeBytes     int64
+	StorageBucket string
+	ObjectKey     string
+	UploadStatus  AttachmentStatus
+	UploadedBy    uuid.UUID
+	UploadedAt    *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type AttachmentUploadURL struct {
+	URL       string
+	ExpiresAt time.Time
+}
