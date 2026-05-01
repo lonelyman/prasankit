@@ -41,6 +41,12 @@ type TaskService interface {
 	GetTaskAttachmentDownloadURL(ctx context.Context, input tasksvc.GetTaskAttachmentDownloadURLInput) (*tasksvc.GetTaskAttachmentDownloadURLResult, error)
 	ListTaskAttachments(ctx context.Context, input tasksvc.ListTaskAttachmentsInput) (*tasksvc.ListTaskAttachmentsResult, error)
 	DeleteTaskAttachment(ctx context.Context, input tasksvc.DeleteTaskAttachmentInput) error
+	AssignTaskTag(ctx context.Context, input tasksvc.AssignTaskTagInput) (*tasksvc.AssignTaskTagResult, error)
+	ListTaskTags(ctx context.Context, input tasksvc.ListTaskTagsInput) (*tasksvc.ListTaskTagsResult, error)
+	RemoveTaskTag(ctx context.Context, input tasksvc.RemoveTaskTagInput) error
+	CreateTaskRelation(ctx context.Context, input tasksvc.CreateTaskRelationInput) (*tasksvc.CreateTaskRelationResult, error)
+	ListTaskRelations(ctx context.Context, input tasksvc.ListTaskRelationsInput) (*tasksvc.ListTaskRelationsResult, error)
+	DeleteTaskRelation(ctx context.Context, input tasksvc.DeleteTaskRelationInput) error
 	UpdateTask(ctx context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error)
 	UpdateTaskStatus(ctx context.Context, input tasksvc.UpdateTaskStatusInput) (*tasksvc.UpdateTaskStatusResult, error)
 	DeleteTask(ctx context.Context, input tasksvc.DeleteTaskInput) error
@@ -109,6 +115,16 @@ type createTaskAttachmentUploadRequest struct {
 	FileName    string `json:"file_name"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
+}
+
+type assignTaskTagRequest struct {
+	Name  string  `json:"name"`
+	Color *string `json:"color"`
+}
+
+type createTaskRelationRequest struct {
+	TargetTaskID string `json:"target_task_id"`
+	Type         string `json:"type"`
 }
 
 type taskResponse struct {
@@ -188,6 +204,25 @@ type taskAttachmentDownloadResponse struct {
 	ExpiresAt   string                 `json:"expires_at"`
 }
 
+type taskTagResponse struct {
+	ID        string  `json:"id"`
+	ProjectID string  `json:"project_id"`
+	Name      string  `json:"name"`
+	Color     *string `json:"color,omitempty"`
+	CreatedBy string  `json:"created_by"`
+	CreatedAt string  `json:"created_at"`
+}
+
+type taskRelationResponse struct {
+	ID           string `json:"id"`
+	ProjectID    string `json:"project_id"`
+	SourceTaskID string `json:"source_task_id"`
+	TargetTaskID string `json:"target_task_id"`
+	Type         string `json:"type"`
+	CreatedBy    string `json:"created_by"`
+	CreatedAt    string `json:"created_at"`
+}
+
 func NewHandler(taskService TaskService, sessionService SessionService, tenantResolver TenantResolver, cookie CookieConfig) Handler {
 	return Handler{
 		tasks:   taskService,
@@ -215,6 +250,12 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	tasks.Patch("/:task_id/attachments/:attachment_id/complete", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CompleteTaskAttachmentUpload)
 	tasks.Get("/:task_id/attachments/:attachment_id/download", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTaskAttachmentDownloadURL)
 	tasks.Delete("/:task_id/attachments/:attachment_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.DeleteTaskAttachment)
+	tasks.Get("/:task_id/tags", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskTags)
+	tasks.Post("/:task_id/tags", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.AssignTaskTag)
+	tasks.Delete("/:task_id/tags/:tag_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.RemoveTaskTag)
+	tasks.Get("/:task_id/relations", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskRelations)
+	tasks.Post("/:task_id/relations", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTaskRelation)
+	tasks.Delete("/:task_id/relations/:relation_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.DeleteTaskRelation)
 	tasks.Get("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTask)
 	tasks.Patch("/:task_id/status", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTaskStatus)
 	tasks.Patch("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTask)
@@ -810,6 +851,200 @@ func (h Handler) DeleteTaskAttachment(c fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+func (h Handler) AssignTaskTag(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	var req assignTaskTagRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+
+	result, err := h.tasks.AssignTaskTag(c.Context(), tasksvc.AssignTaskTagInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Name:          req.Name,
+		Color:         req.Color,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, toTaskTagResponse(result.Tag), fiber.StatusCreated)
+}
+
+func (h Handler) ListTaskTags(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+
+	result, err := h.tasks.ListTaskTags(c.Context(), tasksvc.ListTaskTagsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	items := make([]taskTagResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, toTaskTagResponse(item))
+	}
+	return presenter.RenderItem(c, map[string]any{"items": items})
+}
+
+func (h Handler) RemoveTaskTag(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	tagID, err := uuid.Parse(c.Params("tag_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_TAG_ID_INVALID", "Task tag id is invalid")
+	}
+
+	if err := h.tasks.RemoveTaskTag(c.Context(), tasksvc.RemoveTaskTagInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		TagID:         tagID,
+	}); err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (h Handler) CreateTaskRelation(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	var req createTaskRelationRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+	targetTaskID, err := uuid.Parse(req.TargetTaskID)
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_RELATION_TARGET_TASK_ID_INVALID", "Task relation target task id is invalid")
+	}
+
+	result, err := h.tasks.CreateTaskRelation(c.Context(), tasksvc.CreateTaskRelationInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		TargetTaskID:  targetTaskID,
+		Type:          task.RelationType(req.Type),
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, toTaskRelationResponse(result.Relation), fiber.StatusCreated)
+}
+
+func (h Handler) ListTaskRelations(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+
+	result, err := h.tasks.ListTaskRelations(c.Context(), tasksvc.ListTaskRelationsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	items := make([]taskRelationResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, toTaskRelationResponse(item))
+	}
+	return presenter.RenderItem(c, map[string]any{"items": items})
+}
+
+func (h Handler) DeleteTaskRelation(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	relationID, err := uuid.Parse(c.Params("relation_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_RELATION_ID_INVALID", "Task relation id is invalid")
+	}
+
+	if err := h.tasks.DeleteTaskRelation(c.Context(), tasksvc.DeleteTaskRelationInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		RelationID:    relationID,
+	}); err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
 func (h Handler) UpdateTask(c fiber.Ctx) error {
 	if h.tasks == nil {
 		return h.NotImplemented(c)
@@ -1035,6 +1270,22 @@ func renderTaskError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ATTACHMENT_SIZE_INVALID", "Task attachment size is invalid")
 	case errors.Is(err, tasksvc.ErrAttachmentStorageNotConfigured):
 		return presenter.RenderError(c, fiber.StatusInternalServerError, "TASK_ATTACHMENT_STORAGE_NOT_CONFIGURED", "Task attachment storage is not configured")
+	case errors.Is(err, tasksvc.ErrTaskTagNotFound):
+		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_TAG_NOT_FOUND", "Task tag not found")
+	case errors.Is(err, tasksvc.ErrTaskTagNameRequired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_TAG_NAME_REQUIRED", "Task tag name is required")
+	case errors.Is(err, tasksvc.ErrTaskTagAlreadyAssigned):
+		return presenter.RenderError(c, fiber.StatusConflict, "TASK_TAG_ALREADY_ASSIGNED", "Task tag is already assigned")
+	case errors.Is(err, tasksvc.ErrTaskRelationNotFound):
+		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_RELATION_NOT_FOUND", "Task relation not found")
+	case errors.Is(err, tasksvc.ErrTaskRelationTypeInvalid):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_RELATION_TYPE_INVALID", "Task relation type is invalid")
+	case errors.Is(err, tasksvc.ErrTaskRelationTargetRequired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_RELATION_TARGET_REQUIRED", "Task relation target task id is required")
+	case errors.Is(err, tasksvc.ErrTaskRelationSelf):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_RELATION_SELF", "Task relation cannot target itself")
+	case errors.Is(err, tasksvc.ErrTaskRelationAlreadyExists):
+		return presenter.RenderError(c, fiber.StatusConflict, "TASK_RELATION_ALREADY_EXISTS", "Task relation already exists")
 	case errors.Is(err, tasksvc.ErrTaskIDRequired):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ID_REQUIRED", "Task id is required")
 	case errors.Is(err, tasksvc.ErrTaskNotFound):
@@ -1262,6 +1513,29 @@ func toTaskAttachmentResponse(value task.Attachment) taskAttachmentResponse {
 		UploadedBy:  value.UploadedBy.String(),
 		UploadedAt:  formatDateTime(value.UploadedAt),
 		CreatedAt:   value.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+func toTaskTagResponse(value task.Tag) taskTagResponse {
+	return taskTagResponse{
+		ID:        value.ID.String(),
+		ProjectID: value.ProjectID.String(),
+		Name:      value.Name,
+		Color:     value.Color,
+		CreatedBy: value.CreatedBy.String(),
+		CreatedAt: value.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+func toTaskRelationResponse(value task.Relation) taskRelationResponse {
+	return taskRelationResponse{
+		ID:           value.ID.String(),
+		ProjectID:    value.ProjectID.String(),
+		SourceTaskID: value.SourceTaskID.String(),
+		TargetTaskID: value.TargetTaskID.String(),
+		Type:         string(value.Type),
+		CreatedBy:    value.CreatedBy.String(),
+		CreatedAt:    value.CreatedAt.Format(time.RFC3339),
 	}
 }
 

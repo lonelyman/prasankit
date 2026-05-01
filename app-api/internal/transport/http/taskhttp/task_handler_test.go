@@ -68,6 +68,22 @@ type fakeTaskService struct {
 	attachmentInput       tasksvc.ListTaskAttachmentsInput
 	deleteAttachmentErr   error
 	deleteAttachmentInput tasksvc.DeleteTaskAttachmentInput
+	tagResult             *tasksvc.ListTaskTagsResult
+	tagErr                error
+	tagInput              tasksvc.ListTaskTagsInput
+	assignTagResult       *tasksvc.AssignTaskTagResult
+	assignTagErr          error
+	assignTagInput        tasksvc.AssignTaskTagInput
+	removeTagErr          error
+	removeTagInput        tasksvc.RemoveTaskTagInput
+	relationResult        *tasksvc.ListTaskRelationsResult
+	relationErr           error
+	relationInput         tasksvc.ListTaskRelationsInput
+	createRelationResult  *tasksvc.CreateTaskRelationResult
+	createRelationErr     error
+	createRelationInput   tasksvc.CreateTaskRelationInput
+	deleteRelationErr     error
+	deleteRelationInput   tasksvc.DeleteTaskRelationInput
 	updateResult          *tasksvc.UpdateTaskResult
 	updateErr             error
 	updateInput           tasksvc.UpdateTaskInput
@@ -200,6 +216,48 @@ func (s *fakeTaskService) ListTaskAttachments(_ context.Context, input tasksvc.L
 func (s *fakeTaskService) DeleteTaskAttachment(_ context.Context, input tasksvc.DeleteTaskAttachmentInput) error {
 	s.deleteAttachmentInput = input
 	return s.deleteAttachmentErr
+}
+
+func (s *fakeTaskService) AssignTaskTag(_ context.Context, input tasksvc.AssignTaskTagInput) (*tasksvc.AssignTaskTagResult, error) {
+	s.assignTagInput = input
+	if s.assignTagErr != nil {
+		return nil, s.assignTagErr
+	}
+	return s.assignTagResult, nil
+}
+
+func (s *fakeTaskService) ListTaskTags(_ context.Context, input tasksvc.ListTaskTagsInput) (*tasksvc.ListTaskTagsResult, error) {
+	s.tagInput = input
+	if s.tagErr != nil {
+		return nil, s.tagErr
+	}
+	return s.tagResult, nil
+}
+
+func (s *fakeTaskService) RemoveTaskTag(_ context.Context, input tasksvc.RemoveTaskTagInput) error {
+	s.removeTagInput = input
+	return s.removeTagErr
+}
+
+func (s *fakeTaskService) CreateTaskRelation(_ context.Context, input tasksvc.CreateTaskRelationInput) (*tasksvc.CreateTaskRelationResult, error) {
+	s.createRelationInput = input
+	if s.createRelationErr != nil {
+		return nil, s.createRelationErr
+	}
+	return s.createRelationResult, nil
+}
+
+func (s *fakeTaskService) ListTaskRelations(_ context.Context, input tasksvc.ListTaskRelationsInput) (*tasksvc.ListTaskRelationsResult, error) {
+	s.relationInput = input
+	if s.relationErr != nil {
+		return nil, s.relationErr
+	}
+	return s.relationResult, nil
+}
+
+func (s *fakeTaskService) DeleteTaskRelation(_ context.Context, input tasksvc.DeleteTaskRelationInput) error {
+	s.deleteRelationInput = input
+	return s.deleteRelationErr
 }
 
 func (s *fakeTaskService) UpdateTask(_ context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error) {
@@ -873,6 +931,181 @@ func TestDeleteTaskAttachment(t *testing.T) {
 	}
 	if service.deleteAttachmentInput.AttachmentID != attachmentID {
 		t.Fatalf("attachment ID = %s, want %s", service.deleteAttachmentInput.AttachmentID, attachmentID)
+	}
+}
+
+func TestAssignTaskTag(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	tagID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		assignTagResult: &tasksvc.AssignTaskTagResult{
+			Tag: task.Tag{ID: tagID, ProjectID: projectID, Name: "Review", CreatedBy: accountID, CreatedAt: now},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/tags", bytes.NewBufferString(`{"name":"Review","color":"#2f80ed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	if service.assignTagInput.TaskID != taskID || service.assignTagInput.Name != "Review" {
+		t.Fatalf("tag input = %#v, want task and name", service.assignTagInput)
+	}
+}
+
+func TestListTaskTags(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{
+		tagResult: &tasksvc.ListTaskTagsResult{
+			Items: []task.Tag{{ID: uuid.Must(uuid.NewV7()), ProjectID: projectID, Name: "Review", CreatedBy: accountID, CreatedAt: time.Now().UTC()}},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/tags", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.tagInput.TaskID != taskID {
+		t.Fatalf("task ID = %s, want %s", service.tagInput.TaskID, taskID)
+	}
+}
+
+func TestRemoveTaskTag(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	tagID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/tags/"+tagID.String(), nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+	if service.removeTagInput.TagID != tagID {
+		t.Fatalf("tag ID = %s, want %s", service.removeTagInput.TagID, tagID)
+	}
+}
+
+func TestCreateTaskRelation(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	targetTaskID := uuid.Must(uuid.NewV7())
+	relationID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		createRelationResult: &tasksvc.CreateTaskRelationResult{
+			Relation: task.Relation{ID: relationID, ProjectID: projectID, SourceTaskID: taskID, TargetTaskID: targetTaskID, Type: task.RelationBlocks, CreatedBy: accountID, CreatedAt: now},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/relations", bytes.NewBufferString(`{"target_task_id":"`+targetTaskID.String()+`","type":"blocks"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	if service.createRelationInput.TargetTaskID != targetTaskID || service.createRelationInput.Type != task.RelationBlocks {
+		t.Fatalf("relation input = %#v, want target and type", service.createRelationInput)
+	}
+}
+
+func TestListTaskRelations(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{
+		relationResult: &tasksvc.ListTaskRelationsResult{
+			Items: []task.Relation{{ID: uuid.Must(uuid.NewV7()), ProjectID: projectID, SourceTaskID: taskID, TargetTaskID: uuid.Must(uuid.NewV7()), Type: task.RelationRelatesTo, CreatedBy: accountID, CreatedAt: time.Now().UTC()}},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/relations", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.relationInput.TaskID != taskID {
+		t.Fatalf("task ID = %s, want %s", service.relationInput.TaskID, taskID)
+	}
+}
+
+func TestDeleteTaskRelation(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	relationID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/relations/"+relationID.String(), nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+	if service.deleteRelationInput.RelationID != relationID {
+		t.Fatalf("relation ID = %s, want %s", service.deleteRelationInput.RelationID, relationID)
 	}
 }
 

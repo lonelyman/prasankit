@@ -13,6 +13,10 @@ var ErrTaskNotFound = errors.New("task not found")
 var ErrCommentNotFound = errors.New("task comment not found")
 var ErrChecklistItemNotFound = errors.New("task checklist item not found")
 var ErrAttachmentNotFound = errors.New("task attachment not found")
+var ErrTagNotFound = errors.New("task tag not found")
+var ErrTagAlreadyAssigned = errors.New("task tag already assigned")
+var ErrRelationNotFound = errors.New("task relation not found")
+var ErrRelationAlreadyExists = errors.New("task relation already exists")
 var ErrPriorityNotFound = errors.New("task priority not found")
 var ErrAssigneeNotFound = errors.New("task assignee not found")
 var ErrTaskNoAlreadyTaken = errors.New("task no is already taken")
@@ -45,4 +49,11 @@ type Repository interface {
 	ListTaskAttachments(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, limit int, offset int) ([]Attachment, int, error)
 	FindTaskAttachmentByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID) (*Attachment, error)
 	SoftDeleteTaskAttachment(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error
+	FindOrCreateTaskTag(ctx context.Context, tag *Tag) (*Tag, error)
+	AssignTaskTag(ctx context.Context, assignment *TagAssignment) error
+	ListTaskTags(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) ([]Tag, error)
+	RemoveTaskTag(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, tagID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error
+	CreateTaskRelation(ctx context.Context, relation *Relation) error
+	ListTaskRelations(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) ([]Relation, error)
+	SoftDeleteTaskRelation(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, relationID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error
 }

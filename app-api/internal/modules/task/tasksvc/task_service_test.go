@@ -40,6 +40,15 @@ type fakeRepository struct {
 	attachmentTotal   int
 	attachmentID      uuid.UUID
 	attachmentErr     error
+	tag               *task.Tag
+	tagItems          []task.Tag
+	tagID             uuid.UUID
+	tagAssignment     *task.TagAssignment
+	tagErr            error
+	relation          *task.Relation
+	relationItems     []task.Relation
+	relationID        uuid.UUID
+	relationErr       error
 	updatePatch       task.Patch
 	updateErr         error
 	statusTaskID      uuid.UUID
@@ -338,6 +347,78 @@ func (r *fakeRepository) SoftDeleteTaskAttachment(_ context.Context, tenantID uu
 	r.statusTaskID = taskID
 	r.attachmentID = attachmentID
 	return r.attachmentErr
+}
+
+func (r *fakeRepository) FindOrCreateTaskTag(_ context.Context, tag *task.Tag) (*task.Tag, error) {
+	if r.tagErr != nil {
+		return nil, r.tagErr
+	}
+	if r.tag != nil {
+		return r.tag, nil
+	}
+	tag.ID = uuid.Must(uuid.NewV7())
+	r.tag = tag
+	return tag, nil
+}
+
+func (r *fakeRepository) AssignTaskTag(_ context.Context, assignment *task.TagAssignment) error {
+	if r.tagErr != nil {
+		return r.tagErr
+	}
+	assignment.ID = uuid.Must(uuid.NewV7())
+	r.tagAssignment = assignment
+	r.tagID = assignment.TagID
+	return nil
+}
+
+func (r *fakeRepository) ListTaskTags(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) ([]task.Tag, error) {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	if r.tagErr != nil {
+		return nil, r.tagErr
+	}
+	return r.tagItems, nil
+}
+
+func (r *fakeRepository) RemoveTaskTag(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, tagID uuid.UUID, _ uuid.UUID, _ time.Time) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	r.tagID = tagID
+	return r.tagErr
+}
+
+func (r *fakeRepository) CreateTaskRelation(_ context.Context, relation *task.Relation) error {
+	if r.relationErr != nil {
+		return r.relationErr
+	}
+	relation.ID = uuid.Must(uuid.NewV7())
+	r.relation = relation
+	r.relationID = relation.ID
+	return nil
+}
+
+func (r *fakeRepository) ListTaskRelations(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) ([]task.Relation, error) {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	if r.relationErr != nil {
+		return nil, r.relationErr
+	}
+	return r.relationItems, nil
+}
+
+func (r *fakeRepository) SoftDeleteTaskRelation(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, relationID uuid.UUID, _ uuid.UUID, _ time.Time) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	r.relationID = relationID
+	return r.relationErr
 }
 
 type fakeAttachmentStorage struct {
@@ -1241,6 +1322,221 @@ func TestDeleteTask(t *testing.T) {
 	}
 	if repo.activity == nil || repo.activity.Action != task.ActivityDeleted {
 		t.Fatalf("activity = %#v, want deleted", repo.activity)
+	}
+}
+
+func TestAssignTaskTag(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	color := " #2f80ed "
+	repo := &fakeRepository{findTask: &task.Task{ID: taskID, ProjectID: projectID, Status: task.StatusTodo}}
+
+	result, err := NewService(repo).AssignTaskTag(context.Background(), AssignTaskTagInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Name:          " Review Needed ",
+		Color:         &color,
+	})
+	if err != nil {
+		t.Fatalf("AssignTaskTag: %v", err)
+	}
+	if result.Tag.Name != "Review Needed" {
+		t.Fatalf("tag name = %q, want trimmed", result.Tag.Name)
+	}
+	if result.Tag.NormalizedName != "review needed" {
+		t.Fatalf("normalized name = %q, want review needed", result.Tag.NormalizedName)
+	}
+	if repo.tagAssignment == nil || repo.tagAssignment.TaskID != taskID {
+		t.Fatalf("assignment = %#v, want task assignment", repo.tagAssignment)
+	}
+	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "tag_assigned" {
+		t.Fatalf("activity metadata = %#v, want tag_assigned", repo.activity)
+	}
+}
+
+func TestAssignTaskTagRejectsBlankName(t *testing.T) {
+	_, err := NewService(&fakeRepository{}).AssignTaskTag(context.Background(), AssignTaskTagInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: testTenantContext(),
+		ProjectID:     uuid.Must(uuid.NewV7()),
+		TaskID:        uuid.Must(uuid.NewV7()),
+		Name:          " ",
+	})
+	if !errors.Is(err, ErrTaskTagNameRequired) {
+		t.Fatalf("err = %v, want ErrTaskTagNameRequired", err)
+	}
+}
+
+func TestListTaskTags(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	tagID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findTask: &task.Task{ID: taskID, ProjectID: projectID, Status: task.StatusTodo},
+		tagItems: []task.Tag{
+			{ID: tagID, ProjectID: projectID, Name: "Review", CreatedBy: uuid.Must(uuid.NewV7()), CreatedAt: time.Now().UTC()},
+		},
+	}
+
+	result, err := NewService(repo).ListTaskTags(context.Background(), ListTaskTagsInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+	})
+	if err != nil {
+		t.Fatalf("ListTaskTags: %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].ID != tagID {
+		t.Fatalf("items = %#v, want tag", result.Items)
+	}
+}
+
+func TestRemoveTaskTag(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	tagID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{findTask: &task.Task{ID: taskID, ProjectID: projectID, Status: task.StatusTodo}}
+
+	err := NewService(repo).RemoveTaskTag(context.Background(), RemoveTaskTagInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		TagID:         tagID,
+	})
+	if err != nil {
+		t.Fatalf("RemoveTaskTag: %v", err)
+	}
+	if repo.tagID != tagID {
+		t.Fatalf("tag ID = %s, want %s", repo.tagID, tagID)
+	}
+	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "tag_removed" {
+		t.Fatalf("activity metadata = %#v, want tag_removed", repo.activity)
+	}
+}
+
+func TestCreateTaskRelation(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	targetTaskID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{findTask: &task.Task{ID: taskID, ProjectID: projectID, Status: task.StatusTodo}}
+
+	result, err := NewService(repo).CreateTaskRelation(context.Background(), CreateTaskRelationInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		TargetTaskID:  targetTaskID,
+		Type:          task.RelationBlocks,
+	})
+	if err != nil {
+		t.Fatalf("CreateTaskRelation: %v", err)
+	}
+	if result.Relation.TargetTaskID != targetTaskID {
+		t.Fatalf("target task ID = %s, want %s", result.Relation.TargetTaskID, targetTaskID)
+	}
+	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "relation_created" {
+		t.Fatalf("activity metadata = %#v, want relation_created", repo.activity)
+	}
+}
+
+func TestCreateTaskRelationRejectsInvalidInput(t *testing.T) {
+	service := NewService(&fakeRepository{})
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+
+	_, err := service.CreateTaskRelation(context.Background(), CreateTaskRelationInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+	})
+	if !errors.Is(err, ErrTaskRelationTargetRequired) {
+		t.Fatalf("err = %v, want ErrTaskRelationTargetRequired", err)
+	}
+
+	_, err = service.CreateTaskRelation(context.Background(), CreateTaskRelationInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		TargetTaskID:  taskID,
+		Type:          task.RelationBlocks,
+	})
+	if !errors.Is(err, ErrTaskRelationSelf) {
+		t.Fatalf("err = %v, want ErrTaskRelationSelf", err)
+	}
+
+	_, err = service.CreateTaskRelation(context.Background(), CreateTaskRelationInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		TargetTaskID:  uuid.Must(uuid.NewV7()),
+		Type:          task.RelationType("invalid"),
+	})
+	if !errors.Is(err, ErrTaskRelationTypeInvalid) {
+		t.Fatalf("err = %v, want ErrTaskRelationTypeInvalid", err)
+	}
+}
+
+func TestListTaskRelations(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	relationID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findTask: &task.Task{ID: taskID, ProjectID: projectID, Status: task.StatusTodo},
+		relationItems: []task.Relation{
+			{ID: relationID, ProjectID: projectID, SourceTaskID: taskID, TargetTaskID: uuid.Must(uuid.NewV7()), Type: task.RelationRelatesTo},
+		},
+	}
+
+	result, err := NewService(repo).ListTaskRelations(context.Background(), ListTaskRelationsInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+	})
+	if err != nil {
+		t.Fatalf("ListTaskRelations: %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].ID != relationID {
+		t.Fatalf("items = %#v, want relation", result.Items)
+	}
+}
+
+func TestDeleteTaskRelation(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	relationID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{findTask: &task.Task{ID: taskID, ProjectID: projectID, Status: task.StatusTodo}}
+
+	err := NewService(repo).DeleteTaskRelation(context.Background(), DeleteTaskRelationInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		RelationID:    relationID,
+	})
+	if err != nil {
+		t.Fatalf("DeleteTaskRelation: %v", err)
+	}
+	if repo.relationID != relationID {
+		t.Fatalf("relation ID = %s, want %s", repo.relationID, relationID)
+	}
+	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "relation_deleted" {
+		t.Fatalf("activity metadata = %#v, want relation_deleted", repo.activity)
 	}
 }
 

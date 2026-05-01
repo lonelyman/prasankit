@@ -374,11 +374,14 @@ Composition note:
   - migration `000011_create_task_comment_tables.sql`
   - migration `000012_create_task_checklist_tables.sql`
   - migration `000013_add_task_attachment_delete_fields.sql`
+  - migration `000014_create_task_tag_relation_tables.sql`
   - `task_counters` สำหรับรัน task no ใน backend transaction
   - `task_activities` สำหรับ append-only activity log ของ task
   - `task_attachments` สำหรับ metadata ไฟล์แนบ task, presigned upload/download flow และ soft delete
   - `task_comments` สำหรับ comment thread ของ task พร้อม soft delete
   - `task_checklist_items` สำหรับ checklist/sub-items ของ task พร้อม complete state และ soft delete
+  - `task_tags` และ `task_tag_assignments` สำหรับ project-scoped tag และการ assign/remove tag กับ task
+  - `task_relations` สำหรับ relation ระหว่าง task ใน project เดียวกัน โดยยังเป็น metadata ไม่เปลี่ยน status อัตโนมัติ
   - `tasks.priority_id` reuse `project_priorities.id`
   - `tasks.status` เป็น system state ของ MVP: `todo`, `in_progress`, `blocked`, `done`, `cancelled`
   - `GET /api/v1/workspace/projects/{project_id}/tasks`
@@ -399,6 +402,12 @@ Composition note:
   - `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/complete`
   - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/download`
   - `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}`
+  - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/tags`
+  - `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/tags`
+  - `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/tags/{tag_id}`
+  - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations`
+  - `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations`
+  - `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations/{relation_id}`
   - `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
   - `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status`
   - `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
@@ -411,7 +420,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปต่อ task relation/tag foundation หรือ file retention/object cleanup policy โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
+ขั้นถัดไปต่อ task status policy จาก relation, task search/filter by tag หรือ file retention/object cleanup policy โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -467,6 +476,7 @@ PostgreSQL connection done
 -> Migration 000011_create_task_comment_tables applied
 -> Migration 000012_create_task_checklist_tables applied
 -> Migration 000013_add_task_attachment_delete_fields applied
+-> Migration 000014_create_task_tag_relation_tables applied
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks filters wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/summary wired
@@ -485,6 +495,12 @@ PostgreSQL connection done
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/complete wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/download wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id} wired
+-> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/tags wired
+-> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/tags wired
+-> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/tags/{tag_id} wired
+-> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations wired
+-> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations wired
+-> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations/{relation_id} wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired

@@ -46,6 +46,14 @@ var (
 	ErrAttachmentContentTypeRequired  = errors.New("attachment content type is required")
 	ErrAttachmentSizeInvalid          = errors.New("attachment size is invalid")
 	ErrAttachmentStorageNotConfigured = errors.New("attachment storage is not configured")
+	ErrTaskTagNotFound                = errors.New("task tag not found")
+	ErrTaskTagNameRequired            = errors.New("task tag name is required")
+	ErrTaskTagAlreadyAssigned         = errors.New("task tag already assigned")
+	ErrTaskRelationNotFound           = errors.New("task relation not found")
+	ErrTaskRelationTypeInvalid        = errors.New("task relation type is invalid")
+	ErrTaskRelationTargetRequired     = errors.New("task relation target task id is required")
+	ErrTaskRelationSelf               = errors.New("task relation cannot target itself")
+	ErrTaskRelationAlreadyExists      = errors.New("task relation already exists")
 )
 
 type CreateTaskInput struct {
@@ -254,6 +262,70 @@ type ListTaskAttachmentsInput struct {
 type ListTaskAttachmentsResult struct {
 	Items []task.Attachment
 	Total int
+}
+
+type AssignTaskTagInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	Name          string
+	Color         *string
+}
+
+type AssignTaskTagResult struct {
+	Tag task.Tag
+}
+
+type ListTaskTagsInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+}
+
+type ListTaskTagsResult struct {
+	Items []task.Tag
+}
+
+type RemoveTaskTagInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	TagID         uuid.UUID
+}
+
+type CreateTaskRelationInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	TargetTaskID  uuid.UUID
+	Type          task.RelationType
+}
+
+type CreateTaskRelationResult struct {
+	Relation task.Relation
+}
+
+type ListTaskRelationsInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+}
+
+type ListTaskRelationsResult struct {
+	Items []task.Relation
+}
+
+type DeleteTaskRelationInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	RelationID    uuid.UUID
 }
 
 type UpdateTaskInput struct {
@@ -1187,6 +1259,292 @@ func (s *Service) DeleteTaskAttachment(ctx context.Context, input DeleteTaskAtta
 	return nil
 }
 
+func (s *Service) AssignTaskTag(ctx context.Context, input AssignTaskTagInput) (*AssignTaskTagResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return nil, ErrTaskTagNameRequired
+	}
+	normalizedName := normalizeTagName(name)
+	var color *string
+	if input.Color != nil {
+		trimmed := strings.TrimSpace(*input.Color)
+		if trimmed != "" {
+			color = &trimmed
+		}
+	}
+
+	now := s.clock()
+	var assigned task.Tag
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		parent, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		tagValue := task.Tag{
+			TenantID:       input.TenantContext.TenantID,
+			WorkspaceID:    input.TenantContext.WorkspaceID,
+			ProjectID:      input.ProjectID,
+			Name:           name,
+			NormalizedName: normalizedName,
+			Color:          color,
+			CreatedBy:      input.Account.ID,
+			CreatedAt:      now,
+			UpdatedBy:      &input.Account.ID,
+			UpdatedAt:      now,
+		}
+		tagValuePtr, err := repo.FindOrCreateTaskTag(ctx, &tagValue)
+		if err != nil {
+			return err
+		}
+		assignment := task.TagAssignment{
+			TenantID:    input.TenantContext.TenantID,
+			WorkspaceID: input.TenantContext.WorkspaceID,
+			ProjectID:   input.ProjectID,
+			TaskID:      input.TaskID,
+			TagID:       tagValuePtr.ID,
+			CreatedBy:   input.Account.ID,
+			CreatedAt:   now,
+		}
+		if err := repo.AssignTaskTag(ctx, &assignment); err != nil {
+			if errors.Is(err, task.ErrTagAlreadyAssigned) {
+				return ErrTaskTagAlreadyAssigned
+			}
+			return err
+		}
+		assigned = *tagValuePtr
+		return createActivity(ctx, repo, *parent, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"tag_id":   assigned.ID.String(),
+			"tag_name": assigned.Name,
+			"action":   "tag_assigned",
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &AssignTaskTagResult{Tag: assigned}, nil
+}
+
+func (s *Service) ListTaskTags(ctx context.Context, input ListTaskTagsInput) (*ListTaskTagsResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	if _, err := s.repository.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+	items, err := s.repository.ListTaskTags(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	return &ListTaskTagsResult{Items: items}, nil
+}
+
+func (s *Service) RemoveTaskTag(ctx context.Context, input RemoveTaskTagInput) error {
+	if err := validateAccount(input.Account); err != nil {
+		return err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return err
+	}
+	if input.ProjectID == uuid.Nil {
+		return ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return ErrTaskIDRequired
+	}
+	if input.TagID == uuid.Nil {
+		return ErrTaskTagNotFound
+	}
+
+	now := s.clock()
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		parent, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := repo.RemoveTaskTag(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.TagID, input.Account.ID, now); err != nil {
+			if errors.Is(err, task.ErrTagNotFound) {
+				return ErrTaskTagNotFound
+			}
+			return err
+		}
+		return createActivity(ctx, repo, *parent, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"tag_id": input.TagID.String(),
+			"action": "tag_removed",
+		})
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) CreateTaskRelation(ctx context.Context, input CreateTaskRelationInput) (*CreateTaskRelationResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	if input.TargetTaskID == uuid.Nil {
+		return nil, ErrTaskRelationTargetRequired
+	}
+	if input.TaskID == input.TargetTaskID {
+		return nil, ErrTaskRelationSelf
+	}
+	if !input.Type.IsValid() {
+		return nil, ErrTaskRelationTypeInvalid
+	}
+
+	now := s.clock()
+	relation := task.Relation{
+		TenantID:     input.TenantContext.TenantID,
+		WorkspaceID:  input.TenantContext.WorkspaceID,
+		ProjectID:    input.ProjectID,
+		SourceTaskID: input.TaskID,
+		TargetTaskID: input.TargetTaskID,
+		Type:         input.Type,
+		CreatedBy:    input.Account.ID,
+		CreatedAt:    now,
+	}
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		parent, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TargetTaskID); err != nil {
+			if errors.Is(err, task.ErrTaskNotFound) {
+				return ErrTaskNotFound
+			}
+			return err
+		}
+		if err := repo.CreateTaskRelation(ctx, &relation); err != nil {
+			if errors.Is(err, task.ErrRelationAlreadyExists) {
+				return ErrTaskRelationAlreadyExists
+			}
+			return err
+		}
+		return createActivity(ctx, repo, *parent, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"relation_id":    relation.ID.String(),
+			"target_task_id": input.TargetTaskID.String(),
+			"relation_type":  string(input.Type),
+			"action":         "relation_created",
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &CreateTaskRelationResult{Relation: relation}, nil
+}
+
+func (s *Service) ListTaskRelations(ctx context.Context, input ListTaskRelationsInput) (*ListTaskRelationsResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	if _, err := s.repository.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+	items, err := s.repository.ListTaskRelations(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	return &ListTaskRelationsResult{Items: items}, nil
+}
+
+func (s *Service) DeleteTaskRelation(ctx context.Context, input DeleteTaskRelationInput) error {
+	if err := validateAccount(input.Account); err != nil {
+		return err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return err
+	}
+	if input.ProjectID == uuid.Nil {
+		return ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return ErrTaskIDRequired
+	}
+	if input.RelationID == uuid.Nil {
+		return ErrTaskRelationNotFound
+	}
+
+	now := s.clock()
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		parent, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := repo.SoftDeleteTaskRelation(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.RelationID, input.Account.ID, now); err != nil {
+			if errors.Is(err, task.ErrRelationNotFound) {
+				return ErrTaskRelationNotFound
+			}
+			return err
+		}
+		return createActivity(ctx, repo, *parent, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"relation_id": input.RelationID.String(),
+			"action":      "relation_deleted",
+		})
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*UpdateTaskResult, error) {
 	if err := validateAccount(input.Account); err != nil {
 		return nil, err
@@ -1465,6 +1823,10 @@ func sanitizeFileName(value string) string {
 		return "attachment"
 	}
 	return sanitized
+}
+
+func normalizeTagName(value string) string {
+	return strings.ToLower(strings.Join(strings.Fields(value), " "))
 }
 
 func validateAccount(account auth.UserAccount) error {

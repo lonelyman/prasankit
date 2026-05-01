@@ -204,3 +204,64 @@ type AttachmentDownloadURL struct {
 	URL       string
 	ExpiresAt time.Time
 }
+
+type Tag struct {
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	WorkspaceID    uuid.UUID
+	ProjectID      uuid.UUID
+	Name           string
+	NormalizedName string
+	Color          *string
+	CreatedBy      uuid.UUID
+	CreatedAt      time.Time
+	UpdatedBy      *uuid.UUID
+	UpdatedAt      time.Time
+	DeletedBy      *uuid.UUID
+	DeletedAt      *time.Time
+}
+
+type TagAssignment struct {
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	WorkspaceID uuid.UUID
+	ProjectID   uuid.UUID
+	TaskID      uuid.UUID
+	TagID       uuid.UUID
+	CreatedBy   uuid.UUID
+	CreatedAt   time.Time
+	DeletedBy   *uuid.UUID
+	DeletedAt   *time.Time
+}
+
+type RelationType string
+
+const (
+	RelationRelatesTo  RelationType = "relates_to"
+	RelationBlocks     RelationType = "blocks"
+	RelationBlockedBy  RelationType = "blocked_by"
+	RelationDuplicates RelationType = "duplicates"
+)
+
+func (t RelationType) IsValid() bool {
+	switch t {
+	case RelationRelatesTo, RelationBlocks, RelationBlockedBy, RelationDuplicates:
+		return true
+	default:
+		return false
+	}
+}
+
+type Relation struct {
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+	WorkspaceID  uuid.UUID
+	ProjectID    uuid.UUID
+	SourceTaskID uuid.UUID
+	TargetTaskID uuid.UUID
+	Type         RelationType
+	CreatedBy    uuid.UUID
+	CreatedAt    time.Time
+	DeletedBy    *uuid.UUID
+	DeletedAt    *time.Time
+}

@@ -141,6 +141,61 @@ func (attachmentRow) TableName() string {
 	return "task_attachments"
 }
 
+type tagRow struct {
+	ID             uuid.UUID  `gorm:"column:id;type:uuid"`
+	TenantID       uuid.UUID  `gorm:"column:tenant_id;type:uuid"`
+	WorkspaceID    uuid.UUID  `gorm:"column:workspace_id;type:uuid"`
+	ProjectID      uuid.UUID  `gorm:"column:project_id;type:uuid"`
+	Name           string     `gorm:"column:name"`
+	NormalizedName string     `gorm:"column:normalized_name"`
+	Color          *string    `gorm:"column:color"`
+	CreatedBy      uuid.UUID  `gorm:"column:created_by;type:uuid"`
+	CreatedAt      time.Time  `gorm:"column:created_at"`
+	UpdatedBy      *uuid.UUID `gorm:"column:updated_by;type:uuid"`
+	UpdatedAt      time.Time  `gorm:"column:updated_at"`
+	DeletedBy      *uuid.UUID `gorm:"column:deleted_by;type:uuid"`
+	DeletedAt      *time.Time `gorm:"column:deleted_at"`
+}
+
+func (tagRow) TableName() string {
+	return "task_tags"
+}
+
+type tagAssignmentRow struct {
+	ID          uuid.UUID  `gorm:"column:id;type:uuid"`
+	TenantID    uuid.UUID  `gorm:"column:tenant_id;type:uuid"`
+	WorkspaceID uuid.UUID  `gorm:"column:workspace_id;type:uuid"`
+	ProjectID   uuid.UUID  `gorm:"column:project_id;type:uuid"`
+	TaskID      uuid.UUID  `gorm:"column:task_id;type:uuid"`
+	TagID       uuid.UUID  `gorm:"column:tag_id;type:uuid"`
+	CreatedBy   uuid.UUID  `gorm:"column:created_by;type:uuid"`
+	CreatedAt   time.Time  `gorm:"column:created_at"`
+	DeletedBy   *uuid.UUID `gorm:"column:deleted_by;type:uuid"`
+	DeletedAt   *time.Time `gorm:"column:deleted_at"`
+}
+
+func (tagAssignmentRow) TableName() string {
+	return "task_tag_assignments"
+}
+
+type relationRow struct {
+	ID           uuid.UUID  `gorm:"column:id;type:uuid"`
+	TenantID     uuid.UUID  `gorm:"column:tenant_id;type:uuid"`
+	WorkspaceID  uuid.UUID  `gorm:"column:workspace_id;type:uuid"`
+	ProjectID    uuid.UUID  `gorm:"column:project_id;type:uuid"`
+	SourceTaskID uuid.UUID  `gorm:"column:source_task_id;type:uuid"`
+	TargetTaskID uuid.UUID  `gorm:"column:target_task_id;type:uuid"`
+	RelationType string     `gorm:"column:relation_type"`
+	CreatedBy    uuid.UUID  `gorm:"column:created_by;type:uuid"`
+	CreatedAt    time.Time  `gorm:"column:created_at"`
+	DeletedBy    *uuid.UUID `gorm:"column:deleted_by;type:uuid"`
+	DeletedAt    *time.Time `gorm:"column:deleted_at"`
+}
+
+func (relationRow) TableName() string {
+	return "task_relations"
+}
+
 func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -924,6 +979,203 @@ func (r *Repository) SoftDeleteTaskAttachment(ctx context.Context, tenantID uuid
 	return nil
 }
 
+func (r *Repository) FindOrCreateTaskTag(ctx context.Context, tag *task.Tag) (*task.Tag, error) {
+	var existing tagRow
+	err := r.db.WithContext(ctx).
+		Table("task_tags AS tt").
+		Where("tt.tenant_id = ?", tag.TenantID).
+		Where("tt.workspace_id = ?", tag.WorkspaceID).
+		Where("tt.project_id = ?", tag.ProjectID).
+		Where("tt.normalized_name = ?", tag.NormalizedName).
+		Where("tt.deleted_at IS NULL").
+		Take(&existing).
+		Error
+	if err == nil {
+		value := existing.toDomain()
+		return &value, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	if err := ensureUUID(&tag.ID); err != nil {
+		return nil, err
+	}
+	if tag.CreatedAt.IsZero() {
+		tag.CreatedAt = time.Now().UTC()
+	}
+	if tag.UpdatedAt.IsZero() {
+		tag.UpdatedAt = tag.CreatedAt
+	}
+	row := tagRow{
+		ID:             tag.ID,
+		TenantID:       tag.TenantID,
+		WorkspaceID:    tag.WorkspaceID,
+		ProjectID:      tag.ProjectID,
+		Name:           tag.Name,
+		NormalizedName: tag.NormalizedName,
+		Color:          tag.Color,
+		CreatedBy:      tag.CreatedBy,
+		CreatedAt:      tag.CreatedAt,
+		UpdatedBy:      tag.UpdatedBy,
+		UpdatedAt:      tag.UpdatedAt,
+		DeletedBy:      tag.DeletedBy,
+		DeletedAt:      tag.DeletedAt,
+	}
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		if errors.Is(mapTagError(err), task.ErrTagAlreadyAssigned) {
+			return r.FindOrCreateTaskTag(ctx, tag)
+		}
+		return nil, mapTagError(err)
+	}
+	value := row.toDomain()
+	return &value, nil
+}
+
+func (r *Repository) AssignTaskTag(ctx context.Context, assignment *task.TagAssignment) error {
+	if err := ensureUUID(&assignment.ID); err != nil {
+		return err
+	}
+	if assignment.CreatedAt.IsZero() {
+		assignment.CreatedAt = time.Now().UTC()
+	}
+	row := tagAssignmentRow{
+		ID:          assignment.ID,
+		TenantID:    assignment.TenantID,
+		WorkspaceID: assignment.WorkspaceID,
+		ProjectID:   assignment.ProjectID,
+		TaskID:      assignment.TaskID,
+		TagID:       assignment.TagID,
+		CreatedBy:   assignment.CreatedBy,
+		CreatedAt:   assignment.CreatedAt,
+		DeletedBy:   assignment.DeletedBy,
+		DeletedAt:   assignment.DeletedAt,
+	}
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return mapTagError(err)
+	}
+	assignment.ID = row.ID
+	assignment.CreatedAt = row.CreatedAt
+	return nil
+}
+
+func (r *Repository) ListTaskTags(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) ([]task.Tag, error) {
+	var rows []tagRow
+	err := r.db.WithContext(ctx).
+		Table("task_tags AS tt").
+		Joins("JOIN task_tag_assignments AS tta ON tta.tag_id = tt.id AND tta.deleted_at IS NULL").
+		Where("tta.tenant_id = ?", tenantID).
+		Where("tta.workspace_id = ?", workspaceID).
+		Where("tta.project_id = ?", projectID).
+		Where("tta.task_id = ?", taskID).
+		Where("tt.deleted_at IS NULL").
+		Order("tt.name ASC, tt.id ASC").
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, err
+	}
+	tags := make([]task.Tag, 0, len(rows))
+	for _, row := range rows {
+		tags = append(tags, row.toDomain())
+	}
+	return tags, nil
+}
+
+func (r *Repository) RemoveTaskTag(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, tagID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&tagAssignmentRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("task_id = ?", taskID).
+		Where("tag_id = ?", tagID).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"deleted_by": deletedBy,
+			"deleted_at": deletedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrTagNotFound
+	}
+	return nil
+}
+
+func (r *Repository) CreateTaskRelation(ctx context.Context, relation *task.Relation) error {
+	if err := ensureUUID(&relation.ID); err != nil {
+		return err
+	}
+	if relation.CreatedAt.IsZero() {
+		relation.CreatedAt = time.Now().UTC()
+	}
+	row := relationRow{
+		ID:           relation.ID,
+		TenantID:     relation.TenantID,
+		WorkspaceID:  relation.WorkspaceID,
+		ProjectID:    relation.ProjectID,
+		SourceTaskID: relation.SourceTaskID,
+		TargetTaskID: relation.TargetTaskID,
+		RelationType: string(relation.Type),
+		CreatedBy:    relation.CreatedBy,
+		CreatedAt:    relation.CreatedAt,
+		DeletedBy:    relation.DeletedBy,
+		DeletedAt:    relation.DeletedAt,
+	}
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return mapRelationError(err)
+	}
+	relation.ID = row.ID
+	relation.CreatedAt = row.CreatedAt
+	return nil
+}
+
+func (r *Repository) ListTaskRelations(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) ([]task.Relation, error) {
+	var rows []relationRow
+	err := r.db.WithContext(ctx).
+		Table("task_relations AS tr").
+		Where("tr.tenant_id = ?", tenantID).
+		Where("tr.workspace_id = ?", workspaceID).
+		Where("tr.project_id = ?", projectID).
+		Where("tr.source_task_id = ?", taskID).
+		Where("tr.deleted_at IS NULL").
+		Order("tr.created_at DESC, tr.id DESC").
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, err
+	}
+	relations := make([]task.Relation, 0, len(rows))
+	for _, row := range rows {
+		relations = append(relations, row.toDomain())
+	}
+	return relations, nil
+}
+
+func (r *Repository) SoftDeleteTaskRelation(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, relationID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&relationRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("source_task_id = ?", taskID).
+		Where("id = ?", relationID).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"deleted_by": deletedBy,
+			"deleted_at": deletedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrRelationNotFound
+	}
+	return nil
+}
+
 func taskSelect() string {
 	return `
 		t.id,
@@ -982,6 +1234,29 @@ func mapCreateTaskError(err error) error {
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		if pgErr.ConstraintName == "uq_tasks_no_active" {
 			return task.ErrTaskNoAlreadyTaken
+		}
+	}
+	return err
+}
+
+func mapTagError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		switch pgErr.ConstraintName {
+		case "uq_task_tags_project_name_active":
+			return task.ErrTagAlreadyAssigned
+		case "uq_task_tag_assignments_active":
+			return task.ErrTagAlreadyAssigned
+		}
+	}
+	return err
+}
+
+func mapRelationError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if pgErr.ConstraintName == "uq_task_relations_active" {
+			return task.ErrRelationAlreadyExists
 		}
 	}
 	return err
@@ -1085,5 +1360,39 @@ func (r attachmentRow) toDomain() task.Attachment {
 		UpdatedAt:     r.UpdatedAt,
 		DeletedBy:     r.DeletedBy,
 		DeletedAt:     r.DeletedAt,
+	}
+}
+
+func (r tagRow) toDomain() task.Tag {
+	return task.Tag{
+		ID:             r.ID,
+		TenantID:       r.TenantID,
+		WorkspaceID:    r.WorkspaceID,
+		ProjectID:      r.ProjectID,
+		Name:           r.Name,
+		NormalizedName: r.NormalizedName,
+		Color:          r.Color,
+		CreatedBy:      r.CreatedBy,
+		CreatedAt:      r.CreatedAt,
+		UpdatedBy:      r.UpdatedBy,
+		UpdatedAt:      r.UpdatedAt,
+		DeletedBy:      r.DeletedBy,
+		DeletedAt:      r.DeletedAt,
+	}
+}
+
+func (r relationRow) toDomain() task.Relation {
+	return task.Relation{
+		ID:           r.ID,
+		TenantID:     r.TenantID,
+		WorkspaceID:  r.WorkspaceID,
+		ProjectID:    r.ProjectID,
+		SourceTaskID: r.SourceTaskID,
+		TargetTaskID: r.TargetTaskID,
+		Type:         task.RelationType(r.RelationType),
+		CreatedBy:    r.CreatedBy,
+		CreatedAt:    r.CreatedAt,
+		DeletedBy:    r.DeletedBy,
+		DeletedAt:    r.DeletedAt,
 	}
 }
