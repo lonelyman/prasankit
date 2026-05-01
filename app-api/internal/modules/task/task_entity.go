@@ -126,6 +126,21 @@ type Activity struct {
 	CreatedAt      time.Time
 }
 
+type Comment struct {
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	WorkspaceID uuid.UUID
+	ProjectID   uuid.UUID
+	TaskID      uuid.UUID
+	Body        string
+	CreatedBy   uuid.UUID
+	CreatedAt   time.Time
+	UpdatedBy   *uuid.UUID
+	UpdatedAt   time.Time
+	DeletedBy   *uuid.UUID
+	DeletedAt   *time.Time
+}
+
 type AttachmentStatus string
 
 const (

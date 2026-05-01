@@ -75,6 +75,25 @@ func (activityRow) TableName() string {
 	return "task_activities"
 }
 
+type commentRow struct {
+	ID          uuid.UUID  `gorm:"column:id;type:uuid"`
+	TenantID    uuid.UUID  `gorm:"column:tenant_id;type:uuid"`
+	WorkspaceID uuid.UUID  `gorm:"column:workspace_id;type:uuid"`
+	ProjectID   uuid.UUID  `gorm:"column:project_id;type:uuid"`
+	TaskID      uuid.UUID  `gorm:"column:task_id;type:uuid"`
+	Body        string     `gorm:"column:body"`
+	CreatedBy   uuid.UUID  `gorm:"column:created_by;type:uuid"`
+	CreatedAt   time.Time  `gorm:"column:created_at"`
+	UpdatedBy   *uuid.UUID `gorm:"column:updated_by;type:uuid"`
+	UpdatedAt   time.Time  `gorm:"column:updated_at"`
+	DeletedBy   *uuid.UUID `gorm:"column:deleted_by;type:uuid"`
+	DeletedAt   *time.Time `gorm:"column:deleted_at"`
+}
+
+func (commentRow) TableName() string {
+	return "task_comments"
+}
+
 type attachmentRow struct {
 	ID            uuid.UUID  `gorm:"column:id;type:uuid"`
 	TenantID      uuid.UUID  `gorm:"column:tenant_id;type:uuid"`
@@ -491,6 +510,101 @@ func (r *Repository) ListTaskActivities(ctx context.Context, tenantID uuid.UUID,
 	return activities, int(total), nil
 }
 
+func (r *Repository) CreateTaskComment(ctx context.Context, comment *task.Comment) error {
+	if err := ensureUUID(&comment.ID); err != nil {
+		return err
+	}
+	if comment.CreatedAt.IsZero() {
+		comment.CreatedAt = time.Now().UTC()
+	}
+	if comment.UpdatedAt.IsZero() {
+		comment.UpdatedAt = comment.CreatedAt
+	}
+
+	row := commentRow{
+		ID:          comment.ID,
+		TenantID:    comment.TenantID,
+		WorkspaceID: comment.WorkspaceID,
+		ProjectID:   comment.ProjectID,
+		TaskID:      comment.TaskID,
+		Body:        comment.Body,
+		CreatedBy:   comment.CreatedBy,
+		CreatedAt:   comment.CreatedAt,
+		UpdatedBy:   comment.UpdatedBy,
+		UpdatedAt:   comment.UpdatedAt,
+		DeletedBy:   comment.DeletedBy,
+		DeletedAt:   comment.DeletedAt,
+	}
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return err
+	}
+	comment.ID = row.ID
+	comment.CreatedAt = row.CreatedAt
+	comment.UpdatedAt = row.UpdatedAt
+	return nil
+}
+
+func (r *Repository) ListTaskComments(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, limit int, offset int) ([]task.Comment, int, error) {
+	var total int64
+	countQuery := r.db.WithContext(ctx).
+		Table("task_comments AS tc").
+		Where("tc.tenant_id = ?", tenantID).
+		Where("tc.workspace_id = ?", workspaceID).
+		Where("tc.project_id = ?", projectID).
+		Where("tc.task_id = ?", taskID).
+		Where("tc.deleted_at IS NULL")
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var rows []commentRow
+	err := r.db.WithContext(ctx).
+		Table("task_comments AS tc").
+		Where("tc.tenant_id = ?", tenantID).
+		Where("tc.workspace_id = ?", workspaceID).
+		Where("tc.project_id = ?", projectID).
+		Where("tc.task_id = ?", taskID).
+		Where("tc.deleted_at IS NULL").
+		Order("tc.created_at DESC, tc.id DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	comments := make([]task.Comment, 0, len(rows))
+	for _, row := range rows {
+		comments = append(comments, row.toDomain())
+	}
+	return comments, int(total), nil
+}
+
+func (r *Repository) SoftDeleteTaskComment(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, commentID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&commentRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("task_id = ?", taskID).
+		Where("id = ?", commentID).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"deleted_by": deletedBy,
+			"deleted_at": deletedAt,
+			"updated_by": deletedBy,
+			"updated_at": deletedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrCommentNotFound
+	}
+	return nil
+}
+
 func (r *Repository) CreateTaskAttachment(ctx context.Context, attachment *task.Attachment) error {
 	if err := ensureUUID(&attachment.ID); err != nil {
 		return err
@@ -548,7 +662,7 @@ func (r *Repository) MarkTaskAttachmentUploaded(ctx context.Context, tenantID uu
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return task.ErrTaskNotFound
+		return task.ErrAttachmentNotFound
 	}
 	return nil
 }
@@ -689,6 +803,23 @@ func (r activityRow) toDomain() task.Activity {
 		ToStatus:       parseStatusPtr(r.ToStatus),
 		MetadataJSON:   map[string]any(r.MetadataJSON),
 		CreatedAt:      r.CreatedAt,
+	}
+}
+
+func (r commentRow) toDomain() task.Comment {
+	return task.Comment{
+		ID:          r.ID,
+		TenantID:    r.TenantID,
+		WorkspaceID: r.WorkspaceID,
+		ProjectID:   r.ProjectID,
+		TaskID:      r.TaskID,
+		Body:        r.Body,
+		CreatedBy:   r.CreatedBy,
+		CreatedAt:   r.CreatedAt,
+		UpdatedBy:   r.UpdatedBy,
+		UpdatedAt:   r.UpdatedAt,
+		DeletedBy:   r.DeletedBy,
+		DeletedAt:   r.DeletedAt,
 	}
 }
 

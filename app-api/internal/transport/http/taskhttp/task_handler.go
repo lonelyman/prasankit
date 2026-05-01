@@ -29,6 +29,9 @@ type TaskService interface {
 	GetTaskBoardSummary(ctx context.Context, input tasksvc.GetTaskBoardSummaryInput) (*tasksvc.GetTaskBoardSummaryResult, error)
 	GetTask(ctx context.Context, input tasksvc.GetTaskInput) (*tasksvc.GetTaskResult, error)
 	ListTaskActivities(ctx context.Context, input tasksvc.ListTaskActivitiesInput) (*tasksvc.ListTaskActivitiesResult, error)
+	CreateTaskComment(ctx context.Context, input tasksvc.CreateTaskCommentInput) (*tasksvc.CreateTaskCommentResult, error)
+	ListTaskComments(ctx context.Context, input tasksvc.ListTaskCommentsInput) (*tasksvc.ListTaskCommentsResult, error)
+	DeleteTaskComment(ctx context.Context, input tasksvc.DeleteTaskCommentInput) error
 	CreateTaskAttachmentUpload(ctx context.Context, input tasksvc.CreateTaskAttachmentUploadInput) (*tasksvc.CreateTaskAttachmentUploadResult, error)
 	CompleteTaskAttachmentUpload(ctx context.Context, input tasksvc.CompleteTaskAttachmentUploadInput) error
 	ListTaskAttachments(ctx context.Context, input tasksvc.ListTaskAttachmentsInput) (*tasksvc.ListTaskAttachmentsResult, error)
@@ -81,6 +84,10 @@ type updateTaskStatusRequest struct {
 	Status string `json:"status"`
 }
 
+type createTaskCommentRequest struct {
+	Body string `json:"body"`
+}
+
 type createTaskAttachmentUploadRequest struct {
 	FileName    string `json:"file_name"`
 	ContentType string `json:"content_type"`
@@ -118,6 +125,15 @@ type taskActivityResponse struct {
 	CreatedAt      string         `json:"created_at"`
 }
 
+type taskCommentResponse struct {
+	ID        string `json:"id"`
+	TaskID    string `json:"task_id"`
+	Body      string `json:"body"`
+	CreatedBy string `json:"created_by"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 type taskAttachmentResponse struct {
 	ID          string  `json:"id"`
 	TaskID      string  `json:"task_id"`
@@ -151,6 +167,9 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	tasks.Post("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTask)
 	tasks.Get("/summary", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTaskBoardSummary)
 	tasks.Get("/:task_id/activities", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskActivities)
+	tasks.Get("/:task_id/comments", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskComments)
+	tasks.Post("/:task_id/comments", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTaskComment)
+	tasks.Delete("/:task_id/comments/:comment_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.DeleteTaskComment)
 	tasks.Get("/:task_id/attachments", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskAttachments)
 	tasks.Post("/:task_id/attachments/uploads", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTaskAttachmentUpload)
 	tasks.Patch("/:task_id/attachments/:attachment_id/complete", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CompleteTaskAttachmentUpload)
@@ -346,6 +365,103 @@ func (h Handler) ListTaskActivities(c fiber.Ctx) error {
 		items = append(items, toTaskActivityResponse(item))
 	}
 	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
+}
+
+func (h Handler) CreateTaskComment(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	var req createTaskCommentRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+
+	result, err := h.tasks.CreateTaskComment(c.Context(), tasksvc.CreateTaskCommentInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Body:          req.Body,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, toTaskCommentResponse(result.Comment), fiber.StatusCreated)
+}
+
+func (h Handler) ListTaskComments(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+
+	query := presenter.ParseOffsetQuery(c)
+	result, err := h.tasks.ListTaskComments(c.Context(), tasksvc.ListTaskCommentsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Limit:         query.Limit,
+		Offset:        query.Offset,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	items := make([]taskCommentResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, toTaskCommentResponse(item))
+	}
+	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
+}
+
+func (h Handler) DeleteTaskComment(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	commentID, err := uuid.Parse(c.Params("comment_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_COMMENT_ID_INVALID", "Task comment id is invalid")
+	}
+
+	if err := h.tasks.DeleteTaskComment(c.Context(), tasksvc.DeleteTaskCommentInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		CommentID:     commentID,
+	}); err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 func (h Handler) CreateTaskAttachmentUpload(c fiber.Ctx) error {
@@ -652,6 +768,10 @@ func renderTaskError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_PRIORITY_INVALID", "Task priority is invalid")
 	case errors.Is(err, tasksvc.ErrTaskAssigneeNotFound):
 		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_ASSIGNEE_NOT_FOUND", "Task assignee not found")
+	case errors.Is(err, tasksvc.ErrTaskCommentNotFound):
+		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_COMMENT_NOT_FOUND", "Task comment not found")
+	case errors.Is(err, tasksvc.ErrTaskCommentBodyRequired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_COMMENT_BODY_REQUIRED", "Task comment body is required")
 	case errors.Is(err, tasksvc.ErrTaskAttachmentNotFound):
 		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_ATTACHMENT_NOT_FOUND", "Task attachment not found")
 	case errors.Is(err, tasksvc.ErrAttachmentFileNameRequired):
@@ -849,6 +969,17 @@ func toTaskActivityResponse(value task.Activity) taskActivityResponse {
 		ToStatus:       formatStatus(value.ToStatus),
 		Metadata:       value.MetadataJSON,
 		CreatedAt:      value.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+func toTaskCommentResponse(value task.Comment) taskCommentResponse {
+	return taskCommentResponse{
+		ID:        value.ID.String(),
+		TaskID:    value.TaskID.String(),
+		Body:      value.Body,
+		CreatedBy: value.CreatedBy.String(),
+		CreatedAt: value.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: value.UpdatedAt.Format(time.RFC3339),
 	}
 }
 

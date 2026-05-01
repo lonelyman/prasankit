@@ -21,37 +21,45 @@ import (
 )
 
 type fakeTaskService struct {
-	createResult     *tasksvc.CreateTaskResult
-	createErr        error
-	createInput      tasksvc.CreateTaskInput
-	listResult       *tasksvc.ListTasksResult
-	listErr          error
-	listInput        tasksvc.ListTasksInput
-	summaryResult    *tasksvc.GetTaskBoardSummaryResult
-	summaryErr       error
-	summaryInput     tasksvc.GetTaskBoardSummaryInput
-	getResult        *tasksvc.GetTaskResult
-	getErr           error
-	getInput         tasksvc.GetTaskInput
-	activityResult   *tasksvc.ListTaskActivitiesResult
-	activityErr      error
-	activityInput    tasksvc.ListTaskActivitiesInput
-	uploadResult     *tasksvc.CreateTaskAttachmentUploadResult
-	uploadErr        error
-	uploadInput      tasksvc.CreateTaskAttachmentUploadInput
-	completeErr      error
-	completeInput    tasksvc.CompleteTaskAttachmentUploadInput
-	attachmentResult *tasksvc.ListTaskAttachmentsResult
-	attachmentErr    error
-	attachmentInput  tasksvc.ListTaskAttachmentsInput
-	updateResult     *tasksvc.UpdateTaskResult
-	updateErr        error
-	updateInput      tasksvc.UpdateTaskInput
-	statusResult     *tasksvc.UpdateTaskStatusResult
-	statusErr        error
-	statusInput      tasksvc.UpdateTaskStatusInput
-	deleteErr        error
-	deleteInput      tasksvc.DeleteTaskInput
+	createResult        *tasksvc.CreateTaskResult
+	createErr           error
+	createInput         tasksvc.CreateTaskInput
+	listResult          *tasksvc.ListTasksResult
+	listErr             error
+	listInput           tasksvc.ListTasksInput
+	summaryResult       *tasksvc.GetTaskBoardSummaryResult
+	summaryErr          error
+	summaryInput        tasksvc.GetTaskBoardSummaryInput
+	getResult           *tasksvc.GetTaskResult
+	getErr              error
+	getInput            tasksvc.GetTaskInput
+	activityResult      *tasksvc.ListTaskActivitiesResult
+	activityErr         error
+	activityInput       tasksvc.ListTaskActivitiesInput
+	commentResult       *tasksvc.ListTaskCommentsResult
+	commentErr          error
+	commentInput        tasksvc.ListTaskCommentsInput
+	createCommentResult *tasksvc.CreateTaskCommentResult
+	createCommentErr    error
+	createCommentInput  tasksvc.CreateTaskCommentInput
+	deleteCommentErr    error
+	deleteCommentInput  tasksvc.DeleteTaskCommentInput
+	uploadResult        *tasksvc.CreateTaskAttachmentUploadResult
+	uploadErr           error
+	uploadInput         tasksvc.CreateTaskAttachmentUploadInput
+	completeErr         error
+	completeInput       tasksvc.CompleteTaskAttachmentUploadInput
+	attachmentResult    *tasksvc.ListTaskAttachmentsResult
+	attachmentErr       error
+	attachmentInput     tasksvc.ListTaskAttachmentsInput
+	updateResult        *tasksvc.UpdateTaskResult
+	updateErr           error
+	updateInput         tasksvc.UpdateTaskInput
+	statusResult        *tasksvc.UpdateTaskStatusResult
+	statusErr           error
+	statusInput         tasksvc.UpdateTaskStatusInput
+	deleteErr           error
+	deleteInput         tasksvc.DeleteTaskInput
 }
 
 func (s *fakeTaskService) CreateTask(_ context.Context, input tasksvc.CreateTaskInput) (*tasksvc.CreateTaskResult, error) {
@@ -92,6 +100,27 @@ func (s *fakeTaskService) ListTaskActivities(_ context.Context, input tasksvc.Li
 		return nil, s.activityErr
 	}
 	return s.activityResult, nil
+}
+
+func (s *fakeTaskService) CreateTaskComment(_ context.Context, input tasksvc.CreateTaskCommentInput) (*tasksvc.CreateTaskCommentResult, error) {
+	s.createCommentInput = input
+	if s.createCommentErr != nil {
+		return nil, s.createCommentErr
+	}
+	return s.createCommentResult, nil
+}
+
+func (s *fakeTaskService) ListTaskComments(_ context.Context, input tasksvc.ListTaskCommentsInput) (*tasksvc.ListTaskCommentsResult, error) {
+	s.commentInput = input
+	if s.commentErr != nil {
+		return nil, s.commentErr
+	}
+	return s.commentResult, nil
+}
+
+func (s *fakeTaskService) DeleteTaskComment(_ context.Context, input tasksvc.DeleteTaskCommentInput) error {
+	s.deleteCommentInput = input
+	return s.deleteCommentErr
 }
 
 func (s *fakeTaskService) CreateTaskAttachmentUpload(_ context.Context, input tasksvc.CreateTaskAttachmentUploadInput) (*tasksvc.CreateTaskAttachmentUploadResult, error) {
@@ -401,6 +430,97 @@ func TestListTaskActivities(t *testing.T) {
 	first := items[0].(map[string]any)
 	if first["action"] != string(task.ActivityCreated) {
 		t.Fatalf("activity action = %v, want created", first["action"])
+	}
+}
+
+func TestCreateTaskComment(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	commentID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		createCommentResult: &tasksvc.CreateTaskCommentResult{
+			Comment: task.Comment{ID: commentID, ProjectID: projectID, TaskID: taskID, Body: "please review", CreatedBy: accountID, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/comments", bytes.NewBufferString(`{"body":"please review"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	if service.createCommentInput.Body != "please review" {
+		t.Fatalf("body = %q, want please review", service.createCommentInput.Body)
+	}
+}
+
+func TestListTaskComments(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		commentResult: &tasksvc.ListTaskCommentsResult{
+			Total: 1,
+			Items: []task.Comment{
+				{ID: uuid.Must(uuid.NewV7()), ProjectID: projectID, TaskID: taskID, Body: "please review", CreatedBy: accountID, CreatedAt: now, UpdatedAt: now},
+			},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/comments?page=1&limit=10", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.commentInput.TaskID != taskID {
+		t.Fatalf("task ID = %s, want %s", service.commentInput.TaskID, taskID)
+	}
+}
+
+func TestDeleteTaskComment(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	commentID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/comments/"+commentID.String(), nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+	if service.deleteCommentInput.CommentID != commentID {
+		t.Fatalf("comment ID = %s, want %s", service.deleteCommentInput.CommentID, commentID)
 	}
 }
 

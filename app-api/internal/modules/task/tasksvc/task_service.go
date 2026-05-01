@@ -34,6 +34,8 @@ var (
 	ErrTaskPriorityInvalid            = errors.New("task priority is invalid")
 	ErrTaskAssigneeNotFound           = errors.New("task assignee not found")
 	ErrTaskCreateFail                 = errors.New("task create failed")
+	ErrTaskCommentNotFound            = errors.New("task comment not found")
+	ErrTaskCommentBodyRequired        = errors.New("task comment body is required")
 	ErrTaskAttachmentNotFound         = errors.New("task attachment not found")
 	ErrAttachmentFileNameRequired     = errors.New("attachment file name is required")
 	ErrAttachmentContentTypeRequired  = errors.New("attachment content type is required")
@@ -108,6 +110,40 @@ type ListTaskActivitiesInput struct {
 type ListTaskActivitiesResult struct {
 	Items []task.Activity
 	Total int
+}
+
+type CreateTaskCommentInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	Body          string
+}
+
+type CreateTaskCommentResult struct {
+	Comment task.Comment
+}
+
+type ListTaskCommentsInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	Limit         int
+	Offset        int
+}
+
+type ListTaskCommentsResult struct {
+	Items []task.Comment
+	Total int
+}
+
+type DeleteTaskCommentInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	CommentID     uuid.UUID
 }
 
 type CreateTaskAttachmentUploadInput struct {
@@ -477,6 +513,141 @@ func (s *Service) ListTaskActivities(ctx context.Context, input ListTaskActiviti
 		return nil, err
 	}
 	return &ListTaskActivitiesResult{Items: items, Total: total}, nil
+}
+
+func (s *Service) CreateTaskComment(ctx context.Context, input CreateTaskCommentInput) (*CreateTaskCommentResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	body := strings.TrimSpace(input.Body)
+	if body == "" {
+		return nil, ErrTaskCommentBodyRequired
+	}
+
+	now := s.clock()
+	comment := task.Comment{
+		TenantID:    input.TenantContext.TenantID,
+		WorkspaceID: input.TenantContext.WorkspaceID,
+		ProjectID:   input.ProjectID,
+		TaskID:      input.TaskID,
+		Body:        body,
+		CreatedBy:   input.Account.ID,
+		CreatedAt:   now,
+		UpdatedBy:   &input.Account.ID,
+		UpdatedAt:   now,
+	}
+
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		item, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := repo.CreateTaskComment(ctx, &comment); err != nil {
+			return err
+		}
+		return createActivity(ctx, repo, *item, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"comment_id": comment.ID.String(),
+			"action":     "comment_created",
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &CreateTaskCommentResult{Comment: comment}, nil
+}
+
+func (s *Service) ListTaskComments(ctx context.Context, input ListTaskCommentsInput) (*ListTaskCommentsResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	limit := input.Limit
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := input.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	if _, err := s.repository.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+
+	items, total, err := s.repository.ListTaskComments(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &ListTaskCommentsResult{Items: items, Total: total}, nil
+}
+
+func (s *Service) DeleteTaskComment(ctx context.Context, input DeleteTaskCommentInput) error {
+	if err := validateAccount(input.Account); err != nil {
+		return err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return err
+	}
+	if input.ProjectID == uuid.Nil {
+		return ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return ErrTaskIDRequired
+	}
+	if input.CommentID == uuid.Nil {
+		return ErrTaskCommentNotFound
+	}
+
+	now := s.clock()
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		item, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := repo.SoftDeleteTaskComment(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.CommentID, input.Account.ID, now); err != nil {
+			if errors.Is(err, task.ErrCommentNotFound) {
+				return ErrTaskCommentNotFound
+			}
+			return err
+		}
+		return createActivity(ctx, repo, *item, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"comment_id": input.CommentID.String(),
+			"action":     "comment_deleted",
+		})
+	})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) CreateTaskAttachmentUpload(ctx context.Context, input CreateTaskAttachmentUploadInput) (*CreateTaskAttachmentUploadResult, error) {

@@ -10,6 +10,7 @@ import (
 
 var ErrProjectNotFound = errors.New("project not found")
 var ErrTaskNotFound = errors.New("task not found")
+var ErrCommentNotFound = errors.New("task comment not found")
 var ErrAttachmentNotFound = errors.New("task attachment not found")
 var ErrPriorityNotFound = errors.New("task priority not found")
 var ErrAssigneeNotFound = errors.New("task assignee not found")
@@ -30,6 +31,9 @@ type Repository interface {
 	CountTasksByStatus(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID) ([]StatusCount, error)
 	CreateTaskActivity(ctx context.Context, activity *Activity) error
 	ListTaskActivities(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, limit int, offset int) ([]Activity, int, error)
+	CreateTaskComment(ctx context.Context, comment *Comment) error
+	ListTaskComments(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, limit int, offset int) ([]Comment, int, error)
+	SoftDeleteTaskComment(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, commentID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error
 	CreateTaskAttachment(ctx context.Context, attachment *Attachment) error
 	MarkTaskAttachmentUploaded(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID, uploadedAt time.Time) error
 	ListTaskAttachments(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, limit int, offset int) ([]Attachment, int, error)

@@ -25,6 +25,11 @@ type fakeRepository struct {
 	activityItems     []task.Activity
 	activityTotal     int
 	activityErr       error
+	comment           *task.Comment
+	commentItems      []task.Comment
+	commentTotal      int
+	commentID         uuid.UUID
+	commentErr        error
 	attachment        *task.Attachment
 	attachmentItems   []task.Attachment
 	attachmentTotal   int
@@ -193,6 +198,35 @@ func (r *fakeRepository) ListTaskActivities(_ context.Context, tenantID uuid.UUI
 		return nil, 0, r.activityErr
 	}
 	return r.activityItems, r.activityTotal, nil
+}
+
+func (r *fakeRepository) CreateTaskComment(_ context.Context, comment *task.Comment) error {
+	if r.commentErr != nil {
+		return r.commentErr
+	}
+	comment.ID = uuid.Must(uuid.NewV7())
+	r.comment = comment
+	return nil
+}
+
+func (r *fakeRepository) ListTaskComments(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, _ int, _ int) ([]task.Comment, int, error) {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	if r.commentErr != nil {
+		return nil, 0, r.commentErr
+	}
+	return r.commentItems, r.commentTotal, nil
+}
+
+func (r *fakeRepository) SoftDeleteTaskComment(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, commentID uuid.UUID, _ uuid.UUID, _ time.Time) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	r.commentID = commentID
+	return r.commentErr
 }
 
 func (r *fakeRepository) CreateTaskAttachment(_ context.Context, attachment *task.Attachment) error {
@@ -498,6 +532,110 @@ func TestListTaskActivities(t *testing.T) {
 	}
 	if repo.statusTaskID != taskID {
 		t.Fatalf("task ID = %s, want %s", repo.statusTaskID, taskID)
+	}
+}
+
+func TestCreateTaskComment(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{findTask: &task.Task{
+		ID:          taskID,
+		TenantID:    tenantContext.TenantID,
+		WorkspaceID: tenantContext.WorkspaceID,
+		ProjectID:   projectID,
+		Status:      task.StatusTodo,
+	}}
+
+	result, err := NewService(repo).CreateTaskComment(context.Background(), CreateTaskCommentInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Body:          "  please review  ",
+	})
+	if err != nil {
+		t.Fatalf("CreateTaskComment: %v", err)
+	}
+	if result.Comment.ID == uuid.Nil {
+		t.Fatal("comment ID was not set")
+	}
+	if result.Comment.Body != "please review" {
+		t.Fatalf("comment body = %q, want trimmed", result.Comment.Body)
+	}
+	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "comment_created" {
+		t.Fatalf("activity metadata = %#v, want comment_created", repo.activity)
+	}
+}
+
+func TestCreateTaskCommentRejectsBlankBody(t *testing.T) {
+	_, err := NewService(&fakeRepository{}).CreateTaskComment(context.Background(), CreateTaskCommentInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: testTenantContext(),
+		ProjectID:     uuid.Must(uuid.NewV7()),
+		TaskID:        uuid.Must(uuid.NewV7()),
+		Body:          "   ",
+	})
+	if !errors.Is(err, ErrTaskCommentBodyRequired) {
+		t.Fatalf("err = %v, want ErrTaskCommentBodyRequired", err)
+	}
+}
+
+func TestListTaskComments(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findTask:     &task.Task{ID: taskID, ProjectID: projectID, No: "TASK-0001", Title: "Task A"},
+		commentTotal: 1,
+		commentItems: []task.Comment{
+			{ID: uuid.Must(uuid.NewV7()), ProjectID: projectID, TaskID: taskID, Body: "hello"},
+		},
+	}
+
+	result, err := NewService(repo).ListTaskComments(context.Background(), ListTaskCommentsInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Limit:         10,
+	})
+	if err != nil {
+		t.Fatalf("ListTaskComments: %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 {
+		t.Fatalf("result = total %d len %d, want 1/1", result.Total, len(result.Items))
+	}
+}
+
+func TestDeleteTaskComment(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	commentID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{findTask: &task.Task{
+		ID:          taskID,
+		TenantID:    tenantContext.TenantID,
+		WorkspaceID: tenantContext.WorkspaceID,
+		ProjectID:   projectID,
+		Status:      task.StatusTodo,
+	}}
+
+	err := NewService(repo).DeleteTaskComment(context.Background(), DeleteTaskCommentInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		CommentID:     commentID,
+	})
+	if err != nil {
+		t.Fatalf("DeleteTaskComment: %v", err)
+	}
+	if repo.commentID != commentID {
+		t.Fatalf("comment ID = %s, want %s", repo.commentID, commentID)
+	}
+	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "comment_deleted" {
+		t.Fatalf("activity metadata = %#v, want comment_deleted", repo.activity)
 	}
 }
 
