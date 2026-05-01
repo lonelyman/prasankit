@@ -94,6 +94,29 @@ func (commentRow) TableName() string {
 	return "task_comments"
 }
 
+type checklistItemRow struct {
+	ID          uuid.UUID  `gorm:"column:id;type:uuid"`
+	TenantID    uuid.UUID  `gorm:"column:tenant_id;type:uuid"`
+	WorkspaceID uuid.UUID  `gorm:"column:workspace_id;type:uuid"`
+	ProjectID   uuid.UUID  `gorm:"column:project_id;type:uuid"`
+	TaskID      uuid.UUID  `gorm:"column:task_id;type:uuid"`
+	ItemText    string     `gorm:"column:item_text"`
+	IsCompleted bool       `gorm:"column:is_completed"`
+	SortOrder   int        `gorm:"column:sort_order"`
+	CreatedBy   uuid.UUID  `gorm:"column:created_by;type:uuid"`
+	CreatedAt   time.Time  `gorm:"column:created_at"`
+	UpdatedBy   *uuid.UUID `gorm:"column:updated_by;type:uuid"`
+	UpdatedAt   time.Time  `gorm:"column:updated_at"`
+	CompletedBy *uuid.UUID `gorm:"column:completed_by;type:uuid"`
+	CompletedAt *time.Time `gorm:"column:completed_at"`
+	DeletedBy   *uuid.UUID `gorm:"column:deleted_by;type:uuid"`
+	DeletedAt   *time.Time `gorm:"column:deleted_at"`
+}
+
+func (checklistItemRow) TableName() string {
+	return "task_checklist_items"
+}
+
 type attachmentRow struct {
 	ID            uuid.UUID  `gorm:"column:id;type:uuid"`
 	TenantID      uuid.UUID  `gorm:"column:tenant_id;type:uuid"`
@@ -605,6 +628,153 @@ func (r *Repository) SoftDeleteTaskComment(ctx context.Context, tenantID uuid.UU
 	return nil
 }
 
+func (r *Repository) CreateTaskChecklistItem(ctx context.Context, item *task.ChecklistItem) error {
+	if err := ensureUUID(&item.ID); err != nil {
+		return err
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = time.Now().UTC()
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = item.CreatedAt
+	}
+
+	row := checklistItemRow{
+		ID:          item.ID,
+		TenantID:    item.TenantID,
+		WorkspaceID: item.WorkspaceID,
+		ProjectID:   item.ProjectID,
+		TaskID:      item.TaskID,
+		ItemText:    item.Text,
+		IsCompleted: item.IsCompleted,
+		SortOrder:   item.SortOrder,
+		CreatedBy:   item.CreatedBy,
+		CreatedAt:   item.CreatedAt,
+		UpdatedBy:   item.UpdatedBy,
+		UpdatedAt:   item.UpdatedAt,
+		CompletedBy: item.CompletedBy,
+		CompletedAt: item.CompletedAt,
+		DeletedBy:   item.DeletedBy,
+		DeletedAt:   item.DeletedAt,
+	}
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return err
+	}
+	item.ID = row.ID
+	item.CreatedAt = row.CreatedAt
+	item.UpdatedAt = row.UpdatedAt
+	return nil
+}
+
+func (r *Repository) UpdateTaskChecklistItem(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, itemID uuid.UUID, patch task.ChecklistItemPatch) error {
+	updates := map[string]any{
+		"updated_by": patch.UpdatedBy,
+		"updated_at": patch.UpdatedAt,
+	}
+	if patch.Text != nil {
+		updates["item_text"] = *patch.Text
+	}
+	if patch.SortOrder != nil {
+		updates["sort_order"] = *patch.SortOrder
+	}
+	if patch.IsCompleted != nil {
+		updates["is_completed"] = *patch.IsCompleted
+		if *patch.IsCompleted {
+			updates["completed_by"] = patch.UpdatedBy
+			updates["completed_at"] = patch.UpdatedAt
+		} else {
+			updates["completed_by"] = nil
+			updates["completed_at"] = nil
+		}
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&checklistItemRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("task_id = ?", taskID).
+		Where("id = ?", itemID).
+		Where("deleted_at IS NULL").
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrChecklistItemNotFound
+	}
+	return nil
+}
+
+func (r *Repository) SoftDeleteTaskChecklistItem(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, itemID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&checklistItemRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("task_id = ?", taskID).
+		Where("id = ?", itemID).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"deleted_by": deletedBy,
+			"deleted_at": deletedAt,
+			"updated_by": deletedBy,
+			"updated_at": deletedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrChecklistItemNotFound
+	}
+	return nil
+}
+
+func (r *Repository) ListTaskChecklistItems(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) ([]task.ChecklistItem, error) {
+	var rows []checklistItemRow
+	err := r.db.WithContext(ctx).
+		Table("task_checklist_items AS tci").
+		Where("tci.tenant_id = ?", tenantID).
+		Where("tci.workspace_id = ?", workspaceID).
+		Where("tci.project_id = ?", projectID).
+		Where("tci.task_id = ?", taskID).
+		Where("tci.deleted_at IS NULL").
+		Order("tci.sort_order ASC, tci.created_at ASC, tci.id ASC").
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]task.ChecklistItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, row.toDomain())
+	}
+	return items, nil
+}
+
+func (r *Repository) FindTaskChecklistItemByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, itemID uuid.UUID) (*task.ChecklistItem, error) {
+	var row checklistItemRow
+	err := r.db.WithContext(ctx).
+		Table("task_checklist_items AS tci").
+		Where("tci.tenant_id = ?", tenantID).
+		Where("tci.workspace_id = ?", workspaceID).
+		Where("tci.project_id = ?", projectID).
+		Where("tci.task_id = ?", taskID).
+		Where("tci.id = ?", itemID).
+		Where("tci.deleted_at IS NULL").
+		Take(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, task.ErrChecklistItemNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	item := row.toDomain()
+	return &item, nil
+}
+
 func (r *Repository) CreateTaskAttachment(ctx context.Context, attachment *task.Attachment) error {
 	if err := ensureUUID(&attachment.ID); err != nil {
 		return err
@@ -818,6 +988,27 @@ func (r commentRow) toDomain() task.Comment {
 		CreatedAt:   r.CreatedAt,
 		UpdatedBy:   r.UpdatedBy,
 		UpdatedAt:   r.UpdatedAt,
+		DeletedBy:   r.DeletedBy,
+		DeletedAt:   r.DeletedAt,
+	}
+}
+
+func (r checklistItemRow) toDomain() task.ChecklistItem {
+	return task.ChecklistItem{
+		ID:          r.ID,
+		TenantID:    r.TenantID,
+		WorkspaceID: r.WorkspaceID,
+		ProjectID:   r.ProjectID,
+		TaskID:      r.TaskID,
+		Text:        r.ItemText,
+		IsCompleted: r.IsCompleted,
+		SortOrder:   r.SortOrder,
+		CreatedBy:   r.CreatedBy,
+		CreatedAt:   r.CreatedAt,
+		UpdatedBy:   r.UpdatedBy,
+		UpdatedAt:   r.UpdatedAt,
+		CompletedBy: r.CompletedBy,
+		CompletedAt: r.CompletedAt,
 		DeletedBy:   r.DeletedBy,
 		DeletedAt:   r.DeletedAt,
 	}

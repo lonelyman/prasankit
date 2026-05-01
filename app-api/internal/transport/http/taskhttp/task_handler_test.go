@@ -21,45 +21,56 @@ import (
 )
 
 type fakeTaskService struct {
-	createResult        *tasksvc.CreateTaskResult
-	createErr           error
-	createInput         tasksvc.CreateTaskInput
-	listResult          *tasksvc.ListTasksResult
-	listErr             error
-	listInput           tasksvc.ListTasksInput
-	summaryResult       *tasksvc.GetTaskBoardSummaryResult
-	summaryErr          error
-	summaryInput        tasksvc.GetTaskBoardSummaryInput
-	getResult           *tasksvc.GetTaskResult
-	getErr              error
-	getInput            tasksvc.GetTaskInput
-	activityResult      *tasksvc.ListTaskActivitiesResult
-	activityErr         error
-	activityInput       tasksvc.ListTaskActivitiesInput
-	commentResult       *tasksvc.ListTaskCommentsResult
-	commentErr          error
-	commentInput        tasksvc.ListTaskCommentsInput
-	createCommentResult *tasksvc.CreateTaskCommentResult
-	createCommentErr    error
-	createCommentInput  tasksvc.CreateTaskCommentInput
-	deleteCommentErr    error
-	deleteCommentInput  tasksvc.DeleteTaskCommentInput
-	uploadResult        *tasksvc.CreateTaskAttachmentUploadResult
-	uploadErr           error
-	uploadInput         tasksvc.CreateTaskAttachmentUploadInput
-	completeErr         error
-	completeInput       tasksvc.CompleteTaskAttachmentUploadInput
-	attachmentResult    *tasksvc.ListTaskAttachmentsResult
-	attachmentErr       error
-	attachmentInput     tasksvc.ListTaskAttachmentsInput
-	updateResult        *tasksvc.UpdateTaskResult
-	updateErr           error
-	updateInput         tasksvc.UpdateTaskInput
-	statusResult        *tasksvc.UpdateTaskStatusResult
-	statusErr           error
-	statusInput         tasksvc.UpdateTaskStatusInput
-	deleteErr           error
-	deleteInput         tasksvc.DeleteTaskInput
+	createResult          *tasksvc.CreateTaskResult
+	createErr             error
+	createInput           tasksvc.CreateTaskInput
+	listResult            *tasksvc.ListTasksResult
+	listErr               error
+	listInput             tasksvc.ListTasksInput
+	summaryResult         *tasksvc.GetTaskBoardSummaryResult
+	summaryErr            error
+	summaryInput          tasksvc.GetTaskBoardSummaryInput
+	getResult             *tasksvc.GetTaskResult
+	getErr                error
+	getInput              tasksvc.GetTaskInput
+	activityResult        *tasksvc.ListTaskActivitiesResult
+	activityErr           error
+	activityInput         tasksvc.ListTaskActivitiesInput
+	commentResult         *tasksvc.ListTaskCommentsResult
+	commentErr            error
+	commentInput          tasksvc.ListTaskCommentsInput
+	createCommentResult   *tasksvc.CreateTaskCommentResult
+	createCommentErr      error
+	createCommentInput    tasksvc.CreateTaskCommentInput
+	deleteCommentErr      error
+	deleteCommentInput    tasksvc.DeleteTaskCommentInput
+	checklistResult       *tasksvc.ListTaskChecklistItemsResult
+	checklistErr          error
+	checklistInput        tasksvc.ListTaskChecklistItemsInput
+	createChecklistResult *tasksvc.CreateTaskChecklistItemResult
+	createChecklistErr    error
+	createChecklistInput  tasksvc.CreateTaskChecklistItemInput
+	updateChecklistResult *tasksvc.UpdateTaskChecklistItemResult
+	updateChecklistErr    error
+	updateChecklistInput  tasksvc.UpdateTaskChecklistItemInput
+	deleteChecklistErr    error
+	deleteChecklistInput  tasksvc.DeleteTaskChecklistItemInput
+	uploadResult          *tasksvc.CreateTaskAttachmentUploadResult
+	uploadErr             error
+	uploadInput           tasksvc.CreateTaskAttachmentUploadInput
+	completeErr           error
+	completeInput         tasksvc.CompleteTaskAttachmentUploadInput
+	attachmentResult      *tasksvc.ListTaskAttachmentsResult
+	attachmentErr         error
+	attachmentInput       tasksvc.ListTaskAttachmentsInput
+	updateResult          *tasksvc.UpdateTaskResult
+	updateErr             error
+	updateInput           tasksvc.UpdateTaskInput
+	statusResult          *tasksvc.UpdateTaskStatusResult
+	statusErr             error
+	statusInput           tasksvc.UpdateTaskStatusInput
+	deleteErr             error
+	deleteInput           tasksvc.DeleteTaskInput
 }
 
 func (s *fakeTaskService) CreateTask(_ context.Context, input tasksvc.CreateTaskInput) (*tasksvc.CreateTaskResult, error) {
@@ -121,6 +132,35 @@ func (s *fakeTaskService) ListTaskComments(_ context.Context, input tasksvc.List
 func (s *fakeTaskService) DeleteTaskComment(_ context.Context, input tasksvc.DeleteTaskCommentInput) error {
 	s.deleteCommentInput = input
 	return s.deleteCommentErr
+}
+
+func (s *fakeTaskService) CreateTaskChecklistItem(_ context.Context, input tasksvc.CreateTaskChecklistItemInput) (*tasksvc.CreateTaskChecklistItemResult, error) {
+	s.createChecklistInput = input
+	if s.createChecklistErr != nil {
+		return nil, s.createChecklistErr
+	}
+	return s.createChecklistResult, nil
+}
+
+func (s *fakeTaskService) ListTaskChecklistItems(_ context.Context, input tasksvc.ListTaskChecklistItemsInput) (*tasksvc.ListTaskChecklistItemsResult, error) {
+	s.checklistInput = input
+	if s.checklistErr != nil {
+		return nil, s.checklistErr
+	}
+	return s.checklistResult, nil
+}
+
+func (s *fakeTaskService) UpdateTaskChecklistItem(_ context.Context, input tasksvc.UpdateTaskChecklistItemInput) (*tasksvc.UpdateTaskChecklistItemResult, error) {
+	s.updateChecklistInput = input
+	if s.updateChecklistErr != nil {
+		return nil, s.updateChecklistErr
+	}
+	return s.updateChecklistResult, nil
+}
+
+func (s *fakeTaskService) DeleteTaskChecklistItem(_ context.Context, input tasksvc.DeleteTaskChecklistItemInput) error {
+	s.deleteChecklistInput = input
+	return s.deleteChecklistErr
 }
 
 func (s *fakeTaskService) CreateTaskAttachmentUpload(_ context.Context, input tasksvc.CreateTaskAttachmentUploadInput) (*tasksvc.CreateTaskAttachmentUploadResult, error) {
@@ -521,6 +561,131 @@ func TestDeleteTaskComment(t *testing.T) {
 	}
 	if service.deleteCommentInput.CommentID != commentID {
 		t.Fatalf("comment ID = %s, want %s", service.deleteCommentInput.CommentID, commentID)
+	}
+}
+
+func TestCreateTaskChecklistItem(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	itemID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		createChecklistResult: &tasksvc.CreateTaskChecklistItemResult{
+			Item: task.ChecklistItem{ID: itemID, ProjectID: projectID, TaskID: taskID, Text: "prepare document", SortOrder: 1, CreatedBy: accountID, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/checklist", bytes.NewBufferString(`{"text":"prepare document","sort_order":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	if service.createChecklistInput.Text != "prepare document" || service.createChecklistInput.SortOrder != 1 {
+		t.Fatalf("checklist input = %#v, want text and sort order", service.createChecklistInput)
+	}
+}
+
+func TestListTaskChecklistItems(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		checklistResult: &tasksvc.ListTaskChecklistItemsResult{
+			Items: []task.ChecklistItem{
+				{ID: uuid.Must(uuid.NewV7()), ProjectID: projectID, TaskID: taskID, Text: "prepare document", CreatedBy: accountID, CreatedAt: now, UpdatedAt: now},
+			},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/checklist", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.checklistInput.TaskID != taskID {
+		t.Fatalf("task ID = %s, want %s", service.checklistInput.TaskID, taskID)
+	}
+}
+
+func TestUpdateTaskChecklistItem(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	itemID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		updateChecklistResult: &tasksvc.UpdateTaskChecklistItemResult{
+			Item: task.ChecklistItem{ID: itemID, ProjectID: projectID, TaskID: taskID, Text: "prepare final document", IsCompleted: true, CreatedBy: accountID, CreatedAt: now, UpdatedAt: now, CompletedBy: &accountID, CompletedAt: &now},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/checklist/"+itemID.String(), bytes.NewBufferString(`{"text":"prepare final document","is_completed":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.updateChecklistInput.ItemID != itemID {
+		t.Fatalf("item ID = %s, want %s", service.updateChecklistInput.ItemID, itemID)
+	}
+	if service.updateChecklistInput.IsCompleted == nil || !*service.updateChecklistInput.IsCompleted {
+		t.Fatalf("is completed = %#v, want true", service.updateChecklistInput.IsCompleted)
+	}
+}
+
+func TestDeleteTaskChecklistItem(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	itemID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/checklist/"+itemID.String(), nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+	if service.deleteChecklistInput.ItemID != itemID {
+		t.Fatalf("item ID = %s, want %s", service.deleteChecklistInput.ItemID, itemID)
 	}
 }
 

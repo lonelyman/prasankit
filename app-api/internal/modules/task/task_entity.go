@@ -141,6 +141,33 @@ type Comment struct {
 	DeletedAt   *time.Time
 }
 
+type ChecklistItem struct {
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	WorkspaceID uuid.UUID
+	ProjectID   uuid.UUID
+	TaskID      uuid.UUID
+	Text        string
+	IsCompleted bool
+	SortOrder   int
+	CreatedBy   uuid.UUID
+	CreatedAt   time.Time
+	UpdatedBy   *uuid.UUID
+	UpdatedAt   time.Time
+	CompletedBy *uuid.UUID
+	CompletedAt *time.Time
+	DeletedBy   *uuid.UUID
+	DeletedAt   *time.Time
+}
+
+type ChecklistItemPatch struct {
+	Text        *string
+	IsCompleted *bool
+	SortOrder   *int
+	UpdatedBy   uuid.UUID
+	UpdatedAt   time.Time
+}
+
 type AttachmentStatus string
 
 const (

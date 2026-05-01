@@ -32,6 +32,10 @@ type TaskService interface {
 	CreateTaskComment(ctx context.Context, input tasksvc.CreateTaskCommentInput) (*tasksvc.CreateTaskCommentResult, error)
 	ListTaskComments(ctx context.Context, input tasksvc.ListTaskCommentsInput) (*tasksvc.ListTaskCommentsResult, error)
 	DeleteTaskComment(ctx context.Context, input tasksvc.DeleteTaskCommentInput) error
+	CreateTaskChecklistItem(ctx context.Context, input tasksvc.CreateTaskChecklistItemInput) (*tasksvc.CreateTaskChecklistItemResult, error)
+	ListTaskChecklistItems(ctx context.Context, input tasksvc.ListTaskChecklistItemsInput) (*tasksvc.ListTaskChecklistItemsResult, error)
+	UpdateTaskChecklistItem(ctx context.Context, input tasksvc.UpdateTaskChecklistItemInput) (*tasksvc.UpdateTaskChecklistItemResult, error)
+	DeleteTaskChecklistItem(ctx context.Context, input tasksvc.DeleteTaskChecklistItemInput) error
 	CreateTaskAttachmentUpload(ctx context.Context, input tasksvc.CreateTaskAttachmentUploadInput) (*tasksvc.CreateTaskAttachmentUploadResult, error)
 	CompleteTaskAttachmentUpload(ctx context.Context, input tasksvc.CompleteTaskAttachmentUploadInput) error
 	ListTaskAttachments(ctx context.Context, input tasksvc.ListTaskAttachmentsInput) (*tasksvc.ListTaskAttachmentsResult, error)
@@ -88,6 +92,17 @@ type createTaskCommentRequest struct {
 	Body string `json:"body"`
 }
 
+type createTaskChecklistItemRequest struct {
+	Text      string `json:"text"`
+	SortOrder int    `json:"sort_order"`
+}
+
+type updateTaskChecklistItemRequest struct {
+	Text        *string `json:"text"`
+	IsCompleted *bool   `json:"is_completed"`
+	SortOrder   *int    `json:"sort_order"`
+}
+
 type createTaskAttachmentUploadRequest struct {
 	FileName    string `json:"file_name"`
 	ContentType string `json:"content_type"`
@@ -134,6 +149,19 @@ type taskCommentResponse struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+type taskChecklistItemResponse struct {
+	ID          string  `json:"id"`
+	TaskID      string  `json:"task_id"`
+	Text        string  `json:"text"`
+	IsCompleted bool    `json:"is_completed"`
+	SortOrder   int     `json:"sort_order"`
+	CreatedBy   string  `json:"created_by"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+	CompletedBy *string `json:"completed_by,omitempty"`
+	CompletedAt *string `json:"completed_at,omitempty"`
+}
+
 type taskAttachmentResponse struct {
 	ID          string  `json:"id"`
 	TaskID      string  `json:"task_id"`
@@ -170,6 +198,10 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	tasks.Get("/:task_id/comments", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskComments)
 	tasks.Post("/:task_id/comments", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTaskComment)
 	tasks.Delete("/:task_id/comments/:comment_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.DeleteTaskComment)
+	tasks.Get("/:task_id/checklist", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskChecklistItems)
+	tasks.Post("/:task_id/checklist", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTaskChecklistItem)
+	tasks.Patch("/:task_id/checklist/:item_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTaskChecklistItem)
+	tasks.Delete("/:task_id/checklist/:item_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.DeleteTaskChecklistItem)
 	tasks.Get("/:task_id/attachments", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskAttachments)
 	tasks.Post("/:task_id/attachments/uploads", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTaskAttachmentUpload)
 	tasks.Patch("/:task_id/attachments/:attachment_id/complete", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CompleteTaskAttachmentUpload)
@@ -457,6 +489,140 @@ func (h Handler) DeleteTaskComment(c fiber.Ctx) error {
 		ProjectID:     projectID,
 		TaskID:        taskID,
 		CommentID:     commentID,
+	}); err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (h Handler) CreateTaskChecklistItem(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	var req createTaskChecklistItemRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+
+	result, err := h.tasks.CreateTaskChecklistItem(c.Context(), tasksvc.CreateTaskChecklistItemInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Text:          req.Text,
+		SortOrder:     req.SortOrder,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, toTaskChecklistItemResponse(result.Item), fiber.StatusCreated)
+}
+
+func (h Handler) ListTaskChecklistItems(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+
+	result, err := h.tasks.ListTaskChecklistItems(c.Context(), tasksvc.ListTaskChecklistItemsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	items := make([]taskChecklistItemResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, toTaskChecklistItemResponse(item))
+	}
+	return presenter.RenderItem(c, map[string]any{"items": items})
+}
+
+func (h Handler) UpdateTaskChecklistItem(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	itemID, err := uuid.Parse(c.Params("item_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_CHECKLIST_ITEM_ID_INVALID", "Task checklist item id is invalid")
+	}
+	var req updateTaskChecklistItemRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+
+	result, err := h.tasks.UpdateTaskChecklistItem(c.Context(), tasksvc.UpdateTaskChecklistItemInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		ItemID:        itemID,
+		Text:          req.Text,
+		IsCompleted:   req.IsCompleted,
+		SortOrder:     req.SortOrder,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, toTaskChecklistItemResponse(result.Item))
+}
+
+func (h Handler) DeleteTaskChecklistItem(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	itemID, err := uuid.Parse(c.Params("item_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_CHECKLIST_ITEM_ID_INVALID", "Task checklist item id is invalid")
+	}
+
+	if err := h.tasks.DeleteTaskChecklistItem(c.Context(), tasksvc.DeleteTaskChecklistItemInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		ItemID:        itemID,
 	}); err != nil {
 		return renderTaskError(c, err)
 	}
@@ -772,6 +938,14 @@ func renderTaskError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_COMMENT_NOT_FOUND", "Task comment not found")
 	case errors.Is(err, tasksvc.ErrTaskCommentBodyRequired):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_COMMENT_BODY_REQUIRED", "Task comment body is required")
+	case errors.Is(err, tasksvc.ErrTaskChecklistItemNotFound):
+		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_CHECKLIST_ITEM_NOT_FOUND", "Task checklist item not found")
+	case errors.Is(err, tasksvc.ErrTaskChecklistTextRequired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_CHECKLIST_TEXT_REQUIRED", "Task checklist text is required")
+	case errors.Is(err, tasksvc.ErrTaskChecklistUpdateNoFields):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_CHECKLIST_UPDATE_NO_FIELDS", "Task checklist update has no fields")
+	case errors.Is(err, tasksvc.ErrTaskChecklistSortOrderInvalid):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_CHECKLIST_SORT_ORDER_INVALID", "Task checklist sort order is invalid")
 	case errors.Is(err, tasksvc.ErrTaskAttachmentNotFound):
 		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_ATTACHMENT_NOT_FOUND", "Task attachment not found")
 	case errors.Is(err, tasksvc.ErrAttachmentFileNameRequired):
@@ -983,6 +1157,21 @@ func toTaskCommentResponse(value task.Comment) taskCommentResponse {
 	}
 }
 
+func toTaskChecklistItemResponse(value task.ChecklistItem) taskChecklistItemResponse {
+	return taskChecklistItemResponse{
+		ID:          value.ID.String(),
+		TaskID:      value.TaskID.String(),
+		Text:        value.Text,
+		IsCompleted: value.IsCompleted,
+		SortOrder:   value.SortOrder,
+		CreatedBy:   value.CreatedBy.String(),
+		CreatedAt:   value.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:   value.UpdatedAt.Format(time.RFC3339),
+		CompletedBy: formatUUID(value.CompletedBy),
+		CompletedAt: formatDateTime(value.CompletedAt),
+	}
+}
+
 func toTaskAttachmentResponse(value task.Attachment) taskAttachmentResponse {
 	return taskAttachmentResponse{
 		ID:          value.ID.String(),
@@ -995,6 +1184,14 @@ func toTaskAttachmentResponse(value task.Attachment) taskAttachmentResponse {
 		UploadedAt:  formatDateTime(value.UploadedAt),
 		CreatedAt:   value.CreatedAt.Format(time.RFC3339),
 	}
+}
+
+func formatUUID(value *uuid.UUID) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := value.String()
+	return &formatted
 }
 
 func formatDateTime(value *time.Time) *string {

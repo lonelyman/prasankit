@@ -30,6 +30,11 @@ type fakeRepository struct {
 	commentTotal      int
 	commentID         uuid.UUID
 	commentErr        error
+	checklistItem     *task.ChecklistItem
+	checklistItems    []task.ChecklistItem
+	checklistItemID   uuid.UUID
+	checklistPatch    task.ChecklistItemPatch
+	checklistErr      error
 	attachment        *task.Attachment
 	attachmentItems   []task.Attachment
 	attachmentTotal   int
@@ -227,6 +232,60 @@ func (r *fakeRepository) SoftDeleteTaskComment(_ context.Context, tenantID uuid.
 	r.statusTaskID = taskID
 	r.commentID = commentID
 	return r.commentErr
+}
+
+func (r *fakeRepository) CreateTaskChecklistItem(_ context.Context, item *task.ChecklistItem) error {
+	if r.checklistErr != nil {
+		return r.checklistErr
+	}
+	item.ID = uuid.Must(uuid.NewV7())
+	r.checklistItem = item
+	return nil
+}
+
+func (r *fakeRepository) UpdateTaskChecklistItem(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, itemID uuid.UUID, patch task.ChecklistItemPatch) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	r.checklistItemID = itemID
+	r.checklistPatch = patch
+	return r.checklistErr
+}
+
+func (r *fakeRepository) SoftDeleteTaskChecklistItem(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, itemID uuid.UUID, _ uuid.UUID, _ time.Time) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	r.checklistItemID = itemID
+	return r.checklistErr
+}
+
+func (r *fakeRepository) ListTaskChecklistItems(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) ([]task.ChecklistItem, error) {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	if r.checklistErr != nil {
+		return nil, r.checklistErr
+	}
+	return r.checklistItems, nil
+}
+
+func (r *fakeRepository) FindTaskChecklistItemByID(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, itemID uuid.UUID) (*task.ChecklistItem, error) {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	r.checklistItemID = itemID
+	if r.checklistErr != nil {
+		return nil, r.checklistErr
+	}
+	if r.checklistItem != nil {
+		return r.checklistItem, nil
+	}
+	return nil, task.ErrChecklistItemNotFound
 }
 
 func (r *fakeRepository) CreateTaskAttachment(_ context.Context, attachment *task.Attachment) error {
@@ -636,6 +695,133 @@ func TestDeleteTaskComment(t *testing.T) {
 	}
 	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "comment_deleted" {
 		t.Fatalf("activity metadata = %#v, want comment_deleted", repo.activity)
+	}
+}
+
+func TestCreateTaskChecklistItem(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{findTask: &task.Task{
+		ID:          taskID,
+		TenantID:    tenantContext.TenantID,
+		WorkspaceID: tenantContext.WorkspaceID,
+		ProjectID:   projectID,
+		Status:      task.StatusTodo,
+	}}
+
+	result, err := NewService(repo).CreateTaskChecklistItem(context.Background(), CreateTaskChecklistItemInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		Text:          "  prepare document  ",
+		SortOrder:     2,
+	})
+	if err != nil {
+		t.Fatalf("CreateTaskChecklistItem: %v", err)
+	}
+	if result.Item.ID == uuid.Nil {
+		t.Fatal("checklist item ID was not set")
+	}
+	if result.Item.Text != "prepare document" || result.Item.SortOrder != 2 {
+		t.Fatalf("item = %#v, want trimmed text and sort order 2", result.Item)
+	}
+	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "checklist_item_created" {
+		t.Fatalf("activity metadata = %#v, want checklist_item_created", repo.activity)
+	}
+}
+
+func TestListTaskChecklistItems(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findTask: &task.Task{ID: taskID, ProjectID: projectID, No: "TASK-0001", Title: "Task A"},
+		checklistItems: []task.ChecklistItem{
+			{ID: uuid.Must(uuid.NewV7()), ProjectID: projectID, TaskID: taskID, Text: "prepare document"},
+		},
+	}
+
+	result, err := NewService(repo).ListTaskChecklistItems(context.Background(), ListTaskChecklistItemsInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+	})
+	if err != nil {
+		t.Fatalf("ListTaskChecklistItems: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("len = %d, want 1", len(result.Items))
+	}
+}
+
+func TestUpdateTaskChecklistItem(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	itemID := uuid.Must(uuid.NewV7())
+	text := "prepare final document"
+	completed := true
+	sortOrder := 1
+	repo := &fakeRepository{
+		findTask:      &task.Task{ID: taskID, ProjectID: projectID, No: "TASK-0001", Title: "Task A"},
+		checklistItem: &task.ChecklistItem{ID: itemID, ProjectID: projectID, TaskID: taskID, Text: "prepare document"},
+	}
+
+	result, err := NewService(repo).UpdateTaskChecklistItem(context.Background(), UpdateTaskChecklistItemInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		ItemID:        itemID,
+		Text:          &text,
+		IsCompleted:   &completed,
+		SortOrder:     &sortOrder,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTaskChecklistItem: %v", err)
+	}
+	if repo.checklistPatch.Text == nil || *repo.checklistPatch.Text != text {
+		t.Fatalf("text patch = %#v, want %q", repo.checklistPatch.Text, text)
+	}
+	if repo.checklistPatch.IsCompleted == nil || !*repo.checklistPatch.IsCompleted {
+		t.Fatalf("completed patch = %#v, want true", repo.checklistPatch.IsCompleted)
+	}
+	if result.Item.ID != itemID {
+		t.Fatalf("item ID = %s, want %s", result.Item.ID, itemID)
+	}
+}
+
+func TestDeleteTaskChecklistItem(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	itemID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{findTask: &task.Task{
+		ID:          taskID,
+		TenantID:    tenantContext.TenantID,
+		WorkspaceID: tenantContext.WorkspaceID,
+		ProjectID:   projectID,
+		Status:      task.StatusTodo,
+	}}
+
+	err := NewService(repo).DeleteTaskChecklistItem(context.Background(), DeleteTaskChecklistItemInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		ItemID:        itemID,
+	})
+	if err != nil {
+		t.Fatalf("DeleteTaskChecklistItem: %v", err)
+	}
+	if repo.checklistItemID != itemID {
+		t.Fatalf("item ID = %s, want %s", repo.checklistItemID, itemID)
+	}
+	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "checklist_item_deleted" {
+		t.Fatalf("activity metadata = %#v, want checklist_item_deleted", repo.activity)
 	}
 }
 

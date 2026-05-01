@@ -36,6 +36,10 @@ var (
 	ErrTaskCreateFail                 = errors.New("task create failed")
 	ErrTaskCommentNotFound            = errors.New("task comment not found")
 	ErrTaskCommentBodyRequired        = errors.New("task comment body is required")
+	ErrTaskChecklistItemNotFound      = errors.New("task checklist item not found")
+	ErrTaskChecklistTextRequired      = errors.New("task checklist text is required")
+	ErrTaskChecklistUpdateNoFields    = errors.New("task checklist update has no fields")
+	ErrTaskChecklistSortOrderInvalid  = errors.New("task checklist sort order is invalid")
 	ErrTaskAttachmentNotFound         = errors.New("task attachment not found")
 	ErrAttachmentFileNameRequired     = errors.New("attachment file name is required")
 	ErrAttachmentContentTypeRequired  = errors.New("attachment content type is required")
@@ -144,6 +148,53 @@ type DeleteTaskCommentInput struct {
 	ProjectID     uuid.UUID
 	TaskID        uuid.UUID
 	CommentID     uuid.UUID
+}
+
+type CreateTaskChecklistItemInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	Text          string
+	SortOrder     int
+}
+
+type CreateTaskChecklistItemResult struct {
+	Item task.ChecklistItem
+}
+
+type ListTaskChecklistItemsInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+}
+
+type ListTaskChecklistItemsResult struct {
+	Items []task.ChecklistItem
+}
+
+type UpdateTaskChecklistItemInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	ItemID        uuid.UUID
+	Text          *string
+	IsCompleted   *bool
+	SortOrder     *int
+}
+
+type UpdateTaskChecklistItemResult struct {
+	Item task.ChecklistItem
+}
+
+type DeleteTaskChecklistItemInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	ItemID        uuid.UUID
 }
 
 type CreateTaskAttachmentUploadInput struct {
@@ -650,6 +701,220 @@ func (s *Service) DeleteTaskComment(ctx context.Context, input DeleteTaskComment
 	return nil
 }
 
+func (s *Service) CreateTaskChecklistItem(ctx context.Context, input CreateTaskChecklistItemInput) (*CreateTaskChecklistItemResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	text := strings.TrimSpace(input.Text)
+	if text == "" {
+		return nil, ErrTaskChecklistTextRequired
+	}
+	if input.SortOrder < 0 {
+		return nil, ErrTaskChecklistSortOrderInvalid
+	}
+
+	now := s.clock()
+	item := task.ChecklistItem{
+		TenantID:    input.TenantContext.TenantID,
+		WorkspaceID: input.TenantContext.WorkspaceID,
+		ProjectID:   input.ProjectID,
+		TaskID:      input.TaskID,
+		Text:        text,
+		SortOrder:   input.SortOrder,
+		CreatedBy:   input.Account.ID,
+		CreatedAt:   now,
+		UpdatedBy:   &input.Account.ID,
+		UpdatedAt:   now,
+	}
+
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		parent, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := repo.CreateTaskChecklistItem(ctx, &item); err != nil {
+			return err
+		}
+		return createActivity(ctx, repo, *parent, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"checklist_item_id": item.ID.String(),
+			"action":            "checklist_item_created",
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &CreateTaskChecklistItemResult{Item: item}, nil
+}
+
+func (s *Service) ListTaskChecklistItems(ctx context.Context, input ListTaskChecklistItemsInput) (*ListTaskChecklistItemsResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	if _, err := s.repository.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+
+	items, err := s.repository.ListTaskChecklistItems(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	return &ListTaskChecklistItemsResult{Items: items}, nil
+}
+
+func (s *Service) UpdateTaskChecklistItem(ctx context.Context, input UpdateTaskChecklistItemInput) (*UpdateTaskChecklistItemResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	if input.ItemID == uuid.Nil {
+		return nil, ErrTaskChecklistItemNotFound
+	}
+
+	patch := task.ChecklistItemPatch{
+		UpdatedBy: input.Account.ID,
+		UpdatedAt: s.clock(),
+	}
+	hasField := false
+	if input.Text != nil {
+		text := strings.TrimSpace(*input.Text)
+		if text == "" {
+			return nil, ErrTaskChecklistTextRequired
+		}
+		patch.Text = &text
+		hasField = true
+	}
+	if input.IsCompleted != nil {
+		patch.IsCompleted = input.IsCompleted
+		hasField = true
+	}
+	if input.SortOrder != nil {
+		if *input.SortOrder < 0 {
+			return nil, ErrTaskChecklistSortOrderInvalid
+		}
+		patch.SortOrder = input.SortOrder
+		hasField = true
+	}
+	if !hasField {
+		return nil, ErrTaskChecklistUpdateNoFields
+	}
+
+	now := patch.UpdatedAt
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		parent, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+		before, err := repo.FindTaskChecklistItemByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.ItemID)
+		if errors.Is(err, task.ErrChecklistItemNotFound) {
+			return ErrTaskChecklistItemNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := repo.UpdateTaskChecklistItem(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.ItemID, patch); err != nil {
+			if errors.Is(err, task.ErrChecklistItemNotFound) {
+				return ErrTaskChecklistItemNotFound
+			}
+			return err
+		}
+		return createActivity(ctx, repo, *parent, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"checklist_item_id": input.ItemID.String(),
+			"action":            "checklist_item_updated",
+			"was_completed":     before.IsCompleted,
+			"is_completed":      updatedChecklistCompleted(before.IsCompleted, input.IsCompleted),
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	item, err := s.repository.FindTaskChecklistItemByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.ItemID)
+	if errors.Is(err, task.ErrChecklistItemNotFound) {
+		return nil, ErrTaskChecklistItemNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &UpdateTaskChecklistItemResult{Item: *item}, nil
+}
+
+func (s *Service) DeleteTaskChecklistItem(ctx context.Context, input DeleteTaskChecklistItemInput) error {
+	if err := validateAccount(input.Account); err != nil {
+		return err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return err
+	}
+	if input.ProjectID == uuid.Nil {
+		return ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return ErrTaskIDRequired
+	}
+	if input.ItemID == uuid.Nil {
+		return ErrTaskChecklistItemNotFound
+	}
+
+	now := s.clock()
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		parent, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := repo.SoftDeleteTaskChecklistItem(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.ItemID, input.Account.ID, now); err != nil {
+			if errors.Is(err, task.ErrChecklistItemNotFound) {
+				return ErrTaskChecklistItemNotFound
+			}
+			return err
+		}
+		return createActivity(ctx, repo, *parent, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"checklist_item_id": input.ItemID.String(),
+			"action":            "checklist_item_deleted",
+		})
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Service) CreateTaskAttachmentUpload(ctx context.Context, input CreateTaskAttachmentUploadInput) (*CreateTaskAttachmentUploadResult, error) {
 	if err := validateAccount(input.Account); err != nil {
 		return nil, err
@@ -1023,6 +1288,13 @@ func createActivity(ctx context.Context, repo task.Repository, item task.Task, a
 		MetadataJSON:   metadata,
 		CreatedAt:      createdAt,
 	})
+}
+
+func updatedChecklistCompleted(current bool, next *bool) bool {
+	if next == nil {
+		return current
+	}
+	return *next
 }
 
 func changedFields(input UpdateTaskInput) []string {

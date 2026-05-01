@@ -11,6 +11,7 @@ import (
 var ErrProjectNotFound = errors.New("project not found")
 var ErrTaskNotFound = errors.New("task not found")
 var ErrCommentNotFound = errors.New("task comment not found")
+var ErrChecklistItemNotFound = errors.New("task checklist item not found")
 var ErrAttachmentNotFound = errors.New("task attachment not found")
 var ErrPriorityNotFound = errors.New("task priority not found")
 var ErrAssigneeNotFound = errors.New("task assignee not found")
@@ -34,6 +35,11 @@ type Repository interface {
 	CreateTaskComment(ctx context.Context, comment *Comment) error
 	ListTaskComments(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, limit int, offset int) ([]Comment, int, error)
 	SoftDeleteTaskComment(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, commentID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error
+	CreateTaskChecklistItem(ctx context.Context, item *ChecklistItem) error
+	UpdateTaskChecklistItem(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, itemID uuid.UUID, patch ChecklistItemPatch) error
+	SoftDeleteTaskChecklistItem(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, itemID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error
+	ListTaskChecklistItems(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) ([]ChecklistItem, error)
+	FindTaskChecklistItemByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, itemID uuid.UUID) (*ChecklistItem, error)
 	CreateTaskAttachment(ctx context.Context, attachment *Attachment) error
 	MarkTaskAttachmentUploaded(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID, uploadedAt time.Time) error
 	ListTaskAttachments(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, limit int, offset int) ([]Attachment, int, error)

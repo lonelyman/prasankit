@@ -372,10 +372,12 @@ Composition note:
   - migration `000009_create_task_activity_tables.sql`
   - migration `000010_create_task_attachment_tables.sql`
   - migration `000011_create_task_comment_tables.sql`
+  - migration `000012_create_task_checklist_tables.sql`
   - `task_counters` สำหรับรัน task no ใน backend transaction
   - `task_activities` สำหรับ append-only activity log ของ task
   - `task_attachments` สำหรับ metadata ไฟล์แนบ task และ presigned upload flow
   - `task_comments` สำหรับ comment thread ของ task พร้อม soft delete
+  - `task_checklist_items` สำหรับ checklist/sub-items ของ task พร้อม complete state และ soft delete
   - `tasks.priority_id` reuse `project_priorities.id`
   - `tasks.status` เป็น system state ของ MVP: `todo`, `in_progress`, `blocked`, `done`, `cancelled`
   - `GET /api/v1/workspace/projects/{project_id}/tasks`
@@ -387,6 +389,10 @@ Composition note:
   - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments`
   - `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments`
   - `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments/{comment_id}`
+  - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist`
+  - `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist`
+  - `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist/{item_id}`
+  - `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist/{item_id}`
   - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments`
   - `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/uploads`
   - `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/complete`
@@ -402,7 +408,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปต่อ Task checklist foundation หรือ file download/delete policy โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
+ขั้นถัดไปต่อ file download/delete policy หรือ task relation/tag foundation โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -456,6 +462,7 @@ PostgreSQL connection done
 -> Migration 000009_create_task_activity_tables applied
 -> Migration 000010_create_task_attachment_tables applied
 -> Migration 000011_create_task_comment_tables applied
+-> Migration 000012_create_task_checklist_tables applied
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks filters wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/summary wired
@@ -465,6 +472,10 @@ PostgreSQL connection done
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments wired
 -> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments/{comment_id} wired
+-> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist wired
+-> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist wired
+-> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist/{item_id} wired
+-> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist/{item_id} wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments wired
 -> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/uploads wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/complete wired
