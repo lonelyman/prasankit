@@ -499,6 +499,21 @@ func applyListFilter(query *gorm.DB, filter task.ListFilter) *gorm.DB {
 	if filter.AssigneeMemberID != nil {
 		query = query.Where("t.assignee_member_id = ?", *filter.AssigneeMemberID)
 	}
+	if filter.TagID != nil {
+		query = query.Where(`
+			EXISTS (
+				SELECT 1
+				FROM task_tag_assignments AS tta
+				JOIN task_tags AS tt ON tt.id = tta.tag_id AND tt.deleted_at IS NULL
+				WHERE tta.tenant_id = t.tenant_id
+					AND tta.workspace_id = t.workspace_id
+					AND tta.project_id = t.project_id
+					AND tta.task_id = t.id
+					AND tta.tag_id = ?
+					AND tta.deleted_at IS NULL
+			)
+		`, *filter.TagID)
+	}
 	return query
 }
 

@@ -493,7 +493,7 @@ config
 - Task tag มี assign/list/remove แบบ soft delete assignment, project-scoped tag reuse ด้วย normalized name และเขียน activity metadata `tag_assigned`/`tag_removed`
 - Task relation มี create/list/delete แบบ soft delete, relation type `relates_to`, `blocks`, `blocked_by`, `duplicates`; ตอนนี้เป็น metadata เท่านั้น ยังไม่เปลี่ยน `status` อัตโนมัติ
 - Task routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects/{project_id}/tasks`, `GET /api/v1/workspace/projects/{project_id}/tasks/summary`, `POST /api/v1/workspace/projects/{project_id}/tasks`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/activities`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments`, `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments`, `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments/{comment_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist`, `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist/{item_id}`, `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist/{item_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments`, `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/uploads`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/complete`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/download`, `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/tags`, `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/tags`, `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/tags/{tag_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations`, `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations`, `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations/{relation_id}`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status` และ `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
-- `GET /api/v1/workspace/projects/{project_id}/tasks` filter ได้ด้วย `status`, `priority`, `assignee_member_id`
+- `GET /api/v1/workspace/projects/{project_id}/tasks` filter ได้ด้วย `status`, `priority`, `assignee_member_id`, `tag_id`
 
 ## Next Step
 
@@ -576,10 +576,11 @@ PostgreSQL connection done
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations wired
 -> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations/{relation_id} wired
+-> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks tag_id filter wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
--> ต่อไปต่อ task status policy จาก relation, task search/filter by tag หรือ file retention/object cleanup policy โดยต้องผ่าน Tenant Context + Permission Guard
+-> ต่อไปต่อ task status policy จาก relation, task text search หรือ file retention/object cleanup policy โดยต้องผ่าน Tenant Context + Permission Guard
 ```
 
 ## Do Not Do Yet

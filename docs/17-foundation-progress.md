@@ -385,7 +385,7 @@ Composition note:
   - `tasks.priority_id` reuse `project_priorities.id`
   - `tasks.status` เป็น system state ของ MVP: `todo`, `in_progress`, `blocked`, `done`, `cancelled`
   - `GET /api/v1/workspace/projects/{project_id}/tasks`
-    - filter ได้ด้วย `status`, `priority`, `assignee_member_id`
+    - filter ได้ด้วย `status`, `priority`, `assignee_member_id`, `tag_id`
   - `GET /api/v1/workspace/projects/{project_id}/tasks/summary`
   - `POST /api/v1/workspace/projects/{project_id}/tasks`
   - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
@@ -412,6 +412,7 @@ Composition note:
   - `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status`
   - `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
   - ทุก task route ต้องผ่าน session, Tenant Context และ Permission Guard ก่อน query
+  - `GET /api/v1/workspace/projects/{project_id}/tasks` filter เพิ่มได้ด้วย `tag_id` หลัง task tag foundation
 - ตรวจกลุ่ม field ที่เป็น text แล้ว: ค่า role/master/permission ต้องเป็น master/FK, ส่วน `status`/`mode`/auth provider/type/security severity ตอนนี้ยังถือเป็น lifecycle/system state และคุมด้วย constraint ได้ก่อน
 
 หมายเหตุ:
@@ -420,7 +421,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปต่อ task status policy จาก relation, task search/filter by tag หรือ file retention/object cleanup policy โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
+ขั้นถัดไปต่อ task status policy จาก relation, task text search หรือ file retention/object cleanup policy โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -501,6 +502,7 @@ PostgreSQL connection done
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations wired
 -> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations/{relation_id} wired
+-> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks tag_id filter wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired

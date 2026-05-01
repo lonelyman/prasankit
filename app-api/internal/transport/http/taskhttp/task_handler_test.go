@@ -364,6 +364,7 @@ func TestListTasks(t *testing.T) {
 	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
 	projectID := uuid.Must(uuid.NewV7())
 	assigneeID := uuid.Must(uuid.NewV7())
+	tagID := uuid.Must(uuid.NewV7())
 	service := &fakeTaskService{
 		listResult: &tasksvc.ListTasksResult{
 			Total: 1,
@@ -374,7 +375,7 @@ func TestListTasks(t *testing.T) {
 	}
 	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks?page=1&limit=10&status=todo&priority=medium&assignee_member_id="+assigneeID.String(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks?page=1&limit=10&status=todo&priority=medium&assignee_member_id="+assigneeID.String()+"&tag_id="+tagID.String(), nil)
 	req.Header.Set("X-Workspace-Slug", "team-one")
 	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
 	resp, err := app.Test(req)
@@ -401,6 +402,9 @@ func TestListTasks(t *testing.T) {
 	if service.listInput.AssigneeMemberID == nil || *service.listInput.AssigneeMemberID != assigneeID {
 		t.Fatalf("assignee filter = %#v, want %s", service.listInput.AssigneeMemberID, assigneeID)
 	}
+	if service.listInput.TagID == nil || *service.listInput.TagID != tagID {
+		t.Fatalf("tag filter = %#v, want %s", service.listInput.TagID, tagID)
+	}
 }
 
 func TestListTasksRejectsInvalidAssigneeFilter(t *testing.T) {
@@ -416,6 +420,21 @@ func TestListTasksRejectsInvalidAssigneeFilter(t *testing.T) {
 	defer resp.Body.Close()
 
 	assertTaskError(t, resp, http.StatusBadRequest, "TASK_ASSIGNEE_MEMBER_ID_INVALID")
+}
+
+func TestListTasksRejectsInvalidTagFilter(t *testing.T) {
+	app := newTaskTestApp(newTestHandler(&fakeTaskService{}, uuid.Must(uuid.NewV7()), testTenantContext(workspace.WorkspaceRoleUser)))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+uuid.Must(uuid.NewV7()).String()+"/tasks?tag_id=invalid", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertTaskError(t, resp, http.StatusBadRequest, "TASK_TAG_ID_INVALID")
 }
 
 func TestGetTaskBoardSummary(t *testing.T) {

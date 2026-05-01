@@ -96,6 +96,7 @@ type ListFilter struct {
 	Status           *Status
 	PriorityID       *uuid.UUID
 	AssigneeMemberID *uuid.UUID
+	TagID            *uuid.UUID
 }
 
 type StatusCount struct {

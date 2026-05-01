@@ -335,6 +335,10 @@ func (h Handler) ListTasks(c fiber.Ctx) error {
 	if err != nil {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ASSIGNEE_MEMBER_ID_INVALID", "Task assignee member id is invalid")
 	}
+	tagID, err := parseTaskTagQuery(c.Query("tag_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_TAG_ID_INVALID", "Task tag id is invalid")
+	}
 	result, err := h.tasks.ListTasks(c.Context(), tasksvc.ListTasksInput{
 		Account:          account,
 		TenantContext:    tenantContext,
@@ -342,6 +346,7 @@ func (h Handler) ListTasks(c fiber.Ctx) error {
 		Status:           status,
 		Priority:         priority,
 		AssigneeMemberID: assigneeMemberID,
+		TagID:            tagID,
 		Limit:            query.Limit,
 		Offset:           query.Offset,
 	})
@@ -1406,6 +1411,18 @@ func parseTaskPriorityQuery(value string) *task.Priority {
 }
 
 func parseTaskAssigneeQuery(value string) (*uuid.UUID, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(value)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+func parseTaskTagQuery(value string) (*uuid.UUID, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil, nil

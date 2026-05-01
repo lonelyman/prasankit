@@ -561,6 +561,7 @@ func TestListTasks(t *testing.T) {
 	tenantContext := testTenantContext()
 	projectID := uuid.Must(uuid.NewV7())
 	assigneeID := uuid.Must(uuid.NewV7())
+	tagID := uuid.Must(uuid.NewV7())
 	status := task.StatusInProgress
 	priority := task.PriorityHigh
 	repo := &fakeRepository{
@@ -578,6 +579,7 @@ func TestListTasks(t *testing.T) {
 		Status:           &status,
 		Priority:         &priority,
 		AssigneeMemberID: &assigneeID,
+		TagID:            &tagID,
 		Limit:            10,
 	})
 	if err != nil {
@@ -597,6 +599,9 @@ func TestListTasks(t *testing.T) {
 	}
 	if repo.listFilter.AssigneeMemberID == nil || *repo.listFilter.AssigneeMemberID != assigneeID {
 		t.Fatalf("assignee filter = %#v, want %s", repo.listFilter.AssigneeMemberID, assigneeID)
+	}
+	if repo.listFilter.TagID == nil || *repo.listFilter.TagID != tagID {
+		t.Fatalf("tag filter = %#v, want %s", repo.listFilter.TagID, tagID)
 	}
 }
 
