@@ -191,9 +191,16 @@ type Attachment struct {
 	UploadedAt    *time.Time
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	DeletedBy     *uuid.UUID
+	DeletedAt     *time.Time
 }
 
 type AttachmentUploadURL struct {
+	URL       string
+	ExpiresAt time.Time
+}
+
+type AttachmentDownloadURL struct {
 	URL       string
 	ExpiresAt time.Time
 }

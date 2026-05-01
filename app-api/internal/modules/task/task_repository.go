@@ -43,4 +43,6 @@ type Repository interface {
 	CreateTaskAttachment(ctx context.Context, attachment *Attachment) error
 	MarkTaskAttachmentUploaded(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID, uploadedAt time.Time) error
 	ListTaskAttachments(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, limit int, offset int) ([]Attachment, int, error)
+	FindTaskAttachmentByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID) (*Attachment, error)
+	SoftDeleteTaskAttachment(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error
 }

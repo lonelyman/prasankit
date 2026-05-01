@@ -38,7 +38,9 @@ type TaskService interface {
 	DeleteTaskChecklistItem(ctx context.Context, input tasksvc.DeleteTaskChecklistItemInput) error
 	CreateTaskAttachmentUpload(ctx context.Context, input tasksvc.CreateTaskAttachmentUploadInput) (*tasksvc.CreateTaskAttachmentUploadResult, error)
 	CompleteTaskAttachmentUpload(ctx context.Context, input tasksvc.CompleteTaskAttachmentUploadInput) error
+	GetTaskAttachmentDownloadURL(ctx context.Context, input tasksvc.GetTaskAttachmentDownloadURLInput) (*tasksvc.GetTaskAttachmentDownloadURLResult, error)
 	ListTaskAttachments(ctx context.Context, input tasksvc.ListTaskAttachmentsInput) (*tasksvc.ListTaskAttachmentsResult, error)
+	DeleteTaskAttachment(ctx context.Context, input tasksvc.DeleteTaskAttachmentInput) error
 	UpdateTask(ctx context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error)
 	UpdateTaskStatus(ctx context.Context, input tasksvc.UpdateTaskStatusInput) (*tasksvc.UpdateTaskStatusResult, error)
 	DeleteTask(ctx context.Context, input tasksvc.DeleteTaskInput) error
@@ -180,6 +182,12 @@ type taskAttachmentUploadResponse struct {
 	ExpiresAt  string                 `json:"expires_at"`
 }
 
+type taskAttachmentDownloadResponse struct {
+	Attachment  taskAttachmentResponse `json:"attachment"`
+	DownloadURL string                 `json:"download_url"`
+	ExpiresAt   string                 `json:"expires_at"`
+}
+
 func NewHandler(taskService TaskService, sessionService SessionService, tenantResolver TenantResolver, cookie CookieConfig) Handler {
 	return Handler{
 		tasks:   taskService,
@@ -205,6 +213,8 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	tasks.Get("/:task_id/attachments", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskAttachments)
 	tasks.Post("/:task_id/attachments/uploads", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTaskAttachmentUpload)
 	tasks.Patch("/:task_id/attachments/:attachment_id/complete", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CompleteTaskAttachmentUpload)
+	tasks.Get("/:task_id/attachments/:attachment_id/download", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTaskAttachmentDownloadURL)
+	tasks.Delete("/:task_id/attachments/:attachment_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.DeleteTaskAttachment)
 	tasks.Get("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTask)
 	tasks.Patch("/:task_id/status", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTaskStatus)
 	tasks.Patch("/:task_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.UpdateTask)
@@ -699,6 +709,42 @@ func (h Handler) CompleteTaskAttachmentUpload(c fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+func (h Handler) GetTaskAttachmentDownloadURL(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	attachmentID, err := uuid.Parse(c.Params("attachment_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ATTACHMENT_ID_INVALID", "Task attachment id is invalid")
+	}
+
+	result, err := h.tasks.GetTaskAttachmentDownloadURL(c.Context(), tasksvc.GetTaskAttachmentDownloadURLInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		AttachmentID:  attachmentID,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, taskAttachmentDownloadResponse{
+		Attachment:  toTaskAttachmentResponse(result.Attachment),
+		DownloadURL: result.DownloadURL.URL,
+		ExpiresAt:   result.DownloadURL.ExpiresAt.Format(time.RFC3339),
+	})
+}
+
 func (h Handler) ListTaskAttachments(c fiber.Ctx) error {
 	if h.tasks == nil {
 		return h.NotImplemented(c)
@@ -731,6 +777,37 @@ func (h Handler) ListTaskAttachments(c fiber.Ctx) error {
 		items = append(items, toTaskAttachmentResponse(item))
 	}
 	return presenter.RenderList(c, items, presenter.NewOffsetPagination(result.Total, query.Limit, query.Offset))
+}
+
+func (h Handler) DeleteTaskAttachment(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, taskID, err := parseProjectAndTaskIDs(c)
+	if err != nil {
+		return err
+	}
+	attachmentID, err := uuid.Parse(c.Params("attachment_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ATTACHMENT_ID_INVALID", "Task attachment id is invalid")
+	}
+
+	if err := h.tasks.DeleteTaskAttachment(c.Context(), tasksvc.DeleteTaskAttachmentInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		AttachmentID:  attachmentID,
+	}); err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 func (h Handler) UpdateTask(c fiber.Ctx) error {
@@ -948,6 +1025,8 @@ func renderTaskError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_CHECKLIST_SORT_ORDER_INVALID", "Task checklist sort order is invalid")
 	case errors.Is(err, tasksvc.ErrTaskAttachmentNotFound):
 		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_ATTACHMENT_NOT_FOUND", "Task attachment not found")
+	case errors.Is(err, tasksvc.ErrAttachmentNotUploaded):
+		return presenter.RenderError(c, fiber.StatusConflict, "TASK_ATTACHMENT_NOT_UPLOADED", "Task attachment is not uploaded")
 	case errors.Is(err, tasksvc.ErrAttachmentFileNameRequired):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ATTACHMENT_FILE_NAME_REQUIRED", "Task attachment file name is required")
 	case errors.Is(err, tasksvc.ErrAttachmentContentTypeRequired):

@@ -133,6 +133,8 @@ type attachmentRow struct {
 	UploadedAt    *time.Time `gorm:"column:uploaded_at"`
 	CreatedAt     time.Time  `gorm:"column:created_at"`
 	UpdatedAt     time.Time  `gorm:"column:updated_at"`
+	DeletedBy     *uuid.UUID `gorm:"column:deleted_by;type:uuid"`
+	DeletedAt     *time.Time `gorm:"column:deleted_at"`
 }
 
 func (attachmentRow) TableName() string {
@@ -805,6 +807,8 @@ func (r *Repository) CreateTaskAttachment(ctx context.Context, attachment *task.
 		UploadedAt:    attachment.UploadedAt,
 		CreatedAt:     attachment.CreatedAt,
 		UpdatedAt:     attachment.UpdatedAt,
+		DeletedBy:     attachment.DeletedBy,
+		DeletedAt:     attachment.DeletedAt,
 	}
 	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return err
@@ -823,6 +827,7 @@ func (r *Repository) MarkTaskAttachmentUploaded(ctx context.Context, tenantID uu
 		Where("project_id = ?", projectID).
 		Where("task_id = ?", taskID).
 		Where("id = ?", attachmentID).
+		Where("deleted_at IS NULL").
 		Updates(map[string]any{
 			"upload_status": string(task.AttachmentUploaded),
 			"uploaded_at":   uploadedAt,
@@ -844,7 +849,8 @@ func (r *Repository) ListTaskAttachments(ctx context.Context, tenantID uuid.UUID
 		Where("ta.tenant_id = ?", tenantID).
 		Where("ta.workspace_id = ?", workspaceID).
 		Where("ta.project_id = ?", projectID).
-		Where("ta.task_id = ?", taskID)
+		Where("ta.task_id = ?", taskID).
+		Where("ta.deleted_at IS NULL")
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -856,6 +862,7 @@ func (r *Repository) ListTaskAttachments(ctx context.Context, tenantID uuid.UUID
 		Where("ta.workspace_id = ?", workspaceID).
 		Where("ta.project_id = ?", projectID).
 		Where("ta.task_id = ?", taskID).
+		Where("ta.deleted_at IS NULL").
 		Order("ta.created_at DESC, ta.id DESC").
 		Limit(limit).
 		Offset(offset).
@@ -870,6 +877,51 @@ func (r *Repository) ListTaskAttachments(ctx context.Context, tenantID uuid.UUID
 		attachments = append(attachments, row.toDomain())
 	}
 	return attachments, int(total), nil
+}
+
+func (r *Repository) FindTaskAttachmentByID(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID) (*task.Attachment, error) {
+	var row attachmentRow
+	err := r.db.WithContext(ctx).
+		Table("task_attachments AS ta").
+		Where("ta.tenant_id = ?", tenantID).
+		Where("ta.workspace_id = ?", workspaceID).
+		Where("ta.project_id = ?", projectID).
+		Where("ta.task_id = ?", taskID).
+		Where("ta.id = ?", attachmentID).
+		Where("ta.deleted_at IS NULL").
+		Take(&row).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, task.ErrAttachmentNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	attachment := row.toDomain()
+	return &attachment, nil
+}
+
+func (r *Repository) SoftDeleteTaskAttachment(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&attachmentRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("task_id = ?", taskID).
+		Where("id = ?", attachmentID).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"deleted_by": deletedBy,
+			"deleted_at": deletedAt,
+			"updated_at": deletedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrAttachmentNotFound
+	}
+	return nil
 }
 
 func taskSelect() string {
@@ -1031,5 +1083,7 @@ func (r attachmentRow) toDomain() task.Attachment {
 		UploadedAt:    r.UploadedAt,
 		CreatedAt:     r.CreatedAt,
 		UpdatedAt:     r.UpdatedAt,
+		DeletedBy:     r.DeletedBy,
+		DeletedAt:     r.DeletedAt,
 	}
 }

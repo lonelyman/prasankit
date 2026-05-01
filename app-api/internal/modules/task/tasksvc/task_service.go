@@ -41,6 +41,7 @@ var (
 	ErrTaskChecklistUpdateNoFields    = errors.New("task checklist update has no fields")
 	ErrTaskChecklistSortOrderInvalid  = errors.New("task checklist sort order is invalid")
 	ErrTaskAttachmentNotFound         = errors.New("task attachment not found")
+	ErrAttachmentNotUploaded          = errors.New("attachment is not uploaded")
 	ErrAttachmentFileNameRequired     = errors.New("attachment file name is required")
 	ErrAttachmentContentTypeRequired  = errors.New("attachment content type is required")
 	ErrAttachmentSizeInvalid          = errors.New("attachment size is invalid")
@@ -220,6 +221,27 @@ type CompleteTaskAttachmentUploadInput struct {
 	AttachmentID  uuid.UUID
 }
 
+type GetTaskAttachmentDownloadURLInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	AttachmentID  uuid.UUID
+}
+
+type GetTaskAttachmentDownloadURLResult struct {
+	Attachment  task.Attachment
+	DownloadURL task.AttachmentDownloadURL
+}
+
+type DeleteTaskAttachmentInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	TaskID        uuid.UUID
+	AttachmentID  uuid.UUID
+}
+
 type ListTaskAttachmentsInput struct {
 	Account       auth.UserAccount
 	TenantContext workspace.TenantContext
@@ -276,6 +298,7 @@ type Repository interface {
 
 type AttachmentStorage interface {
 	PresignUpload(ctx context.Context, objectKey string, contentType string) (*task.AttachmentUploadURL, error)
+	PresignDownload(ctx context.Context, objectKey string, fileName string, contentType string) (*task.AttachmentDownloadURL, error)
 	Bucket() string
 }
 
@@ -1041,6 +1064,49 @@ func (s *Service) CompleteTaskAttachmentUpload(ctx context.Context, input Comple
 	return nil
 }
 
+func (s *Service) GetTaskAttachmentDownloadURL(ctx context.Context, input GetTaskAttachmentDownloadURLInput) (*GetTaskAttachmentDownloadURLResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if s.attachmentStorage == nil {
+		return nil, ErrAttachmentStorageNotConfigured
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return nil, ErrTaskIDRequired
+	}
+	if input.AttachmentID == uuid.Nil {
+		return nil, ErrTaskAttachmentNotFound
+	}
+	if _, err := s.repository.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID); err != nil {
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+	attachment, err := s.repository.FindTaskAttachmentByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.AttachmentID)
+	if errors.Is(err, task.ErrAttachmentNotFound) {
+		return nil, ErrTaskAttachmentNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if attachment.UploadStatus != task.AttachmentUploaded {
+		return nil, ErrAttachmentNotUploaded
+	}
+
+	downloadURL, err := s.attachmentStorage.PresignDownload(ctx, attachment.ObjectKey, attachment.FileName, attachment.ContentType)
+	if err != nil {
+		return nil, err
+	}
+	return &GetTaskAttachmentDownloadURLResult{Attachment: *attachment, DownloadURL: *downloadURL}, nil
+}
+
 func (s *Service) ListTaskAttachments(ctx context.Context, input ListTaskAttachmentsInput) (*ListTaskAttachmentsResult, error) {
 	if err := validateAccount(input.Account); err != nil {
 		return nil, err
@@ -1076,6 +1142,49 @@ func (s *Service) ListTaskAttachments(ctx context.Context, input ListTaskAttachm
 		return nil, err
 	}
 	return &ListTaskAttachmentsResult{Items: items, Total: total}, nil
+}
+
+func (s *Service) DeleteTaskAttachment(ctx context.Context, input DeleteTaskAttachmentInput) error {
+	if err := validateAccount(input.Account); err != nil {
+		return err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return err
+	}
+	if input.ProjectID == uuid.Nil {
+		return ErrProjectIDRequired
+	}
+	if input.TaskID == uuid.Nil {
+		return ErrTaskIDRequired
+	}
+	if input.AttachmentID == uuid.Nil {
+		return ErrTaskAttachmentNotFound
+	}
+
+	now := s.clock()
+	err := s.repository.WithinTransaction(ctx, func(ctx context.Context, repo task.Repository) error {
+		item, err := repo.FindTaskByID(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID)
+		if errors.Is(err, task.ErrTaskNotFound) {
+			return ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := repo.SoftDeleteTaskAttachment(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.TaskID, input.AttachmentID, input.Account.ID, now); err != nil {
+			if errors.Is(err, task.ErrAttachmentNotFound) {
+				return ErrTaskAttachmentNotFound
+			}
+			return err
+		}
+		return createActivity(ctx, repo, *item, input.Account.ID, task.ActivityUpdated, nil, nil, now, map[string]any{
+			"attachment_id": input.AttachmentID.String(),
+			"action":        "attachment_deleted",
+		})
+	})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*UpdateTaskResult, error) {

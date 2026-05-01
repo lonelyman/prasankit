@@ -60,9 +60,14 @@ type fakeTaskService struct {
 	uploadInput           tasksvc.CreateTaskAttachmentUploadInput
 	completeErr           error
 	completeInput         tasksvc.CompleteTaskAttachmentUploadInput
+	downloadResult        *tasksvc.GetTaskAttachmentDownloadURLResult
+	downloadErr           error
+	downloadInput         tasksvc.GetTaskAttachmentDownloadURLInput
 	attachmentResult      *tasksvc.ListTaskAttachmentsResult
 	attachmentErr         error
 	attachmentInput       tasksvc.ListTaskAttachmentsInput
+	deleteAttachmentErr   error
+	deleteAttachmentInput tasksvc.DeleteTaskAttachmentInput
 	updateResult          *tasksvc.UpdateTaskResult
 	updateErr             error
 	updateInput           tasksvc.UpdateTaskInput
@@ -176,12 +181,25 @@ func (s *fakeTaskService) CompleteTaskAttachmentUpload(_ context.Context, input 
 	return s.completeErr
 }
 
+func (s *fakeTaskService) GetTaskAttachmentDownloadURL(_ context.Context, input tasksvc.GetTaskAttachmentDownloadURLInput) (*tasksvc.GetTaskAttachmentDownloadURLResult, error) {
+	s.downloadInput = input
+	if s.downloadErr != nil {
+		return nil, s.downloadErr
+	}
+	return s.downloadResult, nil
+}
+
 func (s *fakeTaskService) ListTaskAttachments(_ context.Context, input tasksvc.ListTaskAttachmentsInput) (*tasksvc.ListTaskAttachmentsResult, error) {
 	s.attachmentInput = input
 	if s.attachmentErr != nil {
 		return nil, s.attachmentErr
 	}
 	return s.attachmentResult, nil
+}
+
+func (s *fakeTaskService) DeleteTaskAttachment(_ context.Context, input tasksvc.DeleteTaskAttachmentInput) error {
+	s.deleteAttachmentInput = input
+	return s.deleteAttachmentErr
 }
 
 func (s *fakeTaskService) UpdateTask(_ context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error) {
@@ -787,6 +805,74 @@ func TestListTaskAttachments(t *testing.T) {
 	}
 	if service.attachmentInput.TaskID != taskID {
 		t.Fatalf("task ID = %s, want %s", service.attachmentInput.TaskID, taskID)
+	}
+}
+
+func TestGetTaskAttachmentDownloadURL(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	attachmentID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		downloadResult: &tasksvc.GetTaskAttachmentDownloadURLResult{
+			Attachment: task.Attachment{
+				ID:           attachmentID,
+				ProjectID:    projectID,
+				TaskID:       taskID,
+				FileName:     "spec.pdf",
+				ContentType:  "application/pdf",
+				SizeBytes:    1024,
+				UploadStatus: task.AttachmentUploaded,
+				UploadedBy:   accountID,
+				CreatedAt:    now,
+			},
+			DownloadURL: task.AttachmentDownloadURL{URL: "http://minio/download", ExpiresAt: now.Add(15 * time.Minute)},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/attachments/"+attachmentID.String()+"/download", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.downloadInput.AttachmentID != attachmentID {
+		t.Fatalf("attachment ID = %s, want %s", service.downloadInput.AttachmentID, attachmentID)
+	}
+}
+
+func TestDeleteTaskAttachment(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleOwner)
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	attachmentID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/"+taskID.String()+"/attachments/"+attachmentID.String(), nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+	if service.deleteAttachmentInput.AttachmentID != attachmentID {
+		t.Fatalf("attachment ID = %s, want %s", service.deleteAttachmentInput.AttachmentID, attachmentID)
 	}
 }
 

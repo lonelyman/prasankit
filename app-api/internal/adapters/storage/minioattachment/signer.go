@@ -2,6 +2,8 @@ package minioattachment
 
 import (
 	"context"
+	"fmt"
+	"net/url"
 	"time"
 
 	"prasankit-api/internal/modules/task"
@@ -39,6 +41,28 @@ func (s *Signer) PresignUpload(ctx context.Context, objectKey string, _ string) 
 		return nil, err
 	}
 	return &task.AttachmentUploadURL{
+		URL:       url.String(),
+		ExpiresAt: s.clock().Add(ttl),
+	}, nil
+}
+
+func (s *Signer) PresignDownload(ctx context.Context, objectKey string, fileName string, contentType string) (*task.AttachmentDownloadURL, error) {
+	ttl := s.ttl
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+	values := make(url.Values)
+	if fileName != "" {
+		values.Set("response-content-disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+	}
+	if contentType != "" {
+		values.Set("response-content-type", contentType)
+	}
+	url, err := s.client.PresignedGetObject(ctx, s.bucket, objectKey, ttl, values)
+	if err != nil {
+		return nil, err
+	}
+	return &task.AttachmentDownloadURL{
 		URL:       url.String(),
 		ExpiresAt: s.clock().Add(ttl),
 	}, nil

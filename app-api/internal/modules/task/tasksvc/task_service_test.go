@@ -316,10 +316,35 @@ func (r *fakeRepository) ListTaskAttachments(_ context.Context, tenantID uuid.UU
 	return r.attachmentItems, r.attachmentTotal, nil
 }
 
+func (r *fakeRepository) FindTaskAttachmentByID(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID) (*task.Attachment, error) {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	r.attachmentID = attachmentID
+	if r.attachmentErr != nil {
+		return nil, r.attachmentErr
+	}
+	if r.attachment != nil {
+		return r.attachment, nil
+	}
+	return nil, task.ErrAttachmentNotFound
+}
+
+func (r *fakeRepository) SoftDeleteTaskAttachment(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, attachmentID uuid.UUID, _ uuid.UUID, _ time.Time) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.statusTaskID = taskID
+	r.attachmentID = attachmentID
+	return r.attachmentErr
+}
+
 type fakeAttachmentStorage struct {
-	bucket string
-	err    error
-	key    string
+	bucket      string
+	err         error
+	key         string
+	downloadKey string
 }
 
 func (s *fakeAttachmentStorage) Bucket() string {
@@ -335,6 +360,14 @@ func (s *fakeAttachmentStorage) PresignUpload(_ context.Context, objectKey strin
 		return nil, s.err
 	}
 	return &task.AttachmentUploadURL{URL: "http://minio/upload", ExpiresAt: time.Now().UTC().Add(15 * time.Minute)}, nil
+}
+
+func (s *fakeAttachmentStorage) PresignDownload(_ context.Context, objectKey string, _ string, _ string) (*task.AttachmentDownloadURL, error) {
+	s.downloadKey = objectKey
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &task.AttachmentDownloadURL{URL: "http://minio/download", ExpiresAt: time.Now().UTC().Add(15 * time.Minute)}, nil
 }
 
 func TestCreateTask(t *testing.T) {
@@ -916,6 +949,100 @@ func TestListTaskAttachments(t *testing.T) {
 	}
 	if result.Total != 1 || len(result.Items) != 1 {
 		t.Fatalf("result = total %d len %d, want 1/1", result.Total, len(result.Items))
+	}
+}
+
+func TestGetTaskAttachmentDownloadURL(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	attachmentID := uuid.Must(uuid.NewV7())
+	storage := &fakeAttachmentStorage{bucket: "prasankit"}
+	repo := &fakeRepository{
+		findTask: &task.Task{ID: taskID, ProjectID: projectID, No: "TASK-0001", Title: "Task A"},
+		attachment: &task.Attachment{
+			ID:            attachmentID,
+			ProjectID:     projectID,
+			TaskID:        taskID,
+			FileName:      "spec.pdf",
+			ContentType:   "application/pdf",
+			ObjectKey:     "tenant/workspace/project/task/attachments/file.pdf",
+			UploadStatus:  task.AttachmentUploaded,
+			StorageBucket: "prasankit",
+		},
+	}
+
+	result, err := NewService(repo, WithAttachmentStorage(storage)).GetTaskAttachmentDownloadURL(context.Background(), GetTaskAttachmentDownloadURLInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		AttachmentID:  attachmentID,
+	})
+	if err != nil {
+		t.Fatalf("GetTaskAttachmentDownloadURL: %v", err)
+	}
+	if result.DownloadURL.URL == "" || storage.downloadKey == "" {
+		t.Fatalf("download url/key = %q/%q, want non-empty", result.DownloadURL.URL, storage.downloadKey)
+	}
+}
+
+func TestGetTaskAttachmentDownloadURLRejectsPendingUpload(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	attachmentID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		findTask: &task.Task{ID: taskID, ProjectID: projectID, No: "TASK-0001", Title: "Task A"},
+		attachment: &task.Attachment{
+			ID:           attachmentID,
+			ProjectID:    projectID,
+			TaskID:       taskID,
+			FileName:     "spec.pdf",
+			UploadStatus: task.AttachmentPending,
+		},
+	}
+
+	_, err := NewService(repo, WithAttachmentStorage(&fakeAttachmentStorage{})).GetTaskAttachmentDownloadURL(context.Background(), GetTaskAttachmentDownloadURLInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		AttachmentID:  attachmentID,
+	})
+	if !errors.Is(err, ErrAttachmentNotUploaded) {
+		t.Fatalf("err = %v, want ErrAttachmentNotUploaded", err)
+	}
+}
+
+func TestDeleteTaskAttachment(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	taskID := uuid.Must(uuid.NewV7())
+	attachmentID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{findTask: &task.Task{
+		ID:          taskID,
+		TenantID:    tenantContext.TenantID,
+		WorkspaceID: tenantContext.WorkspaceID,
+		ProjectID:   projectID,
+		Status:      task.StatusTodo,
+	}}
+
+	err := NewService(repo).DeleteTaskAttachment(context.Background(), DeleteTaskAttachmentInput{
+		Account:       auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		TaskID:        taskID,
+		AttachmentID:  attachmentID,
+	})
+	if err != nil {
+		t.Fatalf("DeleteTaskAttachment: %v", err)
+	}
+	if repo.attachmentID != attachmentID {
+		t.Fatalf("attachment ID = %s, want %s", repo.attachmentID, attachmentID)
+	}
+	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "attachment_deleted" {
+		t.Fatalf("activity metadata = %#v, want attachment_deleted", repo.activity)
 	}
 }
 

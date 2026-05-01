@@ -489,8 +489,8 @@ config
 - Task activity เขียนใน transaction เดียวกับ create/update/status/delete และอ่านผ่าน `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/activities`
 - Task comment มี create/list/delete แบบ soft delete และเขียน activity metadata `comment_created`/`comment_deleted`
 - Task checklist มี create/list/update/delete แบบ soft delete, complete state, sort order และเขียน activity metadata `checklist_item_created`/`checklist_item_updated`/`checklist_item_deleted`
-- Task attachment ใช้ presigned PUT URL ไป MinIO: API สร้าง metadata เป็น `pending`, client upload ไฟล์ตรงไป MinIO, แล้วเรียก complete เพื่อ mark เป็น `uploaded`
-- Task routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects/{project_id}/tasks`, `GET /api/v1/workspace/projects/{project_id}/tasks/summary`, `POST /api/v1/workspace/projects/{project_id}/tasks`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/activities`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments`, `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments`, `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments/{comment_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist`, `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist/{item_id}`, `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist/{item_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments`, `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/uploads`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/complete`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status` และ `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
+- Task attachment ใช้ presigned PUT/GET URL ไป MinIO: API สร้าง metadata เป็น `pending`, client upload ไฟล์ตรงไป MinIO, complete เพื่อ mark เป็น `uploaded`, download ได้เฉพาะ `uploaded`, delete เป็น soft delete metadata ก่อน ยังไม่ลบ object จริง
+- Task routes ที่เสร็จแล้วคือ `GET /api/v1/workspace/projects/{project_id}/tasks`, `GET /api/v1/workspace/projects/{project_id}/tasks/summary`, `POST /api/v1/workspace/projects/{project_id}/tasks`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/activities`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments`, `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments`, `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/comments/{comment_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist`, `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist/{item_id}`, `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/checklist/{item_id}`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments`, `POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/uploads`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/complete`, `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/download`, `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}`, `PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status` และ `DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}`; ต้องมี session cookie + `X-Workspace-Slug` และผ่าน Permission Guard
 - `GET /api/v1/workspace/projects/{project_id}/tasks` filter ได้ด้วย `status`, `priority`, `assignee_member_id`
 
 ## Next Step
@@ -548,6 +548,7 @@ PostgreSQL connection done
 -> Migration 000010_create_task_attachment_tables applied
 -> Migration 000011_create_task_comment_tables applied
 -> Migration 000012_create_task_checklist_tables applied
+-> Migration 000013_add_task_attachment_delete_fields applied
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks filters wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/summary wired
@@ -564,10 +565,12 @@ PostgreSQL connection done
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments wired
 -> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/uploads wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/complete wired
+-> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id}/download wired
+-> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/attachments/{attachment_id} wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
--> ต่อไปต่อ file download/delete policy หรือ task relation/tag foundation โดยต้องผ่าน Tenant Context + Permission Guard
+-> ต่อไปต่อ task relation/tag foundation หรือ file retention/object cleanup policy โดยต้องผ่าน Tenant Context + Permission Guard
 ```
 
 ## Do Not Do Yet
