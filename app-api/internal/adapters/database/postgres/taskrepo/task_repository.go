@@ -197,6 +197,28 @@ func (relationRow) TableName() string {
 	return "task_relations"
 }
 
+type viewRow struct {
+	ID             uuid.UUID     `gorm:"column:id;type:uuid"`
+	TenantID       uuid.UUID     `gorm:"column:tenant_id;type:uuid"`
+	WorkspaceID    uuid.UUID     `gorm:"column:workspace_id;type:uuid"`
+	ProjectID      uuid.UUID     `gorm:"column:project_id;type:uuid"`
+	OwnerAccountID uuid.UUID     `gorm:"column:owner_account_id;type:uuid"`
+	Name           string        `gorm:"column:name"`
+	NormalizedName string        `gorm:"column:normalized_name"`
+	FiltersJSON    dbtypes.JSONB `gorm:"column:filters_json;type:jsonb"`
+	SortOrder      int           `gorm:"column:sort_order"`
+	CreatedBy      uuid.UUID     `gorm:"column:created_by;type:uuid"`
+	CreatedAt      time.Time     `gorm:"column:created_at"`
+	UpdatedBy      *uuid.UUID    `gorm:"column:updated_by;type:uuid"`
+	UpdatedAt      time.Time     `gorm:"column:updated_at"`
+	DeletedBy      *uuid.UUID    `gorm:"column:deleted_by;type:uuid"`
+	DeletedAt      *time.Time    `gorm:"column:deleted_at"`
+}
+
+func (viewRow) TableName() string {
+	return "task_views"
+}
+
 func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -1208,6 +1230,124 @@ func (r *Repository) SoftDeleteTaskRelation(ctx context.Context, tenantID uuid.U
 	return nil
 }
 
+func (r *Repository) CreateTaskView(ctx context.Context, view *task.View) error {
+	if err := ensureUUID(&view.ID); err != nil {
+		return err
+	}
+	if view.CreatedAt.IsZero() {
+		view.CreatedAt = time.Now().UTC()
+	}
+	if view.UpdatedAt.IsZero() {
+		view.UpdatedAt = view.CreatedAt
+	}
+	row := viewRow{
+		ID:             view.ID,
+		TenantID:       view.TenantID,
+		WorkspaceID:    view.WorkspaceID,
+		ProjectID:      view.ProjectID,
+		OwnerAccountID: view.OwnerAccountID,
+		Name:           view.Name,
+		NormalizedName: view.NormalizedName,
+		FiltersJSON:    dbtypes.NewJSONB(view.FiltersJSON),
+		SortOrder:      view.SortOrder,
+		CreatedBy:      view.CreatedBy,
+		CreatedAt:      view.CreatedAt,
+		UpdatedBy:      view.UpdatedBy,
+		UpdatedAt:      view.UpdatedAt,
+		DeletedBy:      view.DeletedBy,
+		DeletedAt:      view.DeletedAt,
+	}
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return mapViewError(err)
+	}
+	view.ID = row.ID
+	view.CreatedAt = row.CreatedAt
+	view.UpdatedAt = row.UpdatedAt
+	return nil
+}
+
+func (r *Repository) ListTaskViews(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, ownerAccountID uuid.UUID) ([]task.View, error) {
+	var rows []viewRow
+	err := r.db.WithContext(ctx).
+		Table("task_views AS tv").
+		Where("tv.tenant_id = ?", tenantID).
+		Where("tv.workspace_id = ?", workspaceID).
+		Where("tv.project_id = ?", projectID).
+		Where("tv.owner_account_id = ?", ownerAccountID).
+		Where("tv.deleted_at IS NULL").
+		Order("tv.sort_order ASC, tv.created_at DESC, tv.id DESC").
+		Scan(&rows).
+		Error
+	if err != nil {
+		return nil, err
+	}
+	views := make([]task.View, 0, len(rows))
+	for _, row := range rows {
+		views = append(views, row.toDomain())
+	}
+	return views, nil
+}
+
+func (r *Repository) UpdateTaskView(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, ownerAccountID uuid.UUID, viewID uuid.UUID, patch task.ViewPatch) error {
+	updates := map[string]any{
+		"updated_by": patch.UpdatedBy,
+		"updated_at": patch.UpdatedAt,
+	}
+	if patch.Name != nil {
+		updates["name"] = *patch.Name
+	}
+	if patch.NormalizedName != nil {
+		updates["normalized_name"] = *patch.NormalizedName
+	}
+	if patch.FiltersJSON != nil {
+		updates["filters_json"] = dbtypes.NewJSONB(*patch.FiltersJSON)
+	}
+	if patch.SortOrder != nil {
+		updates["sort_order"] = *patch.SortOrder
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&viewRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("owner_account_id = ?", ownerAccountID).
+		Where("id = ?", viewID).
+		Where("deleted_at IS NULL").
+		Updates(updates)
+	if result.Error != nil {
+		return mapViewError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrViewNotFound
+	}
+	return nil
+}
+
+func (r *Repository) SoftDeleteTaskView(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, ownerAccountID uuid.UUID, viewID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&viewRow{}).
+		Where("tenant_id = ?", tenantID).
+		Where("workspace_id = ?", workspaceID).
+		Where("project_id = ?", projectID).
+		Where("owner_account_id = ?", ownerAccountID).
+		Where("id = ?", viewID).
+		Where("deleted_at IS NULL").
+		Updates(map[string]any{
+			"deleted_by": deletedBy,
+			"deleted_at": deletedAt,
+			"updated_by": deletedBy,
+			"updated_at": deletedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return task.ErrViewNotFound
+	}
+	return nil
+}
+
 func taskSelect() string {
 	return `
 		t.id,
@@ -1289,6 +1429,16 @@ func mapRelationError(err error) error {
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		if pgErr.ConstraintName == "uq_task_relations_active" {
 			return task.ErrRelationAlreadyExists
+		}
+	}
+	return err
+}
+
+func mapViewError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if pgErr.ConstraintName == "uq_task_views_owner_name_active" {
+			return task.ErrViewNameAlreadyTaken
 		}
 	}
 	return err
@@ -1426,5 +1576,25 @@ func (r relationRow) toDomain() task.Relation {
 		CreatedAt:    r.CreatedAt,
 		DeletedBy:    r.DeletedBy,
 		DeletedAt:    r.DeletedAt,
+	}
+}
+
+func (r viewRow) toDomain() task.View {
+	return task.View{
+		ID:             r.ID,
+		TenantID:       r.TenantID,
+		WorkspaceID:    r.WorkspaceID,
+		ProjectID:      r.ProjectID,
+		OwnerAccountID: r.OwnerAccountID,
+		Name:           r.Name,
+		NormalizedName: r.NormalizedName,
+		FiltersJSON:    map[string]any(r.FiltersJSON),
+		SortOrder:      r.SortOrder,
+		CreatedBy:      r.CreatedBy,
+		CreatedAt:      r.CreatedAt,
+		UpdatedBy:      r.UpdatedBy,
+		UpdatedAt:      r.UpdatedAt,
+		DeletedBy:      r.DeletedBy,
+		DeletedAt:      r.DeletedAt,
 	}
 }

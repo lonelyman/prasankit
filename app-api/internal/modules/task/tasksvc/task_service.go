@@ -54,6 +54,11 @@ var (
 	ErrTaskRelationTargetRequired     = errors.New("task relation target task id is required")
 	ErrTaskRelationSelf               = errors.New("task relation cannot target itself")
 	ErrTaskRelationAlreadyExists      = errors.New("task relation already exists")
+	ErrTaskViewNotFound               = errors.New("task view not found")
+	ErrTaskViewNameRequired           = errors.New("task view name is required")
+	ErrTaskViewNameAlreadyTaken       = errors.New("task view name is already taken")
+	ErrTaskViewUpdateNoFields         = errors.New("task view update has no fields")
+	ErrTaskViewSortOrderInvalid       = errors.New("task view sort order is invalid")
 )
 
 type CreateTaskInput struct {
@@ -328,6 +333,50 @@ type DeleteTaskRelationInput struct {
 	ProjectID     uuid.UUID
 	TaskID        uuid.UUID
 	RelationID    uuid.UUID
+}
+
+type CreateTaskViewInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	Name          string
+	Filters       map[string]any
+	SortOrder     int
+}
+
+type CreateTaskViewResult struct {
+	View task.View
+}
+
+type ListTaskViewsInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+}
+
+type ListTaskViewsResult struct {
+	Items []task.View
+}
+
+type UpdateTaskViewInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	ViewID        uuid.UUID
+	Name          *string
+	Filters       *map[string]any
+	SortOrder     *int
+}
+
+type UpdateTaskViewResult struct {
+	View task.View
+}
+
+type DeleteTaskViewInput struct {
+	Account       auth.UserAccount
+	TenantContext workspace.TenantContext
+	ProjectID     uuid.UUID
+	ViewID        uuid.UUID
 }
 
 type UpdateTaskInput struct {
@@ -1549,6 +1598,186 @@ func (s *Service) DeleteTaskRelation(ctx context.Context, input DeleteTaskRelati
 	return nil
 }
 
+func (s *Service) CreateTaskView(ctx context.Context, input CreateTaskViewInput) (*CreateTaskViewResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return nil, ErrTaskViewNameRequired
+	}
+	if input.SortOrder < 0 {
+		return nil, ErrTaskViewSortOrderInvalid
+	}
+
+	exists, err := s.repository.ProjectExists(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrProjectNotFound
+	}
+
+	now := s.clock()
+	view := task.View{
+		TenantID:       input.TenantContext.TenantID,
+		WorkspaceID:    input.TenantContext.WorkspaceID,
+		ProjectID:      input.ProjectID,
+		OwnerAccountID: input.Account.ID,
+		Name:           name,
+		NormalizedName: normalizeTaskViewName(name),
+		FiltersJSON:    cloneMap(input.Filters),
+		SortOrder:      input.SortOrder,
+		CreatedBy:      input.Account.ID,
+		CreatedAt:      now,
+		UpdatedBy:      &input.Account.ID,
+		UpdatedAt:      now,
+	}
+	if err := s.repository.CreateTaskView(ctx, &view); err != nil {
+		if errors.Is(err, task.ErrViewNameAlreadyTaken) {
+			return nil, ErrTaskViewNameAlreadyTaken
+		}
+		return nil, err
+	}
+	return &CreateTaskViewResult{View: view}, nil
+}
+
+func (s *Service) ListTaskViews(ctx context.Context, input ListTaskViewsInput) (*ListTaskViewsResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+
+	exists, err := s.repository.ProjectExists(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrProjectNotFound
+	}
+	items, err := s.repository.ListTaskViews(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.Account.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &ListTaskViewsResult{Items: items}, nil
+}
+
+func (s *Service) UpdateTaskView(ctx context.Context, input UpdateTaskViewInput) (*UpdateTaskViewResult, error) {
+	if err := validateAccount(input.Account); err != nil {
+		return nil, err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return nil, err
+	}
+	if input.ProjectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+	if input.ViewID == uuid.Nil {
+		return nil, ErrTaskViewNotFound
+	}
+
+	patch := task.ViewPatch{
+		UpdatedBy: input.Account.ID,
+		UpdatedAt: s.clock(),
+	}
+	hasField := false
+	if input.Name != nil {
+		name := strings.TrimSpace(*input.Name)
+		if name == "" {
+			return nil, ErrTaskViewNameRequired
+		}
+		normalizedName := normalizeTaskViewName(name)
+		patch.Name = &name
+		patch.NormalizedName = &normalizedName
+		hasField = true
+	}
+	if input.Filters != nil {
+		filters := cloneMap(*input.Filters)
+		patch.FiltersJSON = &filters
+		hasField = true
+	}
+	if input.SortOrder != nil {
+		if *input.SortOrder < 0 {
+			return nil, ErrTaskViewSortOrderInvalid
+		}
+		patch.SortOrder = input.SortOrder
+		hasField = true
+	}
+	if !hasField {
+		return nil, ErrTaskViewUpdateNoFields
+	}
+
+	exists, err := s.repository.ProjectExists(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrProjectNotFound
+	}
+
+	if err := s.repository.UpdateTaskView(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.Account.ID, input.ViewID, patch); err != nil {
+		if errors.Is(err, task.ErrViewNotFound) {
+			return nil, ErrTaskViewNotFound
+		}
+		if errors.Is(err, task.ErrViewNameAlreadyTaken) {
+			return nil, ErrTaskViewNameAlreadyTaken
+		}
+		return nil, err
+	}
+	items, err := s.repository.ListTaskViews(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.Account.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if item.ID == input.ViewID {
+			return &UpdateTaskViewResult{View: item}, nil
+		}
+	}
+	return nil, ErrTaskViewNotFound
+}
+
+func (s *Service) DeleteTaskView(ctx context.Context, input DeleteTaskViewInput) error {
+	if err := validateAccount(input.Account); err != nil {
+		return err
+	}
+	if err := validateTenantContext(input.TenantContext); err != nil {
+		return err
+	}
+	if input.ProjectID == uuid.Nil {
+		return ErrProjectIDRequired
+	}
+	if input.ViewID == uuid.Nil {
+		return ErrTaskViewNotFound
+	}
+
+	exists, err := s.repository.ProjectExists(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrProjectNotFound
+	}
+	now := s.clock()
+	if err := s.repository.SoftDeleteTaskView(ctx, input.TenantContext.TenantID, input.TenantContext.WorkspaceID, input.ProjectID, input.Account.ID, input.ViewID, input.Account.ID, now); err != nil {
+		if errors.Is(err, task.ErrViewNotFound) {
+			return ErrTaskViewNotFound
+		}
+		return err
+	}
+	return nil
+}
+
 func (s *Service) UpdateTask(ctx context.Context, input UpdateTaskInput) (*UpdateTaskResult, error) {
 	if err := validateAccount(input.Account); err != nil {
 		return nil, err
@@ -1831,6 +2060,21 @@ func sanitizeFileName(value string) string {
 
 func normalizeTagName(value string) string {
 	return strings.ToLower(strings.Join(strings.Fields(value), " "))
+}
+
+func normalizeTaskViewName(value string) string {
+	return strings.ToLower(strings.Join(strings.Fields(value), " "))
+}
+
+func cloneMap(value map[string]any) map[string]any {
+	if value == nil {
+		return map[string]any{}
+	}
+	clone := make(map[string]any, len(value))
+	for key, item := range value {
+		clone[key] = item
+	}
+	return clone
 }
 
 func validateAccount(account auth.UserAccount) error {

@@ -375,6 +375,7 @@ Composition note:
   - migration `000012_create_task_checklist_tables.sql`
   - migration `000013_add_task_attachment_delete_fields.sql`
   - migration `000014_create_task_tag_relation_tables.sql`
+  - migration `000015_create_task_view_tables.sql`
   - `task_counters` สำหรับรัน task no ใน backend transaction
   - `task_activities` สำหรับ append-only activity log ของ task
   - `task_attachments` สำหรับ metadata ไฟล์แนบ task, presigned upload/download flow และ soft delete
@@ -382,11 +383,16 @@ Composition note:
   - `task_checklist_items` สำหรับ checklist/sub-items ของ task พร้อม complete state และ soft delete
   - `task_tags` และ `task_tag_assignments` สำหรับ project-scoped tag และการ assign/remove tag กับ task
   - `task_relations` สำหรับ relation ระหว่าง task ใน project เดียวกัน โดยยังเป็น metadata ไม่เปลี่ยน status อัตโนมัติ
+  - `task_views` สำหรับ private saved/custom task views ต่อ account ในแต่ละ project
   - `tasks.priority_id` reuse `project_priorities.id`
   - `tasks.status` เป็น system state ของ MVP: `todo`, `in_progress`, `blocked`, `done`, `cancelled`
   - `GET /api/v1/workspace/projects/{project_id}/tasks`
     - filter ได้ด้วย `status`, `priority`, `assignee_member_id`, `tag_id`, `q`
   - `GET /api/v1/workspace/projects/{project_id}/tasks/summary`
+  - `GET /api/v1/workspace/projects/{project_id}/tasks/views`
+  - `POST /api/v1/workspace/projects/{project_id}/tasks/views`
+  - `PATCH /api/v1/workspace/projects/{project_id}/tasks/views/{view_id}`
+  - `DELETE /api/v1/workspace/projects/{project_id}/tasks/views/{view_id}`
   - `POST /api/v1/workspace/projects/{project_id}/tasks`
   - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}`
   - `GET /api/v1/workspace/projects/{project_id}/tasks/{task_id}/activities`
@@ -421,7 +427,7 @@ Composition note:
 
 ## Next Step
 
-ขั้นถัดไปต่อ task status policy จาก relation, saved/custom task views หรือ file retention/object cleanup policy โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
+ขั้นถัดไปต่อ task status policy จาก relation, shared/team task views หรือ file retention/object cleanup policy โดยทุก route ต้องผ่าน Tenant Context + Permission Guard ก่อน query
 
 เริ่ม wire dependency client แบบช้า ๆ:
 
@@ -478,6 +484,7 @@ PostgreSQL connection done
 -> Migration 000012_create_task_checklist_tables applied
 -> Migration 000013_add_task_attachment_delete_fields applied
 -> Migration 000014_create_task_tag_relation_tables applied
+-> Migration 000015_create_task_view_tables applied
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks filters wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/summary wired
@@ -504,6 +511,10 @@ PostgreSQL connection done
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id}/relations/{relation_id} wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks tag_id filter wired
 -> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks q text search wired
+-> Task HTTP: GET /api/v1/workspace/projects/{project_id}/tasks/views wired
+-> Task HTTP: POST /api/v1/workspace/projects/{project_id}/tasks/views wired
+-> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/views/{view_id} wired
+-> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/views/{view_id} wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired
 -> Task HTTP: PATCH /api/v1/workspace/projects/{project_id}/tasks/{task_id}/status wired
 -> Task HTTP: DELETE /api/v1/workspace/projects/{project_id}/tasks/{task_id} wired

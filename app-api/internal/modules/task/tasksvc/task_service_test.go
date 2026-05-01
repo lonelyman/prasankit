@@ -49,6 +49,11 @@ type fakeRepository struct {
 	relationItems     []task.Relation
 	relationID        uuid.UUID
 	relationErr       error
+	view              *task.View
+	viewItems         []task.View
+	viewID            uuid.UUID
+	viewPatch         task.ViewPatch
+	viewErr           error
 	updatePatch       task.Patch
 	updateErr         error
 	statusTaskID      uuid.UUID
@@ -419,6 +424,45 @@ func (r *fakeRepository) SoftDeleteTaskRelation(_ context.Context, tenantID uuid
 	r.statusTaskID = taskID
 	r.relationID = relationID
 	return r.relationErr
+}
+
+func (r *fakeRepository) CreateTaskView(_ context.Context, view *task.View) error {
+	if r.viewErr != nil {
+		return r.viewErr
+	}
+	view.ID = uuid.Must(uuid.NewV7())
+	r.view = view
+	return nil
+}
+
+func (r *fakeRepository) ListTaskViews(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, ownerAccountID uuid.UUID) ([]task.View, error) {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.assigneeID = ownerAccountID
+	if r.viewErr != nil {
+		return nil, r.viewErr
+	}
+	return r.viewItems, nil
+}
+
+func (r *fakeRepository) UpdateTaskView(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, ownerAccountID uuid.UUID, viewID uuid.UUID, patch task.ViewPatch) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.assigneeID = ownerAccountID
+	r.viewID = viewID
+	r.viewPatch = patch
+	return r.viewErr
+}
+
+func (r *fakeRepository) SoftDeleteTaskView(_ context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, ownerAccountID uuid.UUID, viewID uuid.UUID, _ uuid.UUID, _ time.Time) error {
+	r.tenantID = tenantID
+	r.workspaceID = workspaceID
+	r.projectID = projectID
+	r.assigneeID = ownerAccountID
+	r.viewID = viewID
+	return r.viewErr
 }
 
 type fakeAttachmentStorage struct {
@@ -1546,6 +1590,142 @@ func TestDeleteTaskRelation(t *testing.T) {
 	}
 	if repo.activity == nil || repo.activity.MetadataJSON["action"] != "relation_deleted" {
 		t.Fatalf("activity metadata = %#v, want relation_deleted", repo.activity)
+	}
+}
+
+func TestCreateTaskView(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	accountID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{projectExists: true}
+
+	result, err := NewService(repo).CreateTaskView(context.Background(), CreateTaskViewInput{
+		Account:       auth.UserAccount{ID: accountID, Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Name:          "  My Review  ",
+		Filters:       map[string]any{"status": "todo"},
+		SortOrder:     2,
+	})
+	if err != nil {
+		t.Fatalf("CreateTaskView: %v", err)
+	}
+	if result.View.Name != "My Review" {
+		t.Fatalf("view name = %q, want trimmed", result.View.Name)
+	}
+	if result.View.NormalizedName != "my review" {
+		t.Fatalf("normalized name = %q, want my review", result.View.NormalizedName)
+	}
+	if repo.view == nil || repo.view.OwnerAccountID != accountID {
+		t.Fatalf("view = %#v, want owner account", repo.view)
+	}
+}
+
+func TestCreateTaskViewRejectsInvalidInput(t *testing.T) {
+	account := auth.UserAccount{ID: uuid.Must(uuid.NewV7()), Status: auth.UserAccountStatusActive}
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+
+	_, err := NewService(&fakeRepository{projectExists: true}).CreateTaskView(context.Background(), CreateTaskViewInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Name:          " ",
+	})
+	if !errors.Is(err, ErrTaskViewNameRequired) {
+		t.Fatalf("err = %v, want ErrTaskViewNameRequired", err)
+	}
+
+	_, err = NewService(&fakeRepository{projectExists: true}).CreateTaskView(context.Background(), CreateTaskViewInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Name:          "Mine",
+		SortOrder:     -1,
+	})
+	if !errors.Is(err, ErrTaskViewSortOrderInvalid) {
+		t.Fatalf("err = %v, want ErrTaskViewSortOrderInvalid", err)
+	}
+}
+
+func TestListTaskViews(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	accountID := uuid.Must(uuid.NewV7())
+	viewID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{
+		projectExists: true,
+		viewItems: []task.View{
+			{ID: viewID, ProjectID: projectID, OwnerAccountID: accountID, Name: "Mine"},
+		},
+	}
+
+	result, err := NewService(repo).ListTaskViews(context.Background(), ListTaskViewsInput{
+		Account:       auth.UserAccount{ID: accountID, Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+	})
+	if err != nil {
+		t.Fatalf("ListTaskViews: %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].ID != viewID {
+		t.Fatalf("items = %#v, want view", result.Items)
+	}
+}
+
+func TestUpdateTaskView(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	accountID := uuid.Must(uuid.NewV7())
+	viewID := uuid.Must(uuid.NewV7())
+	name := "  Updated  "
+	sortOrder := 4
+	filters := map[string]any{"q": "proposal"}
+	repo := &fakeRepository{
+		projectExists: true,
+		viewItems: []task.View{
+			{ID: viewID, ProjectID: projectID, OwnerAccountID: accountID, Name: "Updated", NormalizedName: "updated", FiltersJSON: filters, SortOrder: sortOrder, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
+		},
+	}
+
+	result, err := NewService(repo).UpdateTaskView(context.Background(), UpdateTaskViewInput{
+		Account:       auth.UserAccount{ID: accountID, Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		ViewID:        viewID,
+		Name:          &name,
+		Filters:       &filters,
+		SortOrder:     &sortOrder,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTaskView: %v", err)
+	}
+	if repo.viewPatch.Name == nil || *repo.viewPatch.Name != "Updated" {
+		t.Fatalf("name patch = %#v, want Updated", repo.viewPatch.Name)
+	}
+	if result.View.ID != viewID {
+		t.Fatalf("view ID = %s, want %s", result.View.ID, viewID)
+	}
+}
+
+func TestDeleteTaskView(t *testing.T) {
+	tenantContext := testTenantContext()
+	projectID := uuid.Must(uuid.NewV7())
+	accountID := uuid.Must(uuid.NewV7())
+	viewID := uuid.Must(uuid.NewV7())
+	repo := &fakeRepository{projectExists: true}
+
+	err := NewService(repo).DeleteTaskView(context.Background(), DeleteTaskViewInput{
+		Account:       auth.UserAccount{ID: accountID, Status: auth.UserAccountStatusActive},
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		ViewID:        viewID,
+	})
+	if err != nil {
+		t.Fatalf("DeleteTaskView: %v", err)
+	}
+	if repo.viewID != viewID {
+		t.Fatalf("view ID = %s, want %s", repo.viewID, viewID)
 	}
 }
 

@@ -267,3 +267,30 @@ type Relation struct {
 	DeletedBy    *uuid.UUID
 	DeletedAt    *time.Time
 }
+
+type View struct {
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	WorkspaceID    uuid.UUID
+	ProjectID      uuid.UUID
+	OwnerAccountID uuid.UUID
+	Name           string
+	NormalizedName string
+	FiltersJSON    map[string]any
+	SortOrder      int
+	CreatedBy      uuid.UUID
+	CreatedAt      time.Time
+	UpdatedBy      *uuid.UUID
+	UpdatedAt      time.Time
+	DeletedBy      *uuid.UUID
+	DeletedAt      *time.Time
+}
+
+type ViewPatch struct {
+	Name           *string
+	NormalizedName *string
+	FiltersJSON    *map[string]any
+	SortOrder      *int
+	UpdatedBy      uuid.UUID
+	UpdatedAt      time.Time
+}

@@ -84,6 +84,17 @@ type fakeTaskService struct {
 	createRelationInput   tasksvc.CreateTaskRelationInput
 	deleteRelationErr     error
 	deleteRelationInput   tasksvc.DeleteTaskRelationInput
+	viewResult            *tasksvc.ListTaskViewsResult
+	viewErr               error
+	viewInput             tasksvc.ListTaskViewsInput
+	createViewResult      *tasksvc.CreateTaskViewResult
+	createViewErr         error
+	createViewInput       tasksvc.CreateTaskViewInput
+	updateViewResult      *tasksvc.UpdateTaskViewResult
+	updateViewErr         error
+	updateViewInput       tasksvc.UpdateTaskViewInput
+	deleteViewErr         error
+	deleteViewInput       tasksvc.DeleteTaskViewInput
 	updateResult          *tasksvc.UpdateTaskResult
 	updateErr             error
 	updateInput           tasksvc.UpdateTaskInput
@@ -258,6 +269,35 @@ func (s *fakeTaskService) ListTaskRelations(_ context.Context, input tasksvc.Lis
 func (s *fakeTaskService) DeleteTaskRelation(_ context.Context, input tasksvc.DeleteTaskRelationInput) error {
 	s.deleteRelationInput = input
 	return s.deleteRelationErr
+}
+
+func (s *fakeTaskService) CreateTaskView(_ context.Context, input tasksvc.CreateTaskViewInput) (*tasksvc.CreateTaskViewResult, error) {
+	s.createViewInput = input
+	if s.createViewErr != nil {
+		return nil, s.createViewErr
+	}
+	return s.createViewResult, nil
+}
+
+func (s *fakeTaskService) ListTaskViews(_ context.Context, input tasksvc.ListTaskViewsInput) (*tasksvc.ListTaskViewsResult, error) {
+	s.viewInput = input
+	if s.viewErr != nil {
+		return nil, s.viewErr
+	}
+	return s.viewResult, nil
+}
+
+func (s *fakeTaskService) UpdateTaskView(_ context.Context, input tasksvc.UpdateTaskViewInput) (*tasksvc.UpdateTaskViewResult, error) {
+	s.updateViewInput = input
+	if s.updateViewErr != nil {
+		return nil, s.updateViewErr
+	}
+	return s.updateViewResult, nil
+}
+
+func (s *fakeTaskService) DeleteTaskView(_ context.Context, input tasksvc.DeleteTaskViewInput) error {
+	s.deleteViewInput = input
+	return s.deleteViewErr
 }
 
 func (s *fakeTaskService) UpdateTask(_ context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error) {
@@ -486,6 +526,127 @@ func TestGetTaskBoardSummary(t *testing.T) {
 	counts := data["counts"].(map[string]any)
 	if counts["todo"].(float64) != 2 || counts["in_progress"].(float64) != 1 {
 		t.Fatalf("counts = %#v, want todo=2 in_progress=1", counts)
+	}
+}
+
+func TestCreateTaskView(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	viewID := uuid.Must(uuid.NewV7())
+	tagID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		createViewResult: &tasksvc.CreateTaskViewResult{
+			View: task.View{ID: viewID, ProjectID: projectID, Name: "My Todo", FiltersJSON: map[string]any{"status": "todo", "tag_id": tagID.String()}, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	body := `{"name":"My Todo","filters":{"status":"todo","tag_id":"` + tagID.String() + `","q":"proposal"},"sort_order":1}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/views", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	if service.createViewInput.Name != "My Todo" || service.createViewInput.SortOrder != 1 {
+		t.Fatalf("view input = %#v, want name and sort order", service.createViewInput)
+	}
+	if service.createViewInput.Filters["q"] != "proposal" {
+		t.Fatalf("filters = %#v, want q proposal", service.createViewInput.Filters)
+	}
+}
+
+func TestListTaskViews(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		viewResult: &tasksvc.ListTaskViewsResult{
+			Items: []task.View{{ID: uuid.Must(uuid.NewV7()), ProjectID: projectID, Name: "My Todo", FiltersJSON: map[string]any{"status": "todo"}, CreatedAt: now, UpdatedAt: now}},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/views", nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.viewInput.ProjectID != projectID {
+		t.Fatalf("project ID = %s, want %s", service.viewInput.ProjectID, projectID)
+	}
+}
+
+func TestUpdateTaskView(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	viewID := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 5, 1, 10, 30, 0, 0, time.UTC)
+	service := &fakeTaskService{
+		updateViewResult: &tasksvc.UpdateTaskViewResult{
+			View: task.View{ID: viewID, ProjectID: projectID, Name: "Updated", FiltersJSON: map[string]any{"q": "proposal"}, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/views/"+viewID.String(), bytes.NewBufferString(`{"name":"Updated","filters":{"q":"proposal"},"sort_order":2}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.updateViewInput.ViewID != viewID {
+		t.Fatalf("view ID = %s, want %s", service.updateViewInput.ViewID, viewID)
+	}
+}
+
+func TestDeleteTaskView(t *testing.T) {
+	accountID := uuid.Must(uuid.NewV7())
+	tenantContext := testTenantContext(workspace.WorkspaceRoleUser)
+	projectID := uuid.Must(uuid.NewV7())
+	viewID := uuid.Must(uuid.NewV7())
+	service := &fakeTaskService{}
+	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspace/projects/"+projectID.String()+"/tasks/views/"+viewID.String(), nil)
+	req.Header.Set("X-Workspace-Slug", "team-one")
+	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+	if service.deleteViewInput.ViewID != viewID {
+		t.Fatalf("view ID = %s, want %s", service.deleteViewInput.ViewID, viewID)
 	}
 }
 

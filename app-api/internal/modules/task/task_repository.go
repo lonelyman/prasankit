@@ -17,6 +17,8 @@ var ErrTagNotFound = errors.New("task tag not found")
 var ErrTagAlreadyAssigned = errors.New("task tag already assigned")
 var ErrRelationNotFound = errors.New("task relation not found")
 var ErrRelationAlreadyExists = errors.New("task relation already exists")
+var ErrViewNotFound = errors.New("task view not found")
+var ErrViewNameAlreadyTaken = errors.New("task view name is already taken")
 var ErrPriorityNotFound = errors.New("task priority not found")
 var ErrAssigneeNotFound = errors.New("task assignee not found")
 var ErrTaskNoAlreadyTaken = errors.New("task no is already taken")
@@ -56,4 +58,8 @@ type Repository interface {
 	CreateTaskRelation(ctx context.Context, relation *Relation) error
 	ListTaskRelations(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID) ([]Relation, error)
 	SoftDeleteTaskRelation(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, taskID uuid.UUID, relationID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error
+	CreateTaskView(ctx context.Context, view *View) error
+	ListTaskViews(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, ownerAccountID uuid.UUID) ([]View, error)
+	UpdateTaskView(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, ownerAccountID uuid.UUID, viewID uuid.UUID, patch ViewPatch) error
+	SoftDeleteTaskView(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID, ownerAccountID uuid.UUID, viewID uuid.UUID, deletedBy uuid.UUID, deletedAt time.Time) error
 }

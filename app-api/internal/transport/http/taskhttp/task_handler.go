@@ -47,6 +47,10 @@ type TaskService interface {
 	CreateTaskRelation(ctx context.Context, input tasksvc.CreateTaskRelationInput) (*tasksvc.CreateTaskRelationResult, error)
 	ListTaskRelations(ctx context.Context, input tasksvc.ListTaskRelationsInput) (*tasksvc.ListTaskRelationsResult, error)
 	DeleteTaskRelation(ctx context.Context, input tasksvc.DeleteTaskRelationInput) error
+	CreateTaskView(ctx context.Context, input tasksvc.CreateTaskViewInput) (*tasksvc.CreateTaskViewResult, error)
+	ListTaskViews(ctx context.Context, input tasksvc.ListTaskViewsInput) (*tasksvc.ListTaskViewsResult, error)
+	UpdateTaskView(ctx context.Context, input tasksvc.UpdateTaskViewInput) (*tasksvc.UpdateTaskViewResult, error)
+	DeleteTaskView(ctx context.Context, input tasksvc.DeleteTaskViewInput) error
 	UpdateTask(ctx context.Context, input tasksvc.UpdateTaskInput) (*tasksvc.UpdateTaskResult, error)
 	UpdateTaskStatus(ctx context.Context, input tasksvc.UpdateTaskStatusInput) (*tasksvc.UpdateTaskStatusResult, error)
 	DeleteTask(ctx context.Context, input tasksvc.DeleteTaskInput) error
@@ -125,6 +129,26 @@ type assignTaskTagRequest struct {
 type createTaskRelationRequest struct {
 	TargetTaskID string `json:"target_task_id"`
 	Type         string `json:"type"`
+}
+
+type taskViewFiltersRequest struct {
+	Status           *string `json:"status"`
+	Priority         *string `json:"priority"`
+	AssigneeMemberID *string `json:"assignee_member_id"`
+	TagID            *string `json:"tag_id"`
+	Search           *string `json:"q"`
+}
+
+type createTaskViewRequest struct {
+	Name      string                 `json:"name"`
+	Filters   taskViewFiltersRequest `json:"filters"`
+	SortOrder int                    `json:"sort_order"`
+}
+
+type updateTaskViewRequest struct {
+	Name      *string                 `json:"name"`
+	Filters   *taskViewFiltersRequest `json:"filters"`
+	SortOrder *int                    `json:"sort_order"`
 }
 
 type taskResponse struct {
@@ -223,6 +247,16 @@ type taskRelationResponse struct {
 	CreatedAt    string `json:"created_at"`
 }
 
+type taskViewResponse struct {
+	ID        string         `json:"id"`
+	ProjectID string         `json:"project_id"`
+	Name      string         `json:"name"`
+	Filters   map[string]any `json:"filters"`
+	SortOrder int            `json:"sort_order"`
+	CreatedAt string         `json:"created_at"`
+	UpdatedAt string         `json:"updated_at"`
+}
+
 func NewHandler(taskService TaskService, sessionService SessionService, tenantResolver TenantResolver, cookie CookieConfig) Handler {
 	return Handler{
 		tasks:   taskService,
@@ -237,6 +271,10 @@ func (h Handler) RegisterRoutes(router fiber.Router) {
 	tasks.Get("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTasks)
 	tasks.Post("/", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTask)
 	tasks.Get("/summary", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.GetTaskBoardSummary)
+	tasks.Get("/views", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskViews)
+	tasks.Post("/views", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.CreateTaskView)
+	tasks.Patch("/views/:view_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.UpdateTaskView)
+	tasks.Delete("/views/:view_id", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.DeleteTaskView)
 	tasks.Get("/:task_id/activities", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskActivities)
 	tasks.Get("/:task_id/comments", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceView), h.ListTaskComments)
 	tasks.Post("/:task_id/comments", h.requireSession, h.requireTenantContext, h.requireWorkspacePermission(workspaceperm.PermissionWorkspaceManage), h.CreateTaskComment)
@@ -387,6 +425,151 @@ func (h Handler) GetTaskBoardSummary(c fiber.Ctx) error {
 	}
 
 	return presenter.RenderItem(c, toTaskBoardSummaryResponse(*result))
+}
+
+func (h Handler) CreateTaskView(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+
+	var req createTaskViewRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+	filters, err := taskViewFiltersToMap(&req.Filters)
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_VIEW_FILTERS_INVALID", "Task view filters are invalid")
+	}
+
+	result, err := h.tasks.CreateTaskView(c.Context(), tasksvc.CreateTaskViewInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		Name:          req.Name,
+		Filters:       filters,
+		SortOrder:     req.SortOrder,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, toTaskViewResponse(result.View), fiber.StatusCreated)
+}
+
+func (h Handler) ListTaskViews(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+
+	result, err := h.tasks.ListTaskViews(c.Context(), tasksvc.ListTaskViewsInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	items := make([]taskViewResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, toTaskViewResponse(item))
+	}
+	return presenter.RenderItem(c, map[string]any{"items": items})
+}
+
+func (h Handler) UpdateTaskView(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+	viewID, err := uuid.Parse(c.Params("view_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_VIEW_ID_INVALID", "Task view id is invalid")
+	}
+
+	var req updateTaskViewRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "INVALID_REQUEST", "Request body is invalid")
+	}
+	var filters *map[string]any
+	if req.Filters != nil {
+		filterValue, err := taskViewFiltersToMap(req.Filters)
+		if err != nil {
+			return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_VIEW_FILTERS_INVALID", "Task view filters are invalid")
+		}
+		filters = &filterValue
+	}
+
+	result, err := h.tasks.UpdateTaskView(c.Context(), tasksvc.UpdateTaskViewInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		ViewID:        viewID,
+		Name:          req.Name,
+		Filters:       filters,
+		SortOrder:     req.SortOrder,
+	})
+	if err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return presenter.RenderItem(c, toTaskViewResponse(result.View))
+}
+
+func (h Handler) DeleteTaskView(c fiber.Ctx) error {
+	if h.tasks == nil {
+		return h.NotImplemented(c)
+	}
+
+	account, tenantContext, ok := h.accountAndTenantContext(c)
+	if !ok {
+		return presenter.RenderError(c, fiber.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+	}
+	projectID, err := uuid.Parse(c.Params("project_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "PROJECT_ID_INVALID", "Project id is invalid")
+	}
+	viewID, err := uuid.Parse(c.Params("view_id"))
+	if err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_VIEW_ID_INVALID", "Task view id is invalid")
+	}
+
+	if err := h.tasks.DeleteTaskView(c.Context(), tasksvc.DeleteTaskViewInput{
+		Account:       account,
+		TenantContext: tenantContext,
+		ProjectID:     projectID,
+		ViewID:        viewID,
+	}); err != nil {
+		return renderTaskError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 func (h Handler) GetTask(c fiber.Ctx) error {
@@ -1292,6 +1475,16 @@ func renderTaskError(c fiber.Ctx, err error) error {
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_RELATION_SELF", "Task relation cannot target itself")
 	case errors.Is(err, tasksvc.ErrTaskRelationAlreadyExists):
 		return presenter.RenderError(c, fiber.StatusConflict, "TASK_RELATION_ALREADY_EXISTS", "Task relation already exists")
+	case errors.Is(err, tasksvc.ErrTaskViewNotFound):
+		return presenter.RenderError(c, fiber.StatusNotFound, "TASK_VIEW_NOT_FOUND", "Task view not found")
+	case errors.Is(err, tasksvc.ErrTaskViewNameRequired):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_VIEW_NAME_REQUIRED", "Task view name is required")
+	case errors.Is(err, tasksvc.ErrTaskViewNameAlreadyTaken):
+		return presenter.RenderError(c, fiber.StatusConflict, "TASK_VIEW_NAME_ALREADY_TAKEN", "Task view name is already taken")
+	case errors.Is(err, tasksvc.ErrTaskViewUpdateNoFields):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_VIEW_UPDATE_NO_FIELDS", "Task view update has no fields")
+	case errors.Is(err, tasksvc.ErrTaskViewSortOrderInvalid):
+		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_VIEW_SORT_ORDER_INVALID", "Task view sort order is invalid")
 	case errors.Is(err, tasksvc.ErrTaskIDRequired):
 		return presenter.RenderError(c, fiber.StatusBadRequest, "TASK_ID_REQUIRED", "Task id is required")
 	case errors.Is(err, tasksvc.ErrTaskNotFound):
@@ -1435,6 +1628,58 @@ func parseTaskTagQuery(value string) (*uuid.UUID, error) {
 	return &id, nil
 }
 
+func taskViewFiltersToMap(filters *taskViewFiltersRequest) (map[string]any, error) {
+	values := map[string]any{}
+	if filters == nil {
+		return values, nil
+	}
+	if filters.Status != nil {
+		statusValue := strings.TrimSpace(*filters.Status)
+		if statusValue != "" {
+			status := task.Status(statusValue)
+			if !status.IsValid() {
+				return nil, errors.New("invalid status")
+			}
+			values["status"] = statusValue
+		}
+	}
+	if filters.Priority != nil {
+		priorityValue := strings.TrimSpace(*filters.Priority)
+		if priorityValue != "" {
+			priority := task.Priority(priorityValue)
+			if !priority.IsValid() {
+				return nil, errors.New("invalid priority")
+			}
+			values["priority"] = priorityValue
+		}
+	}
+	if filters.AssigneeMemberID != nil {
+		assigneeMemberID := strings.TrimSpace(*filters.AssigneeMemberID)
+		if assigneeMemberID != "" {
+			if _, err := uuid.Parse(assigneeMemberID); err != nil {
+				return nil, err
+			}
+			values["assignee_member_id"] = assigneeMemberID
+		}
+	}
+	if filters.TagID != nil {
+		tagID := strings.TrimSpace(*filters.TagID)
+		if tagID != "" {
+			if _, err := uuid.Parse(tagID); err != nil {
+				return nil, err
+			}
+			values["tag_id"] = tagID
+		}
+	}
+	if filters.Search != nil {
+		search := strings.TrimSpace(*filters.Search)
+		if search != "" {
+			values["q"] = search
+		}
+	}
+	return values, nil
+}
+
 func parseProjectAndTaskIDs(c fiber.Ctx) (uuid.UUID, uuid.UUID, error) {
 	projectID, err := uuid.Parse(c.Params("project_id"))
 	if err != nil {
@@ -1554,6 +1799,18 @@ func toTaskRelationResponse(value task.Relation) taskRelationResponse {
 		Type:         string(value.Type),
 		CreatedBy:    value.CreatedBy.String(),
 		CreatedAt:    value.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+func toTaskViewResponse(value task.View) taskViewResponse {
+	return taskViewResponse{
+		ID:        value.ID.String(),
+		ProjectID: value.ProjectID.String(),
+		Name:      value.Name,
+		Filters:   value.FiltersJSON,
+		SortOrder: value.SortOrder,
+		CreatedAt: value.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: value.UpdatedAt.Format(time.RFC3339),
 	}
 }
 
