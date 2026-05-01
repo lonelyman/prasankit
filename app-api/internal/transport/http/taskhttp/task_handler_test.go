@@ -375,7 +375,7 @@ func TestListTasks(t *testing.T) {
 	}
 	app := newTaskTestApp(newTestHandler(service, accountID, tenantContext))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks?page=1&limit=10&status=todo&priority=medium&assignee_member_id="+assigneeID.String()+"&tag_id="+tagID.String(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspace/projects/"+projectID.String()+"/tasks?page=1&limit=10&status=todo&priority=medium&assignee_member_id="+assigneeID.String()+"&tag_id="+tagID.String()+"&q=proposal", nil)
 	req.Header.Set("X-Workspace-Slug", "team-one")
 	req.AddCookie(&http.Cookie{Name: "prasankit_session", Value: "raw-session-token"})
 	resp, err := app.Test(req)
@@ -404,6 +404,9 @@ func TestListTasks(t *testing.T) {
 	}
 	if service.listInput.TagID == nil || *service.listInput.TagID != tagID {
 		t.Fatalf("tag filter = %#v, want %s", service.listInput.TagID, tagID)
+	}
+	if service.listInput.Search != "proposal" {
+		t.Fatalf("search filter = %q, want proposal", service.listInput.Search)
 	}
 }
 

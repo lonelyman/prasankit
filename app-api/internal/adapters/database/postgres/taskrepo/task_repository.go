@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"prasankit-api/internal/modules/task"
@@ -514,7 +515,23 @@ func applyListFilter(query *gorm.DB, filter task.ListFilter) *gorm.DB {
 			)
 		`, *filter.TagID)
 	}
+	if filter.Search != "" {
+		pattern := "%" + escapeLikePattern(filter.Search) + "%"
+		query = query.Where(
+			"(t.task_no ILIKE ? ESCAPE '\\' OR t.task_title ILIKE ? ESCAPE '\\' OR COALESCE(t.description, '') ILIKE ? ESCAPE '\\')",
+			pattern,
+			pattern,
+			pattern,
+		)
+	}
 	return query
+}
+
+func escapeLikePattern(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `%`, `\%`)
+	value = strings.ReplaceAll(value, `_`, `\_`)
+	return value
 }
 
 func (r *Repository) CountTasksByStatus(ctx context.Context, tenantID uuid.UUID, workspaceID uuid.UUID, projectID uuid.UUID) ([]task.StatusCount, error) {

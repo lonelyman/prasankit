@@ -580,6 +580,7 @@ func TestListTasks(t *testing.T) {
 		Priority:         &priority,
 		AssigneeMemberID: &assigneeID,
 		TagID:            &tagID,
+		Search:           "  proposal  ",
 		Limit:            10,
 	})
 	if err != nil {
@@ -602,6 +603,9 @@ func TestListTasks(t *testing.T) {
 	}
 	if repo.listFilter.TagID == nil || *repo.listFilter.TagID != tagID {
 		t.Fatalf("tag filter = %#v, want %s", repo.listFilter.TagID, tagID)
+	}
+	if repo.listFilter.Search != "proposal" {
+		t.Fatalf("search filter = %q, want proposal", repo.listFilter.Search)
 	}
 }
 

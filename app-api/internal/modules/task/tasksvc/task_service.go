@@ -80,6 +80,7 @@ type ListTasksInput struct {
 	Priority         *task.Priority
 	AssigneeMemberID *uuid.UUID
 	TagID            *uuid.UUID
+	Search           string
 	Limit            int
 	Offset           int
 }
@@ -530,6 +531,7 @@ func (s *Service) ListTasks(ctx context.Context, input ListTasksInput) (*ListTas
 		Status:           input.Status,
 		AssigneeMemberID: input.AssigneeMemberID,
 		TagID:            input.TagID,
+		Search:           strings.TrimSpace(input.Search),
 	}
 	if input.Status != nil && !input.Status.IsValid() {
 		return nil, ErrTaskStatusInvalid

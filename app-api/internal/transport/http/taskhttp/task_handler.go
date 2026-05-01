@@ -347,6 +347,7 @@ func (h Handler) ListTasks(c fiber.Ctx) error {
 		Priority:         priority,
 		AssigneeMemberID: assigneeMemberID,
 		TagID:            tagID,
+		Search:           c.Query("q"),
 		Limit:            query.Limit,
 		Offset:           query.Offset,
 	})
