@@ -2,6 +2,8 @@
 
 ชุดที่ 4: Notification / Calendar / Reminder Concept
 
+> **Status: Forward-looking design intent (MVP-1+).** Notification engine, Calendar และ Reminder ยังไม่ implement ใน MVP-0 (scope guard ระบุชัดใน [docs/00-context-guard.md](00-context-guard.md)). เอกสารนี้คือ design intent สำหรับ phase ถัดไป.
+
 สรุปแนวทางระบบแจ้งเตือน ปฏิทิน และ Reminder สำหรับ MVP
 
 | หัวข้อ | Decision |

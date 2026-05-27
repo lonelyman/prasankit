@@ -2,6 +2,8 @@
 
 เอกสารออกแบบภาพรวม Module และโครงสร้างระบบจากมุม User Journey
 
+> **Status: Forward-looking design intent (MVP-1+).** Module list ในเอกสารนี้คือเป้าหมายระยะยาว. โค้ดจริงตอนนี้มีแค่ 4 module: auth, workspace, project, task. ดู [docs/13-project-source-tree.md](13-project-source-tree.md) "Current Implementation Status" สำหรับสถานะ module ปัจจุบัน.
+
 | รายการ | รายละเอียด |
 | --- | --- |
 | สถานะเอกสาร | Confirmed / ใช้ต่อจากชุดที่ 1-6 |

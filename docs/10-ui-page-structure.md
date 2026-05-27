@@ -2,6 +2,8 @@
 
 _Project / Workspace Management Platform_
 
+> **Status: Forward-looking design intent (MVP-1+).** Frontend (`app-web/`) ยังไม่เริ่ม implement — directory ยังว่าง. เอกสารนี้คือ UI plan ปลายทาง.
+
 เอกสารนี้เป็นชุดออกแบบโครงสร้างหน้าเว็บ เมนูหลัก Layout และการมองเห็นตามสิทธิ์ของระบบ Project / Workspace Management Platform
 
 | หัวข้อ | รายละเอียด |

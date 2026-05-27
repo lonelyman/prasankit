@@ -21,9 +21,9 @@ Basic activity log
 
 ## Current Phase
 
-Foundation
+MVP-0 Backend (in progress)
 
-ตอนนี้กำลังทำ backend skeleton ใน `app-api/`
+Foundation, Auth, Workspace registration, Project foundation, Project team, Task board (รวม comments/checklist/attachments/tags/relations/views) ทำเสร็จแล้ว. Frontend (`app-web/`) ยังไม่เริ่ม.
 
 ## Locked Decisions
 
@@ -45,110 +45,16 @@ Foundation
 
 ## Current Structure
 
-```text
-.
-├─ app-api/
-├─ app-web/
-├─ deploy/
-├─ docs/
-│  ├─ 18-api-test-examples.md
-│  ├─ 18.0-auth-flow-status.md
-│  ├─ 18.1-auth-register-test-examples.md
-│  ├─ 18.2-auth-verify-email-test-examples.md
-│  ├─ 18.3-auth-resend-verification-email-test-examples.md
-│  ├─ 18.4-auth-login-test-examples.md
-│  ├─ 18.5-auth-me-test-examples.md
-│  ├─ 18.6-auth-logout-test-examples.md
-│  ├─ 18.7-auth-logout-all-test-examples.md
-│  ├─ 18.8-auth-password-reset-test-examples.md
-│  ├─ 18.9-workspace-registration-test-examples.md
-│  ├─ 18.10-workspace-current-test-examples.md
-│  ├─ 18.11-project-foundation-test-examples.md
-│  ├─ 18.12-project-team-test-examples.md
-├─ .env.example
-├─ Makefile
-├─ docker-compose.yml
-├─ README.md
-└─ AGENTS.md
-```
+ดูโครงจริงจาก git ดีกว่าเก็บ tree ใน docs (เคย stale บ่อย). Highlight:
 
-## Current app-api Structure
-
-```text
-app-api/
-├─ Dockerfile
-├─ Makefile
-├─ README.md
-├─ go.mod
-├─ go.sum
-├─ database/
-│  ├─ README.md
-│  └─ migrations/
-│     ├─ 000001_enable_extensions.sql
-│     ├─ 000002_create_auth_core_tables.sql
-│     ├─ 000003_drop_auth_uuid_v4_defaults.sql
-│     └─ 000004_create_auth_identities.sql
-├─ cmd/
-│  └─ api/
-│     └─ main.go
-├─ internal/
-   ├─ bootstrap/
-   │  ├─ app.go
-   │  ├─ db.go
-   │  ├─ http.go
-   │  ├─ redis.go
-   │  └─ storage.go
-   ├─ config/
-   │  └─ config.go
-   ├─ modules/
-   │  └─ auth/
-   │     ├─ auth_entity.go
-   │     ├─ auth_repository.go
-   │     └─ authsvc/
-   │        ├─ auth_service.go
-   │        └─ auth_service_test.go
-   ├─ adapters/
-   │  ├─ cache/
-   │  │  └─ redis/
-   │  │     ├─ ratelimit/
-   │  │     │  └─ limiter.go
-   │  │     └─ sessionstore/
-   │  │        └─ store.go
-   │  ├─ database/
-   │  │  └─ postgres/
-   │  │     └─ authrepo/
-   │  │        ├─ auth_repository.go
-   │  │        └─ auth_repository_integration_test.go
-   │  └─ email/
-   │     └─ smtpemail/
-   │        └─ sender.go
-   └─ transport/
-      └─ http/
-         ├─ router.go
-         ├─ authhttp/
-         │  ├─ auth_handler.go
-         │  └─ auth_handler_test.go
-         ├─ health/
-         │  └─ health_handler.go
-         ├─ middlewares/
-         │  ├─ error_handler.go
-         │  └─ request_id.go
-         └─ presenter/
-            └─ presenter.go
-└─ pkg/
-   ├─ dbtypes/
-   │  ├─ jsonb.go
-   │  └─ jsonb_test.go
-   ├─ ids/
-   │  ├─ ids.go
-   │  └─ ids_test.go
-   ├─ passwordhash/
-   │  ├─ bcrypt.go
-   │  └─ bcrypt_test.go
-   └─ securetoken/
-      ├─ token.go
-      └─ token_test.go
-```
+- `app-api/` — backend Go Fiber ทำงานเต็มรูป
+- `app-web/` — ว่างเปล่า (ยังไม่เริ่ม)
+- `app-api/internal/modules/`: 4 module — `auth`, `workspace`, `project`, `task` (พร้อม sub-package `workspace/workspaceperm` สำหรับ Permission Guard)
+- `app-api/internal/adapters/`: `database/postgres/{authrepo,workspacerepo,projectrepo,taskrepo}`, `cache/redis/{ratelimit,sessionstore}`, `storage/minioattachment`, `email/smtpemail`
+- `app-api/internal/transport/http/`: `authhttp`, `workspacehttp`, `projecthttp`, `taskhttp`, `health`, `middlewares` (`request_id.go` + `error_handler.go` เท่านั้น — ไม่มี shared auth/tenant/permission middleware; แต่ละ handler implement ของตัวเอง), `presenter`, `router.go`
+- `app-api/database/migrations/000001`–`000015` apply แล้วทั้งหมด
+- `app-api/pkg/`: `ids` (UUID v7), `dbtypes` (JSONB), `passwordhash` (bcrypt), `securetoken`
+- API test examples: `docs/18-api-test-examples.md` + `docs/18.0`–`18.13.x-*.md`
 
 ## Done
 

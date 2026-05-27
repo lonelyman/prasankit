@@ -3,6 +3,8 @@ Docker / Deploy / Domain / SSL
 
 Prasankit Project Platform
 
+> **Status: Mixed — local dev (implemented) + production deploy (forward-looking).** Local dev stack ผ่าน `docker-compose.yml` + `make dev-up` ทำงานจริงแล้ว. Traefik production config, wildcard subdomain, Let's Encrypt, backup automation ฯลฯ ยังเป็น plan.
+
 เอกสารนี้สรุปแนวทาง Docker, deployment, domain, SSL, backup, logging และ production readiness สำหรับระบบ Prasankit โดยยึดแนวคิด Data Safety First และเริ่มจาก Docker Compose บน VM/Server เดียวก่อน
 
 ## สารบัญ

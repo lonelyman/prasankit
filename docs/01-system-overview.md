@@ -2,6 +2,8 @@
 
 Multi-Tenant SaaS Project Management Platform
 
+> **Status: Forward-looking design intent (MVP-1+).** เอกสารนี้สรุปขอบเขตระบบทั้งหมดที่ตั้งใจไว้ ไม่ใช่สถานะปัจจุบัน. MVP-0 ที่กำลังทำอยู่ครอบคลุมแค่ส่วนหนึ่ง — ดู [docs/00-context-guard.md](00-context-guard.md) สำหรับ scope ปัจจุบัน และ [docs/99-current-handoff.md](99-current-handoff.md) สำหรับสิ่งที่ implement แล้ว.
+
 เอกสารสรุป Decision ที่ตกลงและล็อกแล้ว
 
 ## 1. เป้าหมายของชุดที่ 1

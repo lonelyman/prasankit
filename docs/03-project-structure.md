@@ -2,6 +2,8 @@
 
 เอกสารออกแบบระบบ Project Management Platform
 
+> **Status: Forward-looking design intent (MVP-1+).** Project module เวอร์ชัน MVP-0 implement แค่บางส่วน (list/create/get/update/members/positions). ดู [docs/09-api-design.md §9.4](09-api-design.md) สำหรับสถานะ endpoint จริง และ [docs/99-current-handoff.md](99-current-handoff.md) สำหรับสิ่งที่ทำเสร็จแล้ว.
+
 ## ภาพรวมเอกสาร
 
 เอกสารชุดนี้สรุปแนวคิดโครงสร้าง Project, หน้า Project Detail และความสัมพันธ์ของข้อมูลหลักภายใน Project ตามที่ตกลงกันแล้ว

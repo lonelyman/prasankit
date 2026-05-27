@@ -3,6 +3,8 @@ Master Data / Configuration / Permission Concept
 
 Project Management Platform - System Design
 
+> **Status: Forward-looking design intent (MVP-1+).** Permission Guard ที่ implement จริงใน MVP-0 อยู่ที่ `internal/modules/workspace/workspaceperm` (role-based map สำหรับ `workspace.view`/`workspace.manage`). Master Data และ Configuration UI/API ยังไม่ทำ. เอกสารนี้คือ design intent ที่กว้างกว่า.
+
 เอกสารนี้สรุปแนวทาง Master Data, Configuration, Permission, Change Impact, Seed Data และ Audit Log โดยเน้นให้ระบบตรวจสอบได้ ปลอดภัย และไม่บวมเกินจำเป็นใน MVP
 
 ## 1. หลักการออกแบบของชุดที่ 5

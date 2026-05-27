@@ -2,6 +2,8 @@
 
 เอกสารนี้แตก MVP-0 User Flow ออกเป็นงานที่ต้องสร้างจริง
 
+ดูสถานะปัจจุบัน (อะไรเสร็จ/ค้าง) ที่ [docs/99-current-handoff.md](99-current-handoff.md) — ไฟล์นี้คือ plan ไม่ใช่ progress tracker
+
 ## หลักคิด
 
 MVP-0 ต้องทำระบบให้เดิน end-to-end ได้ก่อน ไม่เน้นความสวยหรือ feature ครบทุก module
@@ -19,6 +21,8 @@ Foundation
 -> File
 -> Activity Log
 ```
+
+หมายเหตุ: รายการ Tables ในแต่ละ step ด้านล่างเขียนตอนวาง plan ตอนแรก โครงจริงใน migrations อาจรวม/แยกตารางต่างไป (เช่น `auth_email_verification_tokens` + `auth_password_reset_tokens` อยู่ใน migration เดียวกับ auth core) — ดู migrations ภายใต้ `app-api/database/migrations/` เป็นเกณฑ์
 
 ## 1. Foundation
 
@@ -353,25 +357,4 @@ UI:
 
 ## Build Order
 
-ลำดับที่ควรทำจริง:
-
-1. Foundation
-2. Auth / Session
-3. Workspace Registration
-4. Tenant Context
-5. Project
-6. Project Team
-7. Task
-8. File
-9. Activity Log
-
-## First Coding Step
-
-เมื่อเริ่มเขียนโค้ด ให้เริ่มจาก Foundation เท่านั้น:
-
-- สร้าง app-api/ Go Fiber server
-- สร้าง app-web/ Next.js app
-- สร้าง docker-compose.yml
-- ทำ health check
-
-ยังไม่เขียน business feature จนกว่า foundation จะรันได้
+ตัด — ลำดับเดียวกับ "หลักคิด" ด้านบน และ Foundation step เสร็จไปแล้ว ดู [docs/99-current-handoff.md](99-current-handoff.md) สำหรับ next step

@@ -13,6 +13,24 @@ Project Platform Specification
 
 เอกสารชุดนี้เป็นการออกแบบ API ระดับภาพรวมและ endpoint สำคัญตาม Module ที่ล็อกไว้ก่อนหน้า โดยยังไม่ลงรายละเอียด UI, Docker, Deploy หรือ code จริง
 
+## Implementation Status (per section)
+
+| Section | Status | หมายเหตุ |
+| --- | --- | --- |
+| 9.2 Auth API | **Implemented** (ส่วนใหญ่) | register/verify-email/login/logout/logout-all/forgot-password/reset-password/me เสร็จ; `change-password`, `sessions`, `force-logout` ยัง |
+| 9.3 Workspace API | **Implemented** (บางส่วน) | `/workspaces` (register/check-slug/me/current) เสร็จ; `/workspace` (profile/members/configs/master-data/usage/deletion) ยัง |
+| 9.4 Project API | **Implemented** (ส่วนใหญ่) | list/create/get/update/members/positions เสร็จ; archive/restore/settings ยัง |
+| 9.5 Task API | **Implemented** | core + activities + comments + checklist + attachments + tags + relations + views เสร็จ; reassign แบบมี log ยังเป็นแค่ activity entry |
+| 9.6 Timeline / Deliverable | **Planned (MVP-1+)** | ยังไม่มี module/migration/handler |
+| 9.7 Finance | **Planned (MVP-1+)** | nope |
+| 9.8 File / Document | **Planned (MVP-1+)** | MVP-0 ใช้ task attachment แทน; folder/file center ยัง |
+| 9.9 Notification / Announcement | **Planned (MVP-1+)** | nope |
+| 9.10 Calendar / Report | **Planned (MVP-1+)** | nope |
+| 9.11 Platform Admin | **Planned (MVP-1+)** | nope |
+| 9.12 Response/Error/Pagination | **Implemented** | enforced ผ่าน `internal/transport/http/presenter` |
+
+ดู endpoint ที่ทำเสร็จจริง + ตัวอย่าง request/response ที่ [docs/18-api-test-examples.md](18-api-test-examples.md) และไฟล์ `docs/18.x-*.md`
+
 ## 9.1 API Design Principle
 
 - ใช้ REST API เป็นหลัก
@@ -29,8 +47,15 @@ Project Platform Specification
 | --- | --- | --- |
 | Auth API | /api/v1/auth/... | login, token, session, password, email verification |
 | Platform API | /api/v1/platform/... | ผู้ดูแลระบบกลาง จัดการ workspace, config, cleanup, audit |
-| Workspace API | /api/v1/workspace/... | ข้อมูลภายใน workspace หลัง resolve tenant แล้ว |
-| Workspace Registration | /api/v1/workspaces/... | สมัคร workspace, check slug, list my workspaces |
+| Workspace API | /api/v1/workspace/... | ข้อมูลภายใน workspace หลัง resolve tenant แล้ว (project, task, file) |
+| Workspace Registration | /api/v1/workspaces/... | สมัคร workspace, check slug, list my workspaces, current workspace |
+
+### Route Prefix: `/workspaces` vs `/workspace` (intentional split)
+
+- **`/workspaces/...` (plural)** = workspace-level lifecycle: register, check-slug, me, current — ไม่ต้องการ Tenant Context (หรือ resolve ภายในเอง)
+- **`/workspace/...` (singular)** = inside a tenant — ทุก endpoint ต้องผ่าน Tenant Context + Permission Guard และอ่าน `X-Workspace-Slug` header
+
+โครงนี้ตั้งใจให้ต่าง อย่าทำให้เหมือนกันโดยไม่มีเหตุผล (จะกระทบ frontend client ทุกตัวที่เรียก API)
 
 ### API Tenant Path Rule
 

@@ -4,6 +4,8 @@
 
 Root Project Tree, API Tree, Web Tree, Package Naming Rules
 
+> **Status: Target tree (forward-looking).** เอกสารชุดนี้คือ blueprint ปลายทาง ไม่ใช่สถานะปัจจุบัน. ดู "Current Implementation Status" ด้านล่างสำหรับสิ่งที่มีในโค้ดจริง. เมื่อเอกสารกับโค้ดขัดกัน ให้เชื่อโค้ด.
+
 ## เป้าหมายของชุดนี้
 
 - วางโครงสร้าง Source Code ของระบบ Prasankit
@@ -11,6 +13,26 @@ Root Project Tree, API Tree, Web Tree, Package Naming Rules
 - กำหนดแนวทาง package naming เพื่อไม่ให้ import ชนกันใน Go
 - แยก context ของ frontend ให้ชัดตาม UI Template ที่ล็อกไว้
 - ใช้เป็น guideline ให้ developer และ AI Coding Agent ทำงานต่อได้ไม่หลุดโครงสร้าง
+
+## Current Implementation Status
+
+ณ commit ล่าสุด (อ่านโค้ดจริงเป็นเกณฑ์):
+
+**Modules ที่มีจริง** (4 ตัว): `auth`, `workspace`, `project`, `task`
+
+**Modules ที่ยังไม่ทำ** (ใน target tree ด้านล่าง ระบุไว้แต่ยังไม่มี code): `user`, `member`, `timeline`, `finance`, `file`, `notification`, `report`, `audit`, `platform`
+
+**โครงจริงในโค้ดบางจุดต่างจาก target tree**:
+
+- `app-api/internal/bootstrap/` มี: `app.go`, `db.go`, `http.go`, `redis.go`, `storage.go` — **ไม่มี `mailer.go`** (SMTP sender ถูก wire ตรง ๆ ใน `app.go`)
+- `app-api/internal/transport/http/middlewares/` มีแค่: `request_id.go`, `error_handler.go` — **ไม่มี shared `auth.go` / `tenant.go` / `permission.go` / `rate_limit.go` / `logger.go`**. แต่ละ HTTP handler implement `requireSession`, `requireTenantContext`, `requireWorkspacePermission` ของตัวเอง
+- Adapter directory naming: ใช้ `cache/redis/{ratelimit,sessionstore}`, `storage/minioattachment/signer.go`, `email/smtpemail/sender.go` (ไม่ใช่ `mailer/smtp/smtp_mailer.go` หรือ `storage/minio/...` ตาม target ด้านล่าง)
+- Migrations path จริง: `app-api/database/migrations/` (ไม่ใช่ `app-api/migrations/` ตาม target)
+- `app-web/` ยังว่าง (ยังไม่เริ่ม frontend)
+
+**Module ที่มีเพิ่มจาก target**: `internal/modules/workspace/workspaceperm/` (Permission Guard policy)
+
+เมื่อจะเพิ่ม module ใหม่ ให้ copy pattern จาก auth/workspace/project/task และอ้างอิงโครงจริงในโค้ด ไม่ใช่ target tree ด้านล่าง
 ## 13.1 Root Project Tree
 
 ### Decision Final

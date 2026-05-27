@@ -2,6 +2,8 @@
 
 _Project Platform - Multi-tenant Project Management System_
 
+> **Status: Mixed — current schema + forward-looking design.** เอกสารนี้รวมตารางทั้งหมดในระบบเป้าหมาย (รวม Timeline/Finance/File Center/Notification/Platform) ซึ่งหลายส่วนยังไม่ได้สร้างจริง. โครง schema ที่ apply แล้วอยู่ที่ `app-api/database/migrations/000001`–`000015` (auth + workspace + project + task เท่านั้น). เมื่อ schema docs ขัดกับ migrations ให้เชื่อ migrations.
+
 สถานะ: Confirmed / ใช้ต่อจากเอกสารชุดที่ 1-7
 ขอบเขต: เอกสารนี้ครอบคลุมเฉพาะ Database Design: ตารางหลัก, ตารางย่อย, ความสัมพันธ์, tenant_id, index/search, soft delete, audit และ security rule ของไฟล์
 ไม่รวมในชุดนี้: API, UI รายหน้า, Docker/Deploy, โค้ดจริง
