@@ -4,7 +4,7 @@
 > รายละเอียดเต็มอยู่ใน docs ที่ลิงก์. log การตัดสินใจอยู่ใน [DECISIONS.md](DECISIONS.md).
 
 ## อัปเดตล่าสุด
-**2026-05-28** — ปิด session: เขียน 02-architecture + 03-build-plan เสร็จ (ผ่าน cross-model review 2 รอบ), ล็อก scope first cut + FE stack
+**2026-05-28** — ปิด session: เขียน 02-architecture + 03-build-plan เสร็จ (ผ่าน cross-model review 2 รอบ), ล็อก scope first cut + FE stack, เพิ่ม `/spec` skill
 
 ## สถานะตอนนี้
 - ✅ [00-workflow.md](00-workflow.md) — loop contract — committed+pushed
@@ -12,6 +12,7 @@
 - ✅ [02-architecture.md](02-architecture.md) — backend: stack(inherit v1) / hexagonal / tenant isolation / auth / no-enum convention — committed+pushed
 - ✅ [03-build-plan.md](03-build-plan.md) — first cut scope + ลำดับ milestone M0–M5 — committed+pushed
 - ✅ [DECISIONS.md](DECISIONS.md) — D1–D20 ครบ
+- ✅ `.claude/skills/spec/` — `/spec` skill codify §5 dispatch ritual (สร้างก่อนมีโค้ด — **ทบทวนหลัง dispatch M0 รอบแรก**)
 - ⛔ **ยังไม่มีโค้ด** — เพิ่งวางเอกสารฐาน+architecture+build-plan เสร็จ ยังไม่ dispatch Sonnet รอบแรก
 
 ## first cut ที่ล็อกแล้ว (D17)
@@ -21,7 +22,7 @@ goal = **proof-of-loop ภายใน** + โชว์ wedge. Milestone:
 
 ## ทำอะไรต่อ (เลือก 1 — ถาม User ก่อน)
 1. **data-model doc** — schema ของ M0/M1 ก่อน (auth/workspace/membership/org-role), resolve `tenant_id` vs `workspace_id`, apply master-table convention (02 §7). ทำก่อนลงมือ M0 = มี schema baseline ให้ Sonnet
-2. **ลงมือ M0 จริง** — dispatch Sonnet รอบแรก (scaffold Go hexagonal + Next.js + docker + goose + health + test). proof-of-loop ของจริงเริ่มตรงนี้
+2. **ลงมือ M0 จริง** — dispatch Sonnet รอบแรก **ผ่าน `/spec`** (scaffold Go hexagonal + Next.js + docker + goose + health + test). proof-of-loop ของจริงเริ่มตรงนี้ + เป็นรอบที่ใช้ tune `/spec`
 3. **flow-doc** (option) — user flow เต็ม (สมัคร → สร้าง/ถูกเชิญ → สลับ workspace)
 4. **permission matrix** (option) — org × project role × action (ใช้ตอน M1/M2)
 
