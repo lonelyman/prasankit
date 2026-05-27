@@ -149,12 +149,20 @@
 
 อย่าให้ workflow rot เงียบๆ — ถ้าทำตามไม่ไหวให้แก้ doc ก่อน, ไม่ใช่ทำขัด doc.
 
-## 9. Decision Log & Memory (กันลืมข้ามรอบ)
+## 9. Decision Log, Handoff & Memory (กันลืมข้ามรอบ)
 
 โปรเจคนี้ยาว และเมื่อปิด session บทสนทนาหายหมด — สิ่งที่อยู่รอดมีแค่ git (docs + code) กับ memory ของ Kael. ดังนั้น:
 
 - **docs/ = ความจริงเดียว** — ทุก decision เรื่อง vision/scope/architecture fold เข้า numbered docs ที่เกี่ยวข้อง
 - **docs/DECISIONS.md = log กันลืม** — ทุก decision ที่ตกลงแล้วต้องมีบรรทัด: วันที่ + สรุปสั้น + ลิงก์ doc รายละเอียด. append ล่างสุด, ไม่แก้ของเก่า (กลับ decision = เพิ่มบรรทัดใหม่ระบุ supersede อันไหน)
 - **Kael memory = ป้ายบอกทาง** — เก็บแค่ "อ่าน docs/ ก่อน" + นิสัยการทำงาน ไม่เก็บเนื้อหา design ซ้ำ docs (กันขัดแย้งกันเอง)
+- **docs/99-handoff.md = จุดเริ่มของ session หน้า** — living doc เขียนทับทุกครั้งที่ปิด session: ตอนนี้อยู่ตรงไหน, ทำอะไรต่อ, open threads. **เปิด session ใหม่ให้อ่านไฟล์นี้ก่อนเพื่อน**
 
 หลักการเดียวที่ต้องจำ: **อะไรที่ตัดสินกลางแชตแล้วไม่ลง docs/ หรือ DECISIONS.md ภายในรอบนั้น = ถือว่ายังไม่ตัดสิน** เพราะรอบหน้ามันจะหาย.
+
+### 9.1 เมื่อ User สั่ง "ปิด session"
+
+Kael ต้องทำก่อนจบทุกครั้ง:
+1. เช็ค commit ครบ + ไม่มี decision ค้างในแชต (ถ้ามี → ลง docs/ + DECISIONS.md ก่อน)
+2. อัปเดต `docs/99-handoff.md` ให้สะท้อนสถานะล่าสุด + ก้าวต่อไป + open threads
+3. ให้ prompt สั้นสำหรับเปิด session ถัดไป

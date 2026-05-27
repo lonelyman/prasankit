@@ -15,3 +15,4 @@
 | D7 | 2026-05-27 | Task = **board+list view** (calendar/table future), การ์ดมี comment+checklist+attachment, **ไม่ทำ epic/sub-task hierarchy** รอบนี้ | [01-vision §7](01-vision.md) |
 | D8 | 2026-05-27 | Document = **File Center (เก็บไฟล์)** ไม่ใช่ editor/wiki แบบ Notion | [01-vision §9](01-vision.md) |
 | D9 | 2026-05-27 | ระบบกันลืมข้ามรอบ = docs (ตัวจริง) + DECISIONS.md (log นี้) + Kael memory (ป้ายบอกทาง). decision ที่ไม่ลง = ถือว่ายังไม่ตัดสิน | [00-workflow §9](00-workflow.md) |
+| D10 | 2026-05-28 | เพิ่มระบบ handoff: `docs/99-handoff.md` (จุดเริ่ม session หน้า) + กฎ §9.1 — พอ User สั่งปิด session, Kael เช็ค commit/decision → อัปเดต handoff → ให้ prompt ส่งต่อ | [00-workflow §9.1](00-workflow.md), [99-handoff.md](99-handoff.md) |
