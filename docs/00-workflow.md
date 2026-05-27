@@ -38,9 +38,10 @@
   - Override Opus หรือ Sonnet ได้ทุกเมื่อ
 - **ไม่ต้องทำ:** ไม่ต้องอ่าน code line-by-line, ไม่ต้องเขียน boilerplate. รีวิว summary + diff stat + ทดสอบที่สำคัญพอ
 
-### 2.4 Iri — External Reviewer (GPT)
-- **หน้าที่:** รีวิวข้าม model — ผู้ใช้เป็นคน paste output ของ Opus/Sonnet ให้ Iri อ่าน
-- **กฎ:** Kael กับ Iri ไม่ rubber-stamp กัน. ถ้า Iri เห็นต่างกับ Kael → ผู้ใช้ตัดสินใจ. Kael ต้องอ่าน feedback ของ Iri อย่างเปิดใจ ไม่ปกป้องงานตัวเองตอนเทียบไม่ได้
+### 2.4 External Reviewer (AI ต่าง model)
+- **หน้าที่:** รีวิวข้าม model — ผู้ใช้เป็นคน paste output ของ Opus/Sonnet ให้ external reviewer อ่าน
+- **Model:** รันบน AI คนละตัวกับ Kael (Claude) เพื่อให้ได้มุมรีวิวที่ไม่ bias ไปทางเดียวกัน — ไม่ผูกว่าต้องเป็น model ตัวไหน, จะเป็น GPT / Gemini / หรือตัวอื่นก็ได้ ตามที่ผู้ใช้เลือกใช้ในรอบนั้น
+- **กฎ:** Kael กับ external reviewer ไม่ rubber-stamp กัน. ถ้าเห็นต่างกับ Kael → ผู้ใช้ตัดสินใจ. Kael ต้องอ่าน feedback อย่างเปิดใจ ไม่ปกป้องงานตัวเองตอนเทียบไม่ได้
 - **เมื่อไหร่ใช้:** Architecture decision ใหญ่, สเปคที่กระทบหลาย module, review ก่อน commit phase สำคัญ. งานเล็กไม่ต้อง
 
 ## 3. Loop ปกติ (per feature / per task)
@@ -54,7 +55,7 @@
     ↓
 [Opus] เขียน spec: input/output, files to touch, tests, edge cases
     ↓
-[User] approve spec  (ถ้าใหญ่ → ส่ง Iri review ก่อน)
+[User] approve spec  (ถ้าใหญ่ → ส่ง external reviewer ก่อน)
     ↓
 [Opus] dispatch Sonnet ผ่าน Agent tool
     ↓
@@ -80,6 +81,7 @@
 3. **ห้าม Opus ตัดสินใจ scope/architecture แทน User** — ขอแม้กระทั่งเรื่องเล็กที่ส่งผลต่อ pattern หลัก
 4. **ห้าม Sonnet ขยาย scope** — ถ้าเจองาน "พลอย" ต้องเขียนใน summary ว่า "พบเรื่อง X, ไม่ทำเพราะนอก spec" ไม่ใช่ทำเลย
 5. **ห้ามแก้ docs/00-workflow.md โดยไม่มี User approval** — เพราะมันคือ contract
+6. **ห้ามปล่อย decision ค้างในแชต** — decision ที่ตกลงแล้วต้อง fold เข้า `docs/` ที่เกี่ยวข้อง + เพิ่มบรรทัดใน `docs/DECISIONS.md` ภายในรอบเดียวกัน ไม่งั้นถือว่ายังไม่ตัดสิน (ดู §9)
 
 ## 5. Spec Format (ที่ Opus ใช้ brief Sonnet)
 
@@ -141,8 +143,18 @@
 เอกสารนี้ = contract. การเปลี่ยน workflow ต้อง:
 1. User เป็นคนเริ่ม proposal
 2. Kael ตอบ trade-off
-3. (option) Iri review
+3. (option) external reviewer review
 4. User decide
 5. Edit doc + commit ในรอบเดียวกัน
 
 อย่าให้ workflow rot เงียบๆ — ถ้าทำตามไม่ไหวให้แก้ doc ก่อน, ไม่ใช่ทำขัด doc.
+
+## 9. Decision Log & Memory (กันลืมข้ามรอบ)
+
+โปรเจคนี้ยาว และเมื่อปิด session บทสนทนาหายหมด — สิ่งที่อยู่รอดมีแค่ git (docs + code) กับ memory ของ Kael. ดังนั้น:
+
+- **docs/ = ความจริงเดียว** — ทุก decision เรื่อง vision/scope/architecture fold เข้า numbered docs ที่เกี่ยวข้อง
+- **docs/DECISIONS.md = log กันลืม** — ทุก decision ที่ตกลงแล้วต้องมีบรรทัด: วันที่ + สรุปสั้น + ลิงก์ doc รายละเอียด. append ล่างสุด, ไม่แก้ของเก่า (กลับ decision = เพิ่มบรรทัดใหม่ระบุ supersede อันไหน)
+- **Kael memory = ป้ายบอกทาง** — เก็บแค่ "อ่าน docs/ ก่อน" + นิสัยการทำงาน ไม่เก็บเนื้อหา design ซ้ำ docs (กันขัดแย้งกันเอง)
+
+หลักการเดียวที่ต้องจำ: **อะไรที่ตัดสินกลางแชตแล้วไม่ลง docs/ หรือ DECISIONS.md ภายในรอบนั้น = ถือว่ายังไม่ตัดสิน** เพราะรอบหน้ามันจะหาย.
