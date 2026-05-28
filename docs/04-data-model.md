@@ -291,6 +291,7 @@ verification/reset token + invitation **ไม่มีคอลัมน์ sta
 - `ix_audit_workspace_created ON audit_logs (workspace_id, created_at DESC)`.
 - `ix_audit_actor_created ON audit_logs (actor_user_account_id, created_at DESC)`.
 - `action`/`resource_type`/`result` = machine code (i18n ฝั่ง FE, 02 §6). **ไม่ทำเป็น master table** เพราะเป็น log แบบ free-vocabulary ที่โตตามฟีเจอร์ — controlled ที่ระดับ domain constant ในโค้ด ไม่ใช่ FK (ต่างจาก business vocabulary §2.2). M1 ยังไม่มี UI (03 §2).
+- **Write policy = must-succeed in-tx (D31):** business mutation เขียน `audit_logs` ใน transaction เดียวกับ insert หลัก (all-or-nothing) ผ่าน `auditRepo.LogTx(tx, entry)`. ต่างจาก `security_events` (auth) ที่ best-effort.
 
 **`security_events`** (auth/account security trail; D25 account-safety) — append-only
 
