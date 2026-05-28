@@ -12,7 +12,7 @@ API_PORT ?= 8080
 
 GOOSE_DSN ?= postgres://$(POSTGRES_PRIMARY_USER):$(POSTGRES_PRIMARY_PASSWORD)@localhost:$(POSTGRES_EXTERNAL_PORT)/$(POSTGRES_PRIMARY_NAME)?sslmode=$(POSTGRES_SSL_MODE)
 
-.PHONY: env-init compose-config infra-up db-migrate api-up dev-up health ps logs-api down
+.PHONY: env-init compose-config infra-up db-migrate api-up web-up dev-up health ps logs-api down
 
 env-init:
 	@test -f .env || cp .env.example .env
@@ -29,7 +29,10 @@ db-migrate: env-init
 api-up: env-init
 	docker compose up -d --build prasankit-api
 
-dev-up: infra-up db-migrate api-up health
+web-up: env-init
+	docker compose up -d --build prasankit-web
+
+dev-up: infra-up db-migrate api-up web-up health
 
 health: env-init
 	curl -fsS "http://localhost:$(API_PORT)/api/v1/health/ready"
