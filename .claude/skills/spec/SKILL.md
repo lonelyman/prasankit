@@ -46,7 +46,9 @@ If any gate fails, fix it before proceeding. No written spec = no dispatch (§4.
 - file/feature ที่ Sonnet ห้ามแก้แม้อยากแก้
 
 ## Acceptance
-- [ ] `go test ./...` ผ่าน (BE) / build + lint ผ่าน (FE)
+- [ ] BE: `go build ./...` + `go vet ./...` + `gofmt -l` (ต้องว่าง) + `go test ./...` ผ่าน
+- [ ] FE: `pnpm build` + `pnpm lint` + `pnpm test` + typecheck ผ่าน
+- [ ] ถ้า dispatch แตะ Docker/compose: **`docker build` จริงต้องผ่าน** (ไม่ใช่แค่ `docker compose config`) — boot จริงถึงเจอ gotcha ที่ unit/config มองข้าม (M0 FE เจอ 3 ตัว: ขาด `.dockerignore`, Next standalone ไม่ bind `0.0.0.0`, healthcheck `localhost`→IPv6)
 - [ ] อื่นๆ ที่ Opus กำหนด
 ```
 
