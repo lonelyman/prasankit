@@ -225,6 +225,9 @@ func newTestHTTPApp(checks map[string]healthCheck) *fiber.App {
 		[]string{"http://localhost:3000"},
 		nil, // authSvc — not needed for health tests
 		nil, // authH — not needed for health tests
+		nil, // workspaceH — not needed for health tests
+		nil, // wsRepo — not needed for health tests
+		nil, // memberRepo — not needed for health tests
 	)
 	return app
 }

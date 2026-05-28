@@ -2,9 +2,11 @@ package httptransport
 
 import (
 	"prasankit-api/internal/modules/auth"
+	"prasankit-api/internal/modules/workspace"
 	authhandler "prasankit-api/internal/transport/http/auth"
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
+	workspacehandler "prasankit-api/internal/transport/http/workspace"
 
 	"github.com/gofiber/fiber/v3"
 )
@@ -15,6 +17,9 @@ func RegisterRoutes(
 	corsAllowedOrigins []string,
 	authSvc *auth.Service,
 	authH *authhandler.Handler,
+	workspaceH *workspacehandler.Handler,
+	wsRepo workspace.WorkspaceRepository,
+	memberRepo workspace.MembershipRepository,
 ) {
 	app.Use(middlewares.RequestID)
 	app.Use(middlewares.CORS(corsAllowedOrigins))
@@ -35,5 +40,18 @@ func RegisterRoutes(
 
 		// Protected auth routes.
 		authGroup.Get("/me", middlewares.RequireSession(authSvc), authH.HandleMe)
+	}
+
+	// Workspace routes — skipped when handler is nil.
+	if workspaceH != nil && authSvc != nil && wsRepo != nil && memberRepo != nil {
+		requireSession := middlewares.RequireSession(authSvc)
+		requireTenant := middlewares.RequireTenantContext(wsRepo, memberRepo)
+
+		wsGroup := api.Group("/workspaces")
+		// requireSession only.
+		wsGroup.Post("/", requireSession, workspaceH.HandleCreate)
+		wsGroup.Get("/", requireSession, workspaceH.HandleList)
+		// requireSession + requireTenantContext.
+		wsGroup.Get("/current", requireSession, requireTenant, workspaceH.HandleGetCurrent)
 	}
 }

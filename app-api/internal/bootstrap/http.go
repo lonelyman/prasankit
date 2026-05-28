@@ -5,12 +5,16 @@ import (
 	"database/sql"
 
 	sessionstore "prasankit-api/internal/adapters/cache/session"
+	auditdbrepo "prasankit-api/internal/adapters/database/audit"
 	authdbrepo "prasankit-api/internal/adapters/database/auth"
+	workspacedbrepo "prasankit-api/internal/adapters/database/workspace"
 	"prasankit-api/internal/modules/auth"
+	"prasankit-api/internal/modules/workspace"
 	httptransport "prasankit-api/internal/transport/http"
 	authhandler "prasankit-api/internal/transport/http/auth"
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
+	workspacehandler "prasankit-api/internal/transport/http/workspace"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/minio/minio-go/v7"
@@ -50,7 +54,20 @@ func NewHTTPApp(
 	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, sessStore)
 	authH := authhandler.NewHandler(authSvc, apiEnv)
 
-	httptransport.RegisterRoutes(app, healthHandler, corsAllowedOrigins, authSvc, authH)
+	// Workspace wiring.
+	auditRepo := auditdbrepo.NewAuditRepo(gormDB)
+	wsRepo := workspacedbrepo.NewWorkspaceRepo(gormDB, auditRepo)
+	memberRepo := workspacedbrepo.NewMembershipRepo(gormDB)
+	workspaceSvc := workspace.NewService(wsRepo, memberRepo)
+	workspaceH := workspacehandler.NewHandler(workspaceSvc)
+
+	httptransport.RegisterRoutes(
+		app,
+		healthHandler,
+		corsAllowedOrigins,
+		authSvc, authH,
+		workspaceH, wsRepo, memberRepo,
+	)
 
 	return app
 }
