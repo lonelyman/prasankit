@@ -12,6 +12,7 @@ import (
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/pkg/ids"
 
+	"github.com/google/uuid"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -53,6 +54,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 func truncateTestTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	tables := []string{
+		"auth_email_verification_tokens",
 		"security_events",
 		"auth_identities",
 		"user_accounts",
@@ -203,5 +205,226 @@ func buildIdentityFor(account auth.Account, email string) auth.Identity {
 		PasswordHash:     "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
 		CreatedAt:        now,
 		UpdatedAt:        now,
+	}
+}
+
+// buildVerificationToken creates a test verification token for the given identity.
+func buildVerificationToken(identityID uuid.UUID, ttl time.Duration) auth.EmailVerificationToken {
+	tokenID, _ := ids.New()
+	now := time.Now().UTC()
+	return auth.EmailVerificationToken{
+		ID:             tokenID,
+		AuthIdentityID: identityID,
+		TokenHash:      fmt.Sprintf("testhash-%d", time.Now().UnixNano()),
+		ExpiresAt:      now.Add(ttl),
+		CreatedAt:      now,
+	}
+}
+
+// setupAccountWithIdentity creates an account + identity and returns both.
+func setupAccountWithIdentity(t *testing.T, accountRepo *authdbrepo.AccountRepo, email string) (auth.Account, auth.Identity) {
+	t.Helper()
+	account := buildAccount(email)
+	identity := buildIdentityFor(account, email)
+	if err := accountRepo.CreateWithIdentity(context.Background(), account, identity); err != nil {
+		t.Fatalf("setupAccountWithIdentity: %v", err)
+	}
+	return account, identity
+}
+
+func TestVerificationTokenRepo_CreateAndFind(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	accountRepo := authdbrepo.NewAccountRepo(db)
+	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
+
+	email := "vtok+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	_, identity := setupAccountWithIdentity(t, accountRepo, email)
+
+	tok := buildVerificationToken(identity.ID, 24*time.Hour)
+	if err := verifyRepo.Create(context.Background(), tok); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	found, err := verifyRepo.FindByTokenHash(context.Background(), tok.TokenHash)
+	if err != nil {
+		t.Fatalf("FindByTokenHash: %v", err)
+	}
+	if found == nil {
+		t.Fatal("expected token, got nil")
+	}
+	if found.ID != tok.ID {
+		t.Errorf("id = %v, want %v", found.ID, tok.ID)
+	}
+	if found.AuthIdentityID != identity.ID {
+		t.Errorf("auth_identity_id = %v, want %v", found.AuthIdentityID, identity.ID)
+	}
+}
+
+func TestVerificationTokenRepo_FindByTokenHash_NotFound(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
+	found, err := verifyRepo.FindByTokenHash(context.Background(), "nonexistenthash")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if found != nil {
+		t.Error("expected nil for unknown hash")
+	}
+}
+
+func TestVerificationTokenRepo_RevokeActiveByIdentity(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	accountRepo := authdbrepo.NewAccountRepo(db)
+	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
+
+	email := "revoke+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	_, identity := setupAccountWithIdentity(t, accountRepo, email)
+
+	// Create two active tokens.
+	tok1 := buildVerificationToken(identity.ID, 24*time.Hour)
+	tok2 := buildVerificationToken(identity.ID, 24*time.Hour)
+	if err := verifyRepo.Create(context.Background(), tok1); err != nil {
+		t.Fatalf("create tok1: %v", err)
+	}
+	if err := verifyRepo.Create(context.Background(), tok2); err != nil {
+		t.Fatalf("create tok2: %v", err)
+	}
+
+	now := time.Now().UTC()
+	if err := verifyRepo.RevokeActiveByIdentity(context.Background(), identity.ID, now); err != nil {
+		t.Fatalf("RevokeActiveByIdentity: %v", err)
+	}
+
+	// Both tokens should now be inactive.
+	found1, _ := verifyRepo.FindByTokenHash(context.Background(), tok1.TokenHash)
+	found2, _ := verifyRepo.FindByTokenHash(context.Background(), tok2.TokenHash)
+	if found1 == nil || found2 == nil {
+		t.Fatal("tokens should still exist after revoke")
+	}
+	if found1.IsActive(now) {
+		t.Error("tok1 should not be active after revoke")
+	}
+	if found2.IsActive(now) {
+		t.Error("tok2 should not be active after revoke")
+	}
+}
+
+func TestVerificationTokenRepo_ConfirmTx_HappyPath(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	accountRepo := authdbrepo.NewAccountRepo(db)
+	identityRepo := authdbrepo.NewIdentityRepo(db)
+	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
+
+	email := "confirm+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	account, identity := setupAccountWithIdentity(t, accountRepo, email)
+
+	tok := buildVerificationToken(identity.ID, 24*time.Hour)
+	if err := verifyRepo.Create(context.Background(), tok); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	now := time.Now().UTC()
+	if err := verifyRepo.ConfirmTx(context.Background(), tok.ID, identity.ID, account.ID, now); err != nil {
+		t.Fatalf("ConfirmTx: %v", err)
+	}
+
+	// Token should be used.
+	found, _ := verifyRepo.FindByTokenHash(context.Background(), tok.TokenHash)
+	if found == nil || found.UsedAt == nil {
+		t.Error("token should have used_at set after ConfirmTx")
+	}
+
+	// Identity should be verified.
+	ident, _ := identityRepo.FindByID(context.Background(), identity.ID)
+	if ident == nil || ident.EmailVerifiedAt == nil {
+		t.Error("identity email_verified_at should be set after ConfirmTx")
+	}
+
+	// Account should be active.
+	acct, _ := accountRepo.FindByID(context.Background(), account.ID)
+	if acct == nil || acct.AccountStatusCode != auth.AccountStatusActive {
+		t.Errorf("account status = %q, want active", acct.AccountStatusCode)
+	}
+}
+
+func TestVerificationTokenRepo_ConfirmTx_ConcurrentLoser(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	accountRepo := authdbrepo.NewAccountRepo(db)
+	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
+
+	email := "concurrent+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	account, identity := setupAccountWithIdentity(t, accountRepo, email)
+
+	tok := buildVerificationToken(identity.ID, 24*time.Hour)
+	if err := verifyRepo.Create(context.Background(), tok); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	now := time.Now().UTC()
+	// First confirm succeeds.
+	if err := verifyRepo.ConfirmTx(context.Background(), tok.ID, identity.ID, account.ID, now); err != nil {
+		t.Fatalf("first ConfirmTx: %v", err)
+	}
+
+	// Second confirm should return ErrTokenExpired (concurrent-loser case).
+	err := verifyRepo.ConfirmTx(context.Background(), tok.ID, identity.ID, account.ID, now)
+	if !errors.Is(err, auth.ErrTokenExpired) {
+		t.Errorf("second ConfirmTx: err = %v, want ErrTokenExpired", err)
+	}
+}
+
+func TestVerificationTokenRepo_ConfirmTx_DoesNotFlipSuspended(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	accountRepo := authdbrepo.NewAccountRepo(db)
+	identityRepo := authdbrepo.NewIdentityRepo(db)
+	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
+
+	// Build account directly in suspended status.
+	email := "suspended+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	account := buildAccount(email)
+	account.AccountStatusCode = auth.AccountStatusSuspended
+	identity := buildIdentityFor(account, email)
+	if err := accountRepo.CreateWithIdentity(context.Background(), account, identity); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	tok := buildVerificationToken(identity.ID, 24*time.Hour)
+	if err := verifyRepo.Create(context.Background(), tok); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	now := time.Now().UTC()
+	if err := verifyRepo.ConfirmTx(context.Background(), tok.ID, identity.ID, account.ID, now); err != nil {
+		t.Fatalf("ConfirmTx: %v", err)
+	}
+
+	// Identity should be verified.
+	ident, _ := identityRepo.FindByID(context.Background(), identity.ID)
+	if ident == nil || ident.EmailVerifiedAt == nil {
+		t.Error("identity email_verified_at should be set")
+	}
+
+	// Account must remain suspended — not flipped to active.
+	acct, _ := accountRepo.FindByID(context.Background(), account.ID)
+	if acct == nil || acct.AccountStatusCode != auth.AccountStatusSuspended {
+		t.Errorf("account status = %q, want suspended (must not be flipped)", acct.AccountStatusCode)
 	}
 }

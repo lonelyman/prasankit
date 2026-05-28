@@ -9,6 +9,9 @@ var (
 	ErrInvalidCredentials = errors.New("auth: invalid credentials")
 	ErrAccountLocked      = errors.New("auth: account locked")
 	ErrUnauthenticated    = errors.New("auth: unauthenticated")
+	ErrEmailNotVerified   = errors.New("auth: email not verified")
+	ErrTokenInvalid       = errors.New("auth: token invalid")
+	ErrTokenExpired       = errors.New("auth: token expired")
 )
 
 // ValidationError carries per-field validation details.

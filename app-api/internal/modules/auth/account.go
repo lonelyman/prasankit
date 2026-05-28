@@ -27,8 +27,8 @@ func (a *Account) IsLocked(now time.Time) bool {
 }
 
 // IsLoginAllowed returns true if the account status permits login attempts.
-// Per spec: pending_verification and active are allowed (dispatch 3 adds email-verify enforcement).
+// Login requires an active (verified) account. Suspended, disabled, deleted, and
+// pending_verification accounts are not allowed to log in.
 func (a *Account) IsLoginAllowed() bool {
-	return a.AccountStatusCode == AccountStatusPendingVerification ||
-		a.AccountStatusCode == AccountStatusActive
+	return a.AccountStatusCode == AccountStatusActive
 }

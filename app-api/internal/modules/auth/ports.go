@@ -28,6 +28,32 @@ type IdentityRepository interface {
 	// FindByEmail returns the identity (email_password type) for the given email.
 	// Returns nil, nil when not found.
 	FindByEmail(ctx context.Context, email string) (*Identity, error)
+
+	// FindByID returns the identity for the given ID.
+	// Returns nil, nil when not found.
+	FindByID(ctx context.Context, id uuid.UUID) (*Identity, error)
+}
+
+// EmailVerificationTokenRepository defines storage operations on
+// auth_email_verification_tokens.
+type EmailVerificationTokenRepository interface {
+	// Create inserts a new verification token row.
+	Create(ctx context.Context, token EmailVerificationToken) error
+
+	// RevokeActiveByIdentity sets revoked_at=now on all currently-active tokens
+	// of the identity (used_at IS NULL AND revoked_at IS NULL AND expires_at > now).
+	RevokeActiveByIdentity(ctx context.Context, identityID uuid.UUID, now time.Time) error
+
+	// FindByTokenHash returns the token row for the given hash regardless of state
+	// (nil, nil if absent). Caller derives state via IsActive.
+	FindByTokenHash(ctx context.Context, tokenHash string) (*EmailVerificationToken, error)
+
+	// ConfirmTx atomically consumes the token and verifies the account.
+	// It sets used_at on the token, email_verified_at on the identity, and
+	// conditionally flips account_status_code to active when it is
+	// pending_verification. Returns ErrTokenExpired when the token was already
+	// consumed by a concurrent caller.
+	ConfirmTx(ctx context.Context, tokenID, identityID, accountID uuid.UUID, now time.Time) error
 }
 
 // SecurityEventRepository defines append-only logging to security_events.

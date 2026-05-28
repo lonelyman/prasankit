@@ -21,7 +21,7 @@ type Config struct {
 }
 
 // MailConfig holds SMTP transport settings for outbound email.
-// SMTPHost, SMTPPort, FromAddress, and InviteBaseURL are required — boot fails if missing.
+// SMTPHost, SMTPPort, FromAddress, InviteBaseURL, and VerifyBaseURL are required — boot fails if missing.
 // Username, Password, and FromName are optional (empty = no auth / no display name).
 type MailConfig struct {
 	SMTPHost      string // SMTP server hostname
@@ -31,6 +31,7 @@ type MailConfig struct {
 	Username      string // SMTP auth username; empty = no auth (e.g. Mailpit dev)
 	Password      string // SMTP auth password
 	InviteBaseURL string // base URL for invitation accept links (e.g. http://localhost:13000/invitations/accept)
+	VerifyBaseURL string // base URL for email verification links (e.g. http://localhost:13000/verify-email)
 }
 
 type PostgresConfig struct {
@@ -284,6 +285,11 @@ func loadMailConfig() (MailConfig, error) {
 		return MailConfig{}, err
 	}
 
+	verifyBaseURL, err := requiredEnv("MAIL_VERIFY_BASE_URL")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
 	return MailConfig{
 		SMTPHost:      host,
 		SMTPPort:      port,
@@ -292,6 +298,7 @@ func loadMailConfig() (MailConfig, error) {
 		Username:      os.Getenv("MAIL_SMTP_USERNAME"),
 		Password:      os.Getenv("MAIL_SMTP_PASSWORD"),
 		InviteBaseURL: inviteBaseURL,
+		VerifyBaseURL: verifyBaseURL,
 	}, nil
 }
 

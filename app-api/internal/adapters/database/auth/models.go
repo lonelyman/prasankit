@@ -53,3 +53,18 @@ type securityEventModel struct {
 }
 
 func (securityEventModel) TableName() string { return "security_events" }
+
+// emailVerificationTokenModel is the GORM model for auth_email_verification_tokens.
+type emailVerificationTokenModel struct {
+	ID             uuid.UUID  `gorm:"type:uuid;primaryKey"`
+	AuthIdentityID uuid.UUID  `gorm:"type:uuid;column:auth_identity_id;not null"`
+	TokenHash      string     `gorm:"column:token_hash;not null"`
+	ExpiresAt      time.Time  `gorm:"column:expires_at;not null"`
+	UsedAt         *time.Time `gorm:"column:used_at"`
+	RevokedAt      *time.Time `gorm:"column:revoked_at"`
+	CreatedAt      time.Time  `gorm:"column:created_at;not null"`
+}
+
+func (emailVerificationTokenModel) TableName() string {
+	return "auth_email_verification_tokens"
+}

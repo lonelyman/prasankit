@@ -18,11 +18,13 @@ const (
 
 // Security event types (machine codes, §4.4 — no DB FK, controlled by domain constant).
 const (
-	SecurityEventAccountCreated = "account.created"
-	SecurityEventLoginSuccess   = "login.success"
-	SecurityEventLoginFailure   = "login.failure"
-	SecurityEventAccountLocked  = "account.locked"
-	SecurityEventLogout         = "logout"
+	SecurityEventAccountCreated             = "account.created"
+	SecurityEventLoginSuccess               = "login.success"
+	SecurityEventLoginFailure               = "login.failure"
+	SecurityEventAccountLocked              = "account.locked"
+	SecurityEventLogout                     = "logout"
+	SecurityEventEmailVerificationRequested = "email.verification_requested"
+	SecurityEventEmailVerified              = "email.verified"
 )
 
 // Security event severity codes (§4.4).

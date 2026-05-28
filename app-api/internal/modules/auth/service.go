@@ -2,11 +2,14 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"net/mail"
 	"strings"
 	"time"
 
+	"prasankit-api/internal/modules/email"
 	"prasankit-api/pkg/ids"
 	"prasankit-api/pkg/passwordhash"
 	"prasankit-api/pkg/securetoken"
@@ -22,12 +25,18 @@ const lockDuration = 15 * time.Minute
 // The plaintext is arbitrary; it will never match any real password.
 const dummyHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 
+// emailVerificationTTL is how long a verification token remains valid.
+const emailVerificationTTL = 24 * time.Hour
+
 // Service implements the auth use cases.
 type Service struct {
-	accounts   AccountRepository
-	identities IdentityRepository
-	events     SecurityEventRepository
-	sessions   SessionStore
+	accounts      AccountRepository
+	identities    IdentityRepository
+	events        SecurityEventRepository
+	sessions      SessionStore
+	verifyTokens  EmailVerificationTokenRepository
+	emailSender   email.Sender
+	verifyBaseURL string
 }
 
 // NewService constructs an auth Service wired with the provided ports.
@@ -36,12 +45,18 @@ func NewService(
 	identities IdentityRepository,
 	events SecurityEventRepository,
 	sessions SessionStore,
+	verifyTokens EmailVerificationTokenRepository,
+	emailSender email.Sender,
+	verifyBaseURL string,
 ) *Service {
 	return &Service{
-		accounts:   accounts,
-		identities: identities,
-		events:     events,
-		sessions:   sessions,
+		accounts:      accounts,
+		identities:    identities,
+		events:        events,
+		sessions:      sessions,
+		verifyTokens:  verifyTokens,
+		emailSender:   emailSender,
+		verifyBaseURL: verifyBaseURL,
 	}
 }
 
@@ -122,6 +137,10 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*Account, error) 
 		Severity:      SecuritySeverityInfo,
 	})
 
+	// Issue + send verification email — best-effort, not fatal.
+	// Signup still returns 201 even if email issuance fails.
+	s.issueAndSendVerification(ctx, identity, account.PrimaryEmail)
+
 	return &account, nil
 }
 
@@ -167,7 +186,13 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*SessionOutput, err
 		return nil, ErrInvalidCredentials
 	}
 
-	// Step 5: check account status (do NOT reveal suspended/disabled — return generic).
+	// Step 5: check account status.
+	// pending_verification returns a distinct error (only reachable after the password
+	// verified in step 4, so this is NOT an enumeration oracle).
+	if account.AccountStatusCode == AccountStatusPendingVerification {
+		return nil, ErrEmailNotVerified
+	}
+	// suspended/disabled/deleted → generic (no status reveal).
 	if !account.IsLoginAllowed() {
 		return nil, ErrInvalidCredentials
 	}
@@ -269,6 +294,120 @@ func validateSignupInput(in SignupInput) error {
 	if len(fields) > 0 {
 		return &ValidationError{Fields: fields}
 	}
+	return nil
+}
+
+// issueAndSendVerification generates a verification token, stores it, and
+// sends the verification email. It is entirely best-effort — all errors are
+// logged and swallowed; the caller is never interrupted.
+func (s *Service) issueAndSendVerification(ctx context.Context, identity Identity, recipientEmail string) {
+	rawToken, hash, err := securetoken.New()
+	if err != nil {
+		log.Printf("auth: issueAndSendVerification: generate token: %v", err)
+		return
+	}
+
+	now := time.Now().UTC()
+	tok := EmailVerificationToken{
+		ID:             mustNewID(),
+		AuthIdentityID: identity.ID,
+		TokenHash:      hash,
+		ExpiresAt:      now.Add(emailVerificationTTL),
+		CreatedAt:      now,
+	}
+	if err := s.verifyTokens.Create(ctx, tok); err != nil {
+		log.Printf("auth: issueAndSendVerification: store token: %v", err)
+		return
+	}
+
+	link := fmt.Sprintf("%s?token=%s", s.verifyBaseURL, rawToken)
+	msg := email.Message{
+		To:      recipientEmail,
+		Subject: "Please verify your email address",
+		TextBody: fmt.Sprintf(
+			"Hello,\n\nPlease verify your email address by clicking the link below:\n\n%s\n\n"+
+				"This link expires in 24 hours.\n\nIf you did not create an account, please ignore this email.\n",
+			link,
+		),
+	}
+	if err := s.emailSender.Send(ctx, msg); err != nil {
+		log.Printf("auth: issueAndSendVerification: send email to %q: %v", recipientEmail, err)
+	}
+
+	_ = s.events.Log(ctx, SecurityEvent{
+		ID:            mustNewID(),
+		UserAccountID: &identity.UserAccountID,
+		EventType:     SecurityEventEmailVerificationRequested,
+		Severity:      SecuritySeverityInfo,
+	})
+}
+
+// ConfirmEmailVerification consumes a raw verification token, marks the
+// identity as verified, and flips the account status from pending_verification
+// to active.
+func (s *Service) ConfirmEmailVerification(ctx context.Context, rawToken string) error {
+	hash := securetoken.Hash(rawToken)
+	tok, err := s.verifyTokens.FindByTokenHash(ctx, hash)
+	if err != nil {
+		return fmt.Errorf("find verification token: %w", err)
+	}
+	if tok == nil {
+		return ErrTokenInvalid
+	}
+
+	now := time.Now().UTC()
+	if !tok.IsActive(now) {
+		return ErrTokenExpired
+	}
+
+	ident, err := s.identities.FindByID(ctx, tok.AuthIdentityID)
+	if err != nil {
+		return fmt.Errorf("find identity: %w", err)
+	}
+	if ident == nil {
+		return ErrTokenInvalid
+	}
+
+	if err := s.verifyTokens.ConfirmTx(ctx, tok.ID, ident.ID, ident.UserAccountID, now); err != nil {
+		if errors.Is(err, ErrTokenExpired) {
+			return ErrTokenExpired
+		}
+		return fmt.Errorf("confirm verification tx: %w", err)
+	}
+
+	_ = s.events.Log(ctx, SecurityEvent{
+		ID:            mustNewID(),
+		UserAccountID: &ident.UserAccountID,
+		EventType:     SecurityEventEmailVerified,
+		Severity:      SecuritySeverityInfo,
+	})
+
+	return nil
+}
+
+// ResendVerification re-issues a verification email for the given email
+// address. It always returns nil to the caller on the "no-op" paths to avoid
+// enumeration (no timing padding — see D32 rationale).
+func (s *Service) ResendVerification(ctx context.Context, emailAddr string) error {
+	normalized := strings.ToLower(strings.TrimSpace(emailAddr))
+
+	ident, err := s.identities.FindByEmail(ctx, normalized)
+	if err != nil {
+		return fmt.Errorf("find identity for resend: %w", err)
+	}
+	if ident == nil {
+		return nil // unknown email — silent
+	}
+	if ident.EmailVerifiedAt != nil {
+		return nil // already verified — silent
+	}
+
+	now := time.Now().UTC()
+	if err := s.verifyTokens.RevokeActiveByIdentity(ctx, ident.ID, now); err != nil {
+		log.Printf("auth: ResendVerification: revoke active tokens: %v", err)
+	}
+
+	s.issueAndSendVerification(ctx, *ident, emailAddr)
 	return nil
 }
 

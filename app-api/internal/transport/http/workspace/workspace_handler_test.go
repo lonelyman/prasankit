@@ -17,6 +17,7 @@ import (
 	workspacedbrepo "prasankit-api/internal/adapters/database/workspace"
 	smtpadapter "prasankit-api/internal/adapters/email/smtp"
 	"prasankit-api/internal/modules/auth"
+	"prasankit-api/internal/modules/email"
 	"prasankit-api/internal/modules/workspace"
 	authhandler "prasankit-api/internal/transport/http/auth"
 	"prasankit-api/internal/transport/http/middlewares"
@@ -28,6 +29,11 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// noopEmailSender is a no-op email.Sender for tests that don't need real email.
+type noopEmailSender struct{}
+
+func (noopEmailSender) Send(_ context.Context, _ email.Message) error { return nil }
 
 // ── Infrastructure ────────────────────────────────────────────────────────────
 
@@ -84,6 +90,7 @@ func truncateDataTables(t *testing.T, db *gorm.DB) {
 		"workspace_invitations",
 		"workspace_memberships",
 		"workspaces",
+		"auth_email_verification_tokens",
 		"security_events",
 		"auth_identities",
 		"user_accounts",
@@ -99,8 +106,9 @@ func buildTestApp(t *testing.T, db *gorm.DB, rc *redis.Client) *fiber.App {
 	accountRepo := authdbrepo.NewAccountRepo(db)
 	identityRepo := authdbrepo.NewIdentityRepo(db)
 	eventRepo := authdbrepo.NewSecurityEventRepo(db)
+	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
 	store := sessstore.NewStore(rc)
-	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, store)
+	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, store, verifyRepo, noopEmailSender{}, "http://localhost:13000/verify-email")
 	authH := authhandler.NewHandler(authSvc, "development")
 
 	// Workspace wiring.
@@ -176,21 +184,30 @@ func cookieByName(cookies []*http.Cookie, name string) *http.Cookie {
 	return nil
 }
 
-// signupAndLogin is a helper to sign up + log in, returning the session cookie.
-func signupAndLogin(t *testing.T, app *fiber.App, email string) *http.Cookie {
+// signupAndLogin signs up, activates the account (bypassing email verification),
+// then logs in and returns the session cookie.
+func signupAndLogin(t *testing.T, app *fiber.App, emailAddr string) *http.Cookie {
 	t.Helper()
 	doRequest(t, app, "POST", "/api/v1/auth/signup", map[string]any{
-		"email":        email,
+		"email":        emailAddr,
 		"password":     "testpass123",
 		"display_name": "Test User",
 	}, nil, nil)
+	// Activate account directly so login succeeds (email verification is required).
+	db := openTestDB(t)
+	if err := db.Exec(
+		"UPDATE user_accounts SET account_status_code = 'active', updated_at = now() WHERE primary_email = ?",
+		emailAddr,
+	).Error; err != nil {
+		t.Fatalf("signupAndLogin: activate account: %v", err)
+	}
 	resp := doRequest(t, app, "POST", "/api/v1/auth/login", map[string]any{
-		"email":    email,
+		"email":    emailAddr,
 		"password": "testpass123",
 	}, nil, nil)
 	cookie := cookieByName(resp.Cookies, auth.SessionCookieName)
 	if cookie == nil {
-		t.Fatalf("login: session cookie not set for %s", email)
+		t.Fatalf("login: session cookie not set for %s", emailAddr)
 	}
 	return cookie
 }

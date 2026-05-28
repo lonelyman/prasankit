@@ -49,19 +49,7 @@ func NewHTTPApp(
 		},
 	})
 
-	// Auth wiring.
-	accountRepo := authdbrepo.NewAccountRepo(gormDB)
-	identityRepo := authdbrepo.NewIdentityRepo(gormDB)
-	eventRepo := authdbrepo.NewSecurityEventRepo(gormDB)
-	sessStore := sessionstore.NewStore(redisClient)
-	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, sessStore)
-	authH := authhandler.NewHandler(authSvc, apiEnv)
-
-	// Workspace wiring.
-	auditRepo := auditdbrepo.NewAuditRepo(gormDB)
-	wsRepo := workspacedbrepo.NewWorkspaceRepo(gormDB, auditRepo)
-	memberRepo := workspacedbrepo.NewMembershipRepo(gormDB)
-	inviteRepo := workspacedbrepo.NewInvitationRepo(gormDB, auditRepo)
+	// Shared email sender (used by both auth and workspace services).
 	emailSender := smtpadapter.New(smtpadapter.Config{
 		Host:        mailCfg.SMTPHost,
 		Port:        mailCfg.SMTPPort,
@@ -70,6 +58,21 @@ func NewHTTPApp(
 		Username:    mailCfg.Username,
 		Password:    mailCfg.Password,
 	})
+
+	// Auth wiring.
+	accountRepo := authdbrepo.NewAccountRepo(gormDB)
+	identityRepo := authdbrepo.NewIdentityRepo(gormDB)
+	eventRepo := authdbrepo.NewSecurityEventRepo(gormDB)
+	verifyRepo := authdbrepo.NewVerificationTokenRepo(gormDB)
+	sessStore := sessionstore.NewStore(redisClient)
+	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, sessStore, verifyRepo, emailSender, mailCfg.VerifyBaseURL)
+	authH := authhandler.NewHandler(authSvc, apiEnv)
+
+	// Workspace wiring.
+	auditRepo := auditdbrepo.NewAuditRepo(gormDB)
+	wsRepo := workspacedbrepo.NewWorkspaceRepo(gormDB, auditRepo)
+	memberRepo := workspacedbrepo.NewMembershipRepo(gormDB)
+	inviteRepo := workspacedbrepo.NewInvitationRepo(gormDB, auditRepo)
 	workspaceSvc := workspace.NewService(wsRepo, memberRepo, inviteRepo, emailSender, mailCfg.InviteBaseURL)
 	workspaceH := workspacehandler.NewHandler(workspaceSvc)
 

@@ -7,6 +7,7 @@ import (
 
 	"prasankit-api/internal/modules/auth"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -32,6 +33,22 @@ func (r *IdentityRepo) FindByEmail(ctx context.Context, email string) (*auth.Ide
 			return nil, nil
 		}
 		return nil, fmt.Errorf("find identity by email: %w", err)
+	}
+	i := modelToIdentity(m)
+	return &i, nil
+}
+
+// FindByID returns the identity for the given ID. Returns nil, nil when not found.
+func (r *IdentityRepo) FindByID(ctx context.Context, id uuid.UUID) (*auth.Identity, error) {
+	var m identityModel
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND deleted_at IS NULL", id).
+		First(&m).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find identity by id: %w", err)
 	}
 	i := modelToIdentity(m)
 	return &i, nil

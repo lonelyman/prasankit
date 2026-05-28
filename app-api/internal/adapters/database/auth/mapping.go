@@ -63,3 +63,27 @@ func modelToIdentity(m identityModel) auth.Identity {
 		DeletedAt:        m.DeletedAt,
 	}
 }
+
+func emailVerificationTokenToModel(t auth.EmailVerificationToken) emailVerificationTokenModel {
+	return emailVerificationTokenModel{
+		ID:             t.ID,
+		AuthIdentityID: t.AuthIdentityID,
+		TokenHash:      t.TokenHash,
+		ExpiresAt:      t.ExpiresAt,
+		UsedAt:         t.UsedAt,
+		RevokedAt:      t.RevokedAt,
+		CreatedAt:      t.CreatedAt,
+	}
+}
+
+func modelToEmailVerificationToken(m emailVerificationTokenModel) auth.EmailVerificationToken {
+	return auth.EmailVerificationToken{
+		ID:             m.ID,
+		AuthIdentityID: m.AuthIdentityID,
+		TokenHash:      m.TokenHash,
+		ExpiresAt:      m.ExpiresAt,
+		UsedAt:         m.UsedAt,
+		RevokedAt:      m.RevokedAt,
+		CreatedAt:      m.CreatedAt,
+	}
+}

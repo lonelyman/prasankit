@@ -37,6 +37,8 @@ func RegisterRoutes(
 		authGroup.Post("/signup", authH.HandleSignup)
 		authGroup.Post("/login", authH.HandleLogin)
 		authGroup.Post("/logout", authH.HandleLogout)
+		authGroup.Post("/verify-email", authH.HandleVerifyEmail)
+		authGroup.Post("/verify-email/resend", authH.HandleResendVerification)
 
 		// Protected auth routes.
 		authGroup.Get("/me", middlewares.RequireSession(authSvc), authH.HandleMe)

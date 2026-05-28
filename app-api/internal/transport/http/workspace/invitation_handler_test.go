@@ -41,8 +41,9 @@ func buildInviteTestApp(t *testing.T) (*fiber.App, func()) {
 	accountRepo := authdbrepo.NewAccountRepo(db)
 	identityRepo := authdbrepo.NewIdentityRepo(db)
 	eventRepo := authdbrepo.NewSecurityEventRepo(db)
+	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
 	store := sessstore.NewStore(rc)
-	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, store)
+	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, store, verifyRepo, noopEmailSender{}, "http://localhost:13000/verify-email")
 	authH := authhandler.NewHandler(authSvc, "development")
 
 	auditRepo := auditdbrepo.NewAuditRepo(db)

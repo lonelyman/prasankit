@@ -54,6 +54,16 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+// verifyEmailRequest is the JSON body for POST /auth/verify-email.
+type verifyEmailRequest struct {
+	Token string `json:"token"`
+}
+
+// resendVerificationRequest is the JSON body for POST /auth/verify-email/resend.
+type resendVerificationRequest struct {
+	Email string `json:"email"`
+}
+
 // HandleSignup handles POST /auth/signup.
 func (h *Handler) HandleSignup(c fiber.Ctx) error {
 	var req signupRequest
@@ -116,6 +126,37 @@ func (h *Handler) HandleMe(c fiber.Ctx) error {
 	return presenter.RenderItem(c, toAccountResponse(*account))
 }
 
+// HandleVerifyEmail handles POST /auth/verify-email.
+func (h *Handler) HandleVerifyEmail(c fiber.Ctx) error {
+	var req verifyEmailRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "validation.invalid_input", "Invalid request body")
+	}
+	if req.Token == "" {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "validation.invalid_input", "Token is required")
+	}
+
+	if err := h.svc.ConfirmEmailVerification(c.Context(), req.Token); err != nil {
+		return h.handleServiceError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusOK)
+}
+
+// HandleResendVerification handles POST /auth/verify-email/resend.
+func (h *Handler) HandleResendVerification(c fiber.Ctx) error {
+	var req resendVerificationRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "validation.invalid_input", "Invalid request body")
+	}
+
+	if err := h.svc.ResendVerification(c.Context(), req.Email); err != nil {
+		return h.handleServiceError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
 // handleServiceError maps service errors to HTTP responses.
 func (h *Handler) handleServiceError(c fiber.Ctx, err error) error {
 	var valErr *auth.ValidationError
@@ -133,6 +174,15 @@ func (h *Handler) handleServiceError(c fiber.Ctx, err error) error {
 	}
 	if errors.Is(err, auth.ErrUnauthenticated) {
 		return presenter.RenderError(c, fiber.StatusUnauthorized, "auth.unauthenticated", "Not authenticated")
+	}
+	if errors.Is(err, auth.ErrEmailNotVerified) {
+		return presenter.RenderError(c, fiber.StatusForbidden, "auth.email_not_verified", "Email not verified")
+	}
+	if errors.Is(err, auth.ErrTokenInvalid) {
+		return presenter.RenderError(c, fiber.StatusNotFound, "auth.token_invalid", "Token not found or invalid")
+	}
+	if errors.Is(err, auth.ErrTokenExpired) {
+		return presenter.RenderError(c, fiber.StatusGone, "auth.token_expired", "Token has expired or already been used")
 	}
 	// Unexpected error — let the central error handler render 500.
 	return err

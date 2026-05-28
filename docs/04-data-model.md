@@ -154,6 +154,11 @@ verification/reset token + invitation **ไม่มีคอลัมน์ sta
 
 - `uq_pwreset_token_hash` UNIQUE (`token_hash`); `ix_pwreset_identity` (`auth_identity_id`).
 
+> **Login gating + account-safety behavior (D33/D34, dispatch 5a):**
+> - **Login requires `account_status='active'`.** `pending_verification` ถูกปฏิเสธด้วย distinct `email_not_verified` (403) **หลัง password verify** เท่านั้น (ไม่เป็น enum oracle); suspended/disabled/deleted → generic invalid-credentials. `IsLoginAllowed()` = `active` only.
+> - **Signup** auto-ออก verification token + ส่ง email (best-effort, ไม่ fatal — signup ยัง 201 ถ้า email ล้ม). **Confirm** (`POST /auth/verify-email`): token state derive จาก timestamp (§2.6); guarded consume (`UPDATE ... WHERE used_at IS NULL AND revoked_at IS NULL`, `RowsAffected==0`→410) กัน double-confirm race; flip `pending_verification→active` แบบ conditional (ไม่ downgrade suspended). **Resend** (`POST /auth/verify-email/resend`) คืน 204 เสมอ (anti-enum best-effort, ไม่ทำ timing padding).
+> - **Deferred (D34):** rate-limit/cooldown ของ auth endpoints = dedicated combined pass; verification token TTL = 24h, 1 active token ต่อ identity (ออกใหม่ = revoke เก่า).
+
 > **Session ไม่อยู่ใน Postgres (D13).** opaque token สุ่ม 32B → เก็บ **sha256 hash ใน Redis** เป็น `SessionRecord` พร้อม TTL (ดู §6). v1 มี `auth_sessions` ใน Postgres — v2 **ไม่ทำ** (revoke = ลบ key Redis). device/session-list = future.
 
 ### 4.2 Master tables (global/system)
