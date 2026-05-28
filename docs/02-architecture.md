@@ -22,7 +22,7 @@ v2 **rebuild เรื่อง process/loop ไม่ใช่ tech** (vision �
 
 | Layer | Choice | Version (v1) | ทำไม |
 | --- | --- | --- | --- |
-| Language | Go | 1.25 | static, เร็ว, deploy ง่าย, ทีมรู้จัก |
+| Language | Go | **1.26** (v1=1.25, bump D21) | static, เร็ว, deploy ง่าย, ทีมรู้จัก |
 | HTTP framework | Fiber | v3 | เบา, middleware chain ชัด |
 | DB | PostgreSQL | 18 | relational + CITEXT + RLS (ทางเลือก hardening §4) |
 | DB driver | pgx | v5 | native Postgres driver |
