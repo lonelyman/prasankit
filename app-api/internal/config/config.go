@@ -17,6 +17,19 @@ type Config struct {
 	Postgres           PostgresConfig
 	Redis              RedisConfig
 	Storage            StorageConfig
+	Mail               MailConfig
+}
+
+// MailConfig holds SMTP transport settings for outbound email.
+// SMTPHost, SMTPPort, and FromAddress are required — boot fails if missing.
+// Username, Password, and FromName are optional (empty = no auth / no display name).
+type MailConfig struct {
+	SMTPHost    string // SMTP server hostname
+	SMTPPort    string // SMTP server port (string — passed to net.JoinHostPort)
+	FromAddress string // envelope sender and From: header address
+	FromName    string // optional display name ("Name <addr>" when set)
+	Username    string // SMTP auth username; empty = no auth (e.g. Mailpit dev)
+	Password    string // SMTP auth password
 }
 
 type PostgresConfig struct {
@@ -81,6 +94,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	mail, err := loadMailConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		APIEnv:             apiEnv,
 		APIPort:            apiPort,
@@ -89,6 +107,7 @@ func Load() (Config, error) {
 		Postgres:           postgres,
 		Redis:              redis,
 		Storage:            storage,
+		Mail:               mail,
 	}, nil
 }
 
@@ -240,6 +259,32 @@ func loadStorageConfig() (StorageConfig, error) {
 		Bucket:       bucket,
 		AccessKey:    accessKey,
 		SecretKey:    secretKey,
+	}, nil
+}
+
+func loadMailConfig() (MailConfig, error) {
+	host, err := requiredEnv("MAIL_SMTP_HOST")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
+	port, err := requiredEnv("MAIL_SMTP_PORT")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
+	fromAddress, err := requiredEnv("MAIL_FROM_ADDRESS")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
+	return MailConfig{
+		SMTPHost:    host,
+		SMTPPort:    port,
+		FromAddress: fromAddress,
+		FromName:    os.Getenv("MAIL_FROM_NAME"),
+		Username:    os.Getenv("MAIL_SMTP_USERNAME"),
+		Password:    os.Getenv("MAIL_SMTP_PASSWORD"),
 	}, nil
 }
 

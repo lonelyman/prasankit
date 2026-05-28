@@ -97,6 +97,21 @@ services:
     networks:
       - prasankit_network
 
+  prasankit-mailpit:
+    image: axllent/mailpit:latest
+    container_name: prasankit_mailpit
+    ports:
+      - "${MAIL_SMTP_EXTERNAL_PORT}:1025"
+      - "${MAILPIT_UI_EXTERNAL_PORT}:8025"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8025/api/v1/info || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - prasankit_network
+
 networks:
   prasankit_network:
     name: prasankit_network
