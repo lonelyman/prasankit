@@ -15,6 +15,7 @@ import (
 	auditdbrepo "prasankit-api/internal/adapters/database/audit"
 	authdbrepo "prasankit-api/internal/adapters/database/auth"
 	workspacedbrepo "prasankit-api/internal/adapters/database/workspace"
+	smtpadapter "prasankit-api/internal/adapters/email/smtp"
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/internal/modules/workspace"
 	authhandler "prasankit-api/internal/transport/http/auth"
@@ -80,6 +81,7 @@ func truncateDataTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	for _, tbl := range []string{
 		"audit_logs",
+		"workspace_invitations",
 		"workspace_memberships",
 		"workspaces",
 		"security_events",
@@ -105,7 +107,13 @@ func buildTestApp(t *testing.T, db *gorm.DB, rc *redis.Client) *fiber.App {
 	auditRepo := auditdbrepo.NewAuditRepo(db)
 	wsRepo := workspacedbrepo.NewWorkspaceRepo(db, auditRepo)
 	memberRepo := workspacedbrepo.NewMembershipRepo(db)
-	workspaceSvc := workspace.NewService(wsRepo, memberRepo)
+	inviteRepo := workspacedbrepo.NewInvitationRepo(db, auditRepo)
+	emailSender := smtpadapter.New(smtpadapter.Config{
+		Host:        envOr("MAIL_SMTP_HOST", "localhost"),
+		Port:        envOr("MAIL_SMTP_EXTERNAL_PORT", "11025"),
+		FromAddress: "test@prasankit.local",
+	})
+	workspaceSvc := workspace.NewService(wsRepo, memberRepo, inviteRepo, emailSender, "http://localhost:13000/invitations/accept")
 	workspaceH := workspacehandler.NewHandler(workspaceSvc)
 
 	requireSession := middlewares.RequireSession(authSvc)

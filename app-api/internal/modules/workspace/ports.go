@@ -33,3 +33,23 @@ type MembershipRepository interface {
 	// Used for admin listing and isolation tests.
 	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]Membership, error)
 }
+
+// InvitationRepository defines storage operations on workspace_invitations.
+type InvitationRepository interface {
+	// CreateInvitationTx atomically inserts an invitation + audit entry in one DB transaction.
+	CreateInvitationTx(ctx context.Context, inv Invitation, entry audit.Entry) error
+
+	// FindActiveByTokenHash returns the invitation with the given token_hash that has
+	// not yet been accepted, revoked, or expired. Returns nil, nil when not found.
+	FindActiveByTokenHash(ctx context.Context, tokenHash string) (*Invitation, error)
+
+	// AcceptInvitationTx atomically inserts a membership, marks the invitation as accepted,
+	// and writes an audit entry — all in one DB transaction.
+	AcceptInvitationTx(ctx context.Context, inv Invitation, m Membership, entry audit.Entry) error
+
+	// IsActiveMemberByEmail returns true when there is already an active membership for
+	// the given workspace + email combination (via JOIN on user_accounts.primary_email).
+	// Required for the already-member pre-check at invite time (account may not exist yet,
+	// so we cannot use FindActiveByWorkspaceAndAccount which needs an accountID).
+	IsActiveMemberByEmail(ctx context.Context, workspaceID uuid.UUID, email string) (bool, error)
+}

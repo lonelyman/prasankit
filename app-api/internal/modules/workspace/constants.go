@@ -27,12 +27,16 @@ const (
 
 // Audit action codes (machine codes, §4.4 — no DB FK, controlled by domain constant).
 const (
-	AuditActionWorkspaceCreate = "workspace.create"
+	AuditActionWorkspaceCreate  = "workspace.create"
+	AuditActionMemberInvite     = "member.invite"
+	AuditActionInvitationAccept = "invitation.accept"
 )
 
 // Audit resource types.
 const (
-	AuditResourceTypeWorkspace = "workspace"
+	AuditResourceTypeWorkspace  = "workspace"
+	AuditResourceTypeInvitation = "invitation"
+	AuditResourceTypeMembership = "membership"
 )
 
 // Audit result codes.
@@ -40,6 +44,33 @@ const (
 	AuditResultSuccess = "success"
 	AuditResultFailure = "failure"
 )
+
+// Invitation TTL.
+const InvitationTTL = 7 * 24 * 60 * 60 * 1e9 // 7 days in nanoseconds (time.Duration)
+
+// Permission constants — used by requireWorkspacePermission middleware.
+const (
+	PermissionInviteMember = "workspace:invite_member"
+)
+
+// permissionAllowedRoles maps a permission to the set of org_role_codes that may perform it.
+// Roles not in the set receive 403 from RequireWorkspacePermission.
+var permissionAllowedRoles = map[string]map[string]struct{}{
+	PermissionInviteMember: {
+		OrgRoleOwner: {},
+		OrgRoleAdmin: {},
+	},
+}
+
+// IsRoleAllowedFor returns true when the given org_role_code is permitted to perform perm.
+func IsRoleAllowedFor(perm, orgRoleCode string) bool {
+	allowed, ok := permissionAllowedRoles[perm]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[orgRoleCode]
+	return ok
+}
 
 // reservedSlugs is the set of slugs that may never be used as workspace identifiers.
 var reservedSlugs = map[string]struct{}{

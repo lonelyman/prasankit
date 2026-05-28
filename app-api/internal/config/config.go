@@ -21,15 +21,16 @@ type Config struct {
 }
 
 // MailConfig holds SMTP transport settings for outbound email.
-// SMTPHost, SMTPPort, and FromAddress are required — boot fails if missing.
+// SMTPHost, SMTPPort, FromAddress, and InviteBaseURL are required — boot fails if missing.
 // Username, Password, and FromName are optional (empty = no auth / no display name).
 type MailConfig struct {
-	SMTPHost    string // SMTP server hostname
-	SMTPPort    string // SMTP server port (string — passed to net.JoinHostPort)
-	FromAddress string // envelope sender and From: header address
-	FromName    string // optional display name ("Name <addr>" when set)
-	Username    string // SMTP auth username; empty = no auth (e.g. Mailpit dev)
-	Password    string // SMTP auth password
+	SMTPHost      string // SMTP server hostname
+	SMTPPort      string // SMTP server port (string — passed to net.JoinHostPort)
+	FromAddress   string // envelope sender and From: header address
+	FromName      string // optional display name ("Name <addr>" when set)
+	Username      string // SMTP auth username; empty = no auth (e.g. Mailpit dev)
+	Password      string // SMTP auth password
+	InviteBaseURL string // base URL for invitation accept links (e.g. http://localhost:13000/invitations/accept)
 }
 
 type PostgresConfig struct {
@@ -278,13 +279,19 @@ func loadMailConfig() (MailConfig, error) {
 		return MailConfig{}, err
 	}
 
+	inviteBaseURL, err := requiredEnv("MAIL_INVITE_BASE_URL")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
 	return MailConfig{
-		SMTPHost:    host,
-		SMTPPort:    port,
-		FromAddress: fromAddress,
-		FromName:    os.Getenv("MAIL_FROM_NAME"),
-		Username:    os.Getenv("MAIL_SMTP_USERNAME"),
-		Password:    os.Getenv("MAIL_SMTP_PASSWORD"),
+		SMTPHost:      host,
+		SMTPPort:      port,
+		FromAddress:   fromAddress,
+		FromName:      os.Getenv("MAIL_FROM_NAME"),
+		Username:      os.Getenv("MAIL_SMTP_USERNAME"),
+		Password:      os.Getenv("MAIL_SMTP_PASSWORD"),
+		InviteBaseURL: inviteBaseURL,
 	}, nil
 }
 

@@ -46,6 +46,7 @@ func RegisterRoutes(
 	if workspaceH != nil && authSvc != nil && wsRepo != nil && memberRepo != nil {
 		requireSession := middlewares.RequireSession(authSvc)
 		requireTenant := middlewares.RequireTenantContext(wsRepo, memberRepo)
+		requireInvite := middlewares.RequireWorkspacePermission(workspace.PermissionInviteMember)
 
 		wsGroup := api.Group("/workspaces")
 		// requireSession only.
@@ -53,5 +54,10 @@ func RegisterRoutes(
 		wsGroup.Get("/", requireSession, workspaceH.HandleList)
 		// requireSession + requireTenantContext.
 		wsGroup.Get("/current", requireSession, requireTenant, workspaceH.HandleGetCurrent)
+		// requireSession + requireTenantContext + requireWorkspacePermission(invite).
+		wsGroup.Post("/invitations", requireSession, requireTenant, requireInvite, workspaceH.HandleInvite)
+
+		// Accept invitation — requireSession only (accepter is not yet a member).
+		api.Post("/invitations/accept", requireSession, workspaceH.HandleAcceptInvite)
 	}
 }

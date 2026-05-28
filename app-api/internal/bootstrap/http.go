@@ -8,6 +8,8 @@ import (
 	auditdbrepo "prasankit-api/internal/adapters/database/audit"
 	authdbrepo "prasankit-api/internal/adapters/database/auth"
 	workspacedbrepo "prasankit-api/internal/adapters/database/workspace"
+	smtpadapter "prasankit-api/internal/adapters/email/smtp"
+	"prasankit-api/internal/config"
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/internal/modules/workspace"
 	httptransport "prasankit-api/internal/transport/http"
@@ -29,6 +31,7 @@ func NewHTTPApp(
 	storageClient *minio.Client,
 	corsAllowedOrigins []string,
 	apiEnv string,
+	mailCfg config.MailConfig,
 ) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:      "prasankit-api",
@@ -58,7 +61,16 @@ func NewHTTPApp(
 	auditRepo := auditdbrepo.NewAuditRepo(gormDB)
 	wsRepo := workspacedbrepo.NewWorkspaceRepo(gormDB, auditRepo)
 	memberRepo := workspacedbrepo.NewMembershipRepo(gormDB)
-	workspaceSvc := workspace.NewService(wsRepo, memberRepo)
+	inviteRepo := workspacedbrepo.NewInvitationRepo(gormDB, auditRepo)
+	emailSender := smtpadapter.New(smtpadapter.Config{
+		Host:        mailCfg.SMTPHost,
+		Port:        mailCfg.SMTPPort,
+		FromAddress: mailCfg.FromAddress,
+		FromName:    mailCfg.FromName,
+		Username:    mailCfg.Username,
+		Password:    mailCfg.Password,
+	})
+	workspaceSvc := workspace.NewService(wsRepo, memberRepo, inviteRepo, emailSender, mailCfg.InviteBaseURL)
 	workspaceH := workspacehandler.NewHandler(workspaceSvc)
 
 	httptransport.RegisterRoutes(
