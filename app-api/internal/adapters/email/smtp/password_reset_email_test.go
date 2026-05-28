@@ -18,11 +18,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// truncateVerifyTables cleans all data tables used by the verification email test.
-func truncateVerifyTables(t *testing.T, db *gorm.DB) {
+// truncatePasswordResetTables cleans all data tables used by the password reset email test.
+func truncatePasswordResetTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	for _, tbl := range []string{
-		"auth_email_verification_tokens",
+		"auth_password_reset_tokens",
 		"security_events",
 		"auth_identities",
 		"user_accounts",
@@ -31,8 +31,8 @@ func truncateVerifyTables(t *testing.T, db *gorm.DB) {
 	}
 }
 
-// openVerifyTestRedis opens Redis for the verification email integration test.
-func openVerifyTestRedis(t *testing.T) *redis.Client {
+// openPasswordResetTestRedis opens Redis for the password reset email integration test.
+func openPasswordResetTestRedis(t *testing.T) *redis.Client {
 	t.Helper()
 	client := redis.NewClient(&redis.Options{
 		Addr:     invEnvOr("REDIS_HOST", "localhost") + ":" + invEnvOr("REDIS_PORT", "16380"),
@@ -42,16 +42,16 @@ func openVerifyTestRedis(t *testing.T) *redis.Client {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
-		t.Skipf("redis not reachable (%v): skipping verification email integration test", err)
+		t.Skipf("redis not reachable (%v): skipping password reset email integration test", err)
 	}
 	return client
 }
 
-// TestSignup_VerificationEmailArrivesInMailpit drives the real auth.Service.Signup
+// TestRequestPasswordReset_EmailArrivesInMailpit drives the real auth.Service.RequestPasswordReset
 // with real repos + real SMTP sender pointed at Mailpit, and asserts the
-// verification email lands in Mailpit addressed to the user, subject contains
-// "verify", body contains ?token= and the base URL.
-func TestSignup_VerificationEmailArrivesInMailpit(t *testing.T) {
+// password reset email lands in Mailpit addressed to the user, subject contains
+// "reset" (case-insensitive), and body contains ?token= and the reset base URL.
+func TestRequestPasswordReset_EmailArrivesInMailpit(t *testing.T) {
 	smtpPort := mailpitSMTPPort()
 	uiPort := mailpitUIPort()
 
@@ -59,11 +59,11 @@ func TestSignup_VerificationEmailArrivesInMailpit(t *testing.T) {
 	clearMailpit(t, uiPort)
 
 	db := openInviteTestDB(t)
-	truncateVerifyTables(t, db)
-	rc := openVerifyTestRedis(t)
+	truncatePasswordResetTables(t, db)
+	rc := openPasswordResetTestRedis(t)
 
 	t.Cleanup(func() {
-		truncateVerifyTables(t, db)
+		truncatePasswordResetTables(t, db)
 		clearMailpit(t, uiPort)
 		rc.Close()
 	})
@@ -73,9 +73,10 @@ func TestSignup_VerificationEmailArrivesInMailpit(t *testing.T) {
 	identityRepo := authdbrepo.NewIdentityRepo(db)
 	eventRepo := authdbrepo.NewSecurityEventRepo(db)
 	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
+	resetRepo := authdbrepo.NewPasswordResetTokenRepo(db)
 	sessStore := sessionstore.NewStore(rc)
 
-	verifyBaseURL := "http://localhost:13000/verify-email"
+	resetBaseURL := "http://localhost:13000/reset-password"
 	sender := smtpadapter.New(smtpadapter.Config{
 		Host:        "localhost",
 		Port:        smtpPort,
@@ -83,17 +84,32 @@ func TestSignup_VerificationEmailArrivesInMailpit(t *testing.T) {
 		FromName:    "Prasankit",
 	})
 
-	svc := auth.NewService(accountRepo, identityRepo, eventRepo, sessStore, verifyRepo, sender, verifyBaseURL, authdbrepo.NewPasswordResetTokenRepo(db), "http://localhost:13000/reset-password")
+	svc := auth.NewService(
+		accountRepo,
+		identityRepo,
+		eventRepo,
+		sessStore,
+		verifyRepo,
+		sender,
+		"http://localhost:13000/verify-email",
+		resetRepo,
+		resetBaseURL,
+	)
 
-	userEmail := fmt.Sprintf("verify-test+%d@example.com", time.Now().UnixNano())
+	// Seed an account with a known email.
+	userEmail := fmt.Sprintf("reset-test+%d@example.com", time.Now().UnixNano())
+	createInviteTestAccount(t, db, userEmail)
 
-	_, err := svc.Signup(context.Background(), auth.SignupInput{
-		Email:       userEmail,
-		Password:    "securepass123",
-		DisplayName: "Verify Test User",
-	})
-	if err != nil {
-		t.Fatalf("Signup: %v", err)
+	// Activate the account so the service can find and process it.
+	if err := db.Exec(
+		"UPDATE user_accounts SET account_status_code = 'active', updated_at = now() WHERE primary_email = ?",
+		userEmail,
+	).Error; err != nil {
+		t.Fatalf("activate account: %v", err)
+	}
+
+	if err := svc.RequestPasswordReset(context.Background(), userEmail); err != nil {
+		t.Fatalf("RequestPasswordReset: %v", err)
 	}
 
 	// Send is synchronous — email is present immediately. Small pause for Mailpit to index.
@@ -141,12 +157,12 @@ func TestSignup_VerificationEmailArrivesInMailpit(t *testing.T) {
 		t.Fatalf("no message addressed to %q found in Mailpit (got %d messages)", userEmail, len(listResult.Messages))
 	}
 
-	// Subject must contain "verify".
-	if !strings.Contains(strings.ToLower(msgSubject), "verify") {
-		t.Errorf("subject %q does not contain 'verify'", msgSubject)
+	// Subject must contain "reset".
+	if !strings.Contains(strings.ToLower(msgSubject), "reset") {
+		t.Errorf("subject %q does not contain 'reset'", msgSubject)
 	}
 
-	// Fetch body and assert ?token= and base URL are present.
+	// Fetch body and assert ?token= and reset base URL are present.
 	bodyURL := fmt.Sprintf("http://localhost:%s/api/v1/message/%s", uiPort, msgID)
 	bodyResp, err := http.Get(bodyURL)
 	if err != nil {
@@ -160,11 +176,11 @@ func TestSignup_VerificationEmailArrivesInMailpit(t *testing.T) {
 		t.Fatalf("decode body: %v", err)
 	}
 	if !strings.Contains(bodyResult.Text, "?token=") {
-		t.Errorf("verification email body missing '?token=': %s", bodyResult.Text)
+		t.Errorf("password reset email body missing '?token=': %s", bodyResult.Text)
 	}
-	if !strings.Contains(bodyResult.Text, verifyBaseURL) {
-		t.Errorf("verification email body missing base URL %q: %s", verifyBaseURL, bodyResult.Text)
+	if !strings.Contains(bodyResult.Text, resetBaseURL) {
+		t.Errorf("password reset email body missing base URL %q: %s", resetBaseURL, bodyResult.Text)
 	}
 
-	t.Logf("verification email to %q arrived in Mailpit — test passed", userEmail)
+	t.Logf("password reset email to %q arrived in Mailpit — test passed", userEmail)
 }

@@ -64,6 +64,17 @@ type resendVerificationRequest struct {
 	Email string `json:"email"`
 }
 
+// passwordResetRequestRequest is the JSON body for POST /auth/password-reset/request.
+type passwordResetRequestRequest struct {
+	Email string `json:"email"`
+}
+
+// passwordResetConfirmRequest is the JSON body for POST /auth/password-reset/confirm.
+type passwordResetConfirmRequest struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+
 // HandleSignup handles POST /auth/signup.
 func (h *Handler) HandleSignup(c fiber.Ctx) error {
 	var req signupRequest
@@ -155,6 +166,38 @@ func (h *Handler) HandleResendVerification(c fiber.Ctx) error {
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// HandleRequestPasswordReset handles POST /auth/password-reset/request.
+// Always returns 204 to avoid email enumeration.
+func (h *Handler) HandleRequestPasswordReset(c fiber.Ctx) error {
+	var req passwordResetRequestRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "validation.invalid_input", "Invalid request body")
+	}
+
+	if err := h.svc.RequestPasswordReset(c.Context(), req.Email); err != nil {
+		return h.handleServiceError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// HandleConfirmPasswordReset handles POST /auth/password-reset/confirm.
+func (h *Handler) HandleConfirmPasswordReset(c fiber.Ctx) error {
+	var req passwordResetConfirmRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "validation.invalid_input", "Invalid request body")
+	}
+	if req.Token == "" {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "validation.invalid_input", "Token is required")
+	}
+
+	if err := h.svc.ConfirmPasswordReset(c.Context(), req.Token, req.NewPassword); err != nil {
+		return h.handleServiceError(c, err)
+	}
+
+	return c.SendStatus(fiber.StatusOK)
 }
 
 // handleServiceError maps service errors to HTTP responses.

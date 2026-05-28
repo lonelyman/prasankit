@@ -158,6 +158,10 @@ verification/reset token + invitation **ไม่มีคอลัมน์ sta
 > - **Login requires `account_status='active'`.** `pending_verification` ถูกปฏิเสธด้วย distinct `email_not_verified` (403) **หลัง password verify** เท่านั้น (ไม่เป็น enum oracle); suspended/disabled/deleted → generic invalid-credentials. `IsLoginAllowed()` = `active` only.
 > - **Signup** auto-ออก verification token + ส่ง email (best-effort, ไม่ fatal — signup ยัง 201 ถ้า email ล้ม). **Confirm** (`POST /auth/verify-email`): token state derive จาก timestamp (§2.6); guarded consume (`UPDATE ... WHERE used_at IS NULL AND revoked_at IS NULL`, `RowsAffected==0`→410) กัน double-confirm race; flip `pending_verification→active` แบบ conditional (ไม่ downgrade suspended). **Resend** (`POST /auth/verify-email/resend`) คืน 204 เสมอ (anti-enum best-effort, ไม่ทำ timing padding).
 > - **Deferred (D34):** rate-limit/cooldown ของ auth endpoints = dedicated combined pass; verification token TTL = 24h, 1 active token ต่อ identity (ออกใหม่ = revoke เก่า).
+>
+> **Password reset (D35, dispatch 5b):**
+> - **Request** (`POST /auth/password-reset/request`) คืน **204 เสมอ** (anti-enum; ออก token ได้แม้ account ยัง `pending_verification` — recovery). **Confirm** (`POST /auth/password-reset/confirm {token,new_password}`): validate password ≥8 → guarded consume token (`RowsAffected==0`→410) → set `password_hash`+`password_changed_at` → **clear lockout** (`failed_login_count=0`,`locked_until=NULL`). **ไม่ auto-login**; **ไม่แตะ `account_status_code`** (reset ≠ verify email, แยก concern). token TTL=1h, 1 active/identity.
+> - `password_changed_at` อยู่ใน `auth_identities` (เขียนตอน reset) — มีใน GORM model+domain เพื่อ model สะท้อน table (external review รอบ 2). จะ load-bearing เต็มตัวใน **D36/5c (lazy session revocation)**: `requireSession` เทียบ `session.created_at < password_changed_at` → ทำลาย session + 401.
 
 > **Session ไม่อยู่ใน Postgres (D13).** opaque token สุ่ม 32B → เก็บ **sha256 hash ใน Redis** เป็น `SessionRecord` พร้อม TTL (ดู §6). v1 มี `auth_sessions` ใน Postgres — v2 **ไม่ทำ** (revoke = ลบ key Redis). device/session-list = future.
 

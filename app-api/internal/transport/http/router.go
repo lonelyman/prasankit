@@ -39,6 +39,8 @@ func RegisterRoutes(
 		authGroup.Post("/logout", authH.HandleLogout)
 		authGroup.Post("/verify-email", authH.HandleVerifyEmail)
 		authGroup.Post("/verify-email/resend", authH.HandleResendVerification)
+		authGroup.Post("/password-reset/request", authH.HandleRequestPasswordReset)
+		authGroup.Post("/password-reset/confirm", authH.HandleConfirmPasswordReset)
 
 		// Protected auth routes.
 		authGroup.Get("/me", middlewares.RequireSession(authSvc), authH.HandleMe)

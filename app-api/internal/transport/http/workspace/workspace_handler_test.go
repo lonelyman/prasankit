@@ -108,7 +108,7 @@ func buildTestApp(t *testing.T, db *gorm.DB, rc *redis.Client) *fiber.App {
 	eventRepo := authdbrepo.NewSecurityEventRepo(db)
 	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
 	store := sessstore.NewStore(rc)
-	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, store, verifyRepo, noopEmailSender{}, "http://localhost:13000/verify-email")
+	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, store, verifyRepo, noopEmailSender{}, "http://localhost:13000/verify-email", authdbrepo.NewPasswordResetTokenRepo(db), "http://localhost:13000/reset-password")
 	authH := authhandler.NewHandler(authSvc, "development")
 
 	// Workspace wiring.

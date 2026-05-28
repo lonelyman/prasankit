@@ -32,6 +32,7 @@ type MailConfig struct {
 	Password      string // SMTP auth password
 	InviteBaseURL string // base URL for invitation accept links (e.g. http://localhost:13000/invitations/accept)
 	VerifyBaseURL string // base URL for email verification links (e.g. http://localhost:13000/verify-email)
+	ResetBaseURL  string // base URL for password reset links (e.g. http://localhost:13000/reset-password)
 }
 
 type PostgresConfig struct {
@@ -290,6 +291,11 @@ func loadMailConfig() (MailConfig, error) {
 		return MailConfig{}, err
 	}
 
+	resetBaseURL, err := requiredEnv("MAIL_RESET_BASE_URL")
+	if err != nil {
+		return MailConfig{}, err
+	}
+
 	return MailConfig{
 		SMTPHost:      host,
 		SMTPPort:      port,
@@ -299,6 +305,7 @@ func loadMailConfig() (MailConfig, error) {
 		Password:      os.Getenv("MAIL_SMTP_PASSWORD"),
 		InviteBaseURL: inviteBaseURL,
 		VerifyBaseURL: verifyBaseURL,
+		ResetBaseURL:  resetBaseURL,
 	}, nil
 }
 

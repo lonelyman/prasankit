@@ -26,16 +26,17 @@ func (accountModel) TableName() string { return "user_accounts" }
 
 // identityModel is the GORM model for auth_identities.
 type identityModel struct {
-	ID               uuid.UUID  `gorm:"type:uuid;primaryKey"`
-	UserAccountID    uuid.UUID  `gorm:"type:uuid;column:user_account_id;not null"`
-	IdentityTypeCode string     `gorm:"column:identity_type_code;not null"`
-	Email            string     `gorm:"column:email"`
-	EmailVerifiedAt  *time.Time `gorm:"column:email_verified_at"`
-	PasswordHash     string     `gorm:"column:password_hash"`
-	LastUsedAt       *time.Time `gorm:"column:last_used_at"`
-	CreatedAt        time.Time  `gorm:"column:created_at;not null"`
-	UpdatedAt        time.Time  `gorm:"column:updated_at;not null"`
-	DeletedAt        *time.Time `gorm:"column:deleted_at"`
+	ID                uuid.UUID  `gorm:"type:uuid;primaryKey"`
+	UserAccountID     uuid.UUID  `gorm:"type:uuid;column:user_account_id;not null"`
+	IdentityTypeCode  string     `gorm:"column:identity_type_code;not null"`
+	Email             string     `gorm:"column:email"`
+	EmailVerifiedAt   *time.Time `gorm:"column:email_verified_at"`
+	PasswordHash      string     `gorm:"column:password_hash"`
+	PasswordChangedAt *time.Time `gorm:"column:password_changed_at"`
+	LastUsedAt        *time.Time `gorm:"column:last_used_at"`
+	CreatedAt         time.Time  `gorm:"column:created_at;not null"`
+	UpdatedAt         time.Time  `gorm:"column:updated_at;not null"`
+	DeletedAt         *time.Time `gorm:"column:deleted_at"`
 }
 
 func (identityModel) TableName() string { return "auth_identities" }
@@ -68,3 +69,16 @@ type emailVerificationTokenModel struct {
 func (emailVerificationTokenModel) TableName() string {
 	return "auth_email_verification_tokens"
 }
+
+// passwordResetTokenModel is the GORM model for auth_password_reset_tokens.
+type passwordResetTokenModel struct {
+	ID             uuid.UUID  `gorm:"type:uuid;primaryKey"`
+	AuthIdentityID uuid.UUID  `gorm:"type:uuid;column:auth_identity_id;not null"`
+	TokenHash      string     `gorm:"column:token_hash;not null"`
+	ExpiresAt      time.Time  `gorm:"column:expires_at;not null"`
+	UsedAt         *time.Time `gorm:"column:used_at"`
+	RevokedAt      *time.Time `gorm:"column:revoked_at"`
+	CreatedAt      time.Time  `gorm:"column:created_at;not null"`
+}
+
+func (passwordResetTokenModel) TableName() string { return "auth_password_reset_tokens" }

@@ -18,8 +18,11 @@ import (
 	"prasankit-api/internal/modules/email"
 	authhandler "prasankit-api/internal/transport/http/auth"
 	"prasankit-api/internal/transport/http/middlewares"
+	"prasankit-api/pkg/ids"
+	"prasankit-api/pkg/securetoken"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -99,7 +102,7 @@ func buildTestApp(t *testing.T, db *gorm.DB, rc *redis.Client) *fiber.App {
 	eventRepo := authdbrepo.NewSecurityEventRepo(db)
 	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
 	store := sessstore.NewStore(rc)
-	svc := auth.NewService(accountRepo, identityRepo, eventRepo, store, verifyRepo, noopSender{}, "http://localhost:13000/verify-email")
+	svc := auth.NewService(accountRepo, identityRepo, eventRepo, store, verifyRepo, noopSender{}, "http://localhost:13000/verify-email", authdbrepo.NewPasswordResetTokenRepo(db), "http://localhost:13000/reset-password")
 	h := authhandler.NewHandler(svc, "development")
 
 	app := fiber.New(fiber.Config{ErrorHandler: middlewares.ErrorHandler})
@@ -108,6 +111,8 @@ func buildTestApp(t *testing.T, db *gorm.DB, rc *redis.Client) *fiber.App {
 	app.Post("/api/v1/auth/logout", h.HandleLogout)
 	app.Post("/api/v1/auth/verify-email", h.HandleVerifyEmail)
 	app.Post("/api/v1/auth/verify-email/resend", h.HandleResendVerification)
+	app.Post("/api/v1/auth/password-reset/request", h.HandleRequestPasswordReset)
+	app.Post("/api/v1/auth/password-reset/confirm", h.HandleConfirmPasswordReset)
 	app.Get("/api/v1/auth/me", middlewares.RequireSession(svc), h.HandleMe)
 	return app
 }
@@ -518,4 +523,161 @@ func TestAuth_ResendVerification_Returns204(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("resend unknown: status = %d, want 204", resp.StatusCode)
 	}
+}
+
+// ── Password reset HTTP tests ─────────────────────────────────────────────────
+
+func TestAuth_PasswordResetRequest_Returns204(t *testing.T) {
+	db := openTestDB(t)
+	rc := openTestRedis(t)
+	t.Cleanup(func() { truncateDataTables(t, db); rc.Close() })
+	truncateDataTables(t, db)
+
+	app := buildTestApp(t, db, rc)
+
+	// Any email — even unknown — must return 204 (anti-enumeration).
+	resp := doRequest(t, app, "POST", "/api/v1/auth/password-reset/request", map[string]any{
+		"email": "unknown-user@example.com",
+	}, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("password reset request: status = %d, want 204; body = %v", resp.StatusCode, resp.Body)
+	}
+
+	// Known email also returns 204.
+	email := "pr-request+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	doRequest(t, app, "POST", "/api/v1/auth/signup", map[string]any{
+		"email": email, "password": "pass1234!", "display_name": "Reset User",
+	}, nil)
+
+	resp = doRequest(t, app, "POST", "/api/v1/auth/password-reset/request", map[string]any{
+		"email": email,
+	}, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("password reset request (known email): status = %d, want 204; body = %v", resp.StatusCode, resp.Body)
+	}
+}
+
+func TestAuth_PasswordResetConfirm_HappyPath(t *testing.T) {
+	db := openTestDB(t)
+	rc := openTestRedis(t)
+	t.Cleanup(func() { truncateDataTables(t, db); rc.Close() })
+	truncateDataTables(t, db)
+
+	app := buildTestApp(t, db, rc)
+	email := "pr-confirm+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	oldPassword := "oldpass1234!"
+
+	// Signup.
+	resp := doRequest(t, app, "POST", "/api/v1/auth/signup", map[string]any{
+		"email": email, "password": oldPassword, "display_name": "Reset Confirm User",
+	}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("signup: status = %d; body = %v", resp.StatusCode, resp.Body)
+	}
+
+	// Activate account.
+	activateAccount(t, db, email)
+
+	// Look up the identity ID for this email.
+	var identityID string
+	if err := db.Raw("SELECT id FROM auth_identities WHERE email = ?", email).Scan(&identityID).Error; err != nil || identityID == "" {
+		t.Fatalf("look up identity id for %q: err=%v id=%q", email, err, identityID)
+	}
+
+	// Insert a reset token directly (bypassing SMTP).
+	rawToken := "reset-raw-token-12345"
+	tokenID, _ := ids.New()
+	now := time.Now().UTC()
+	resetToken := auth.PasswordResetToken{
+		ID:             tokenID,
+		AuthIdentityID: mustParseUUID(t, identityID),
+		TokenHash:      securetoken.Hash(rawToken),
+		ExpiresAt:      now.Add(time.Hour),
+		CreatedAt:      now,
+	}
+	if err := authdbrepo.NewPasswordResetTokenRepo(db).Create(context.Background(), resetToken); err != nil {
+		t.Fatalf("create reset token: %v", err)
+	}
+
+	newPassword := "brandnewpass123"
+
+	// Confirm reset → 200.
+	resp = doRequest(t, app, "POST", "/api/v1/auth/password-reset/confirm", map[string]any{
+		"token":        rawToken,
+		"new_password": newPassword,
+	}, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("confirm reset: status = %d, want 200; body = %v", resp.StatusCode, resp.Body)
+	}
+
+	// Login with NEW password → 200.
+	resp = doRequest(t, app, "POST", "/api/v1/auth/login", map[string]any{
+		"email":    email,
+		"password": newPassword,
+	}, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login with new password: status = %d, want 200; body = %v", resp.StatusCode, resp.Body)
+	}
+
+	// Login with OLD password → 401.
+	resp = doRequest(t, app, "POST", "/api/v1/auth/login", map[string]any{
+		"email":    email,
+		"password": oldPassword,
+	}, nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("login with old password: status = %d, want 401; body = %v", resp.StatusCode, resp.Body)
+	}
+}
+
+func TestAuth_PasswordResetConfirm_BadToken_404(t *testing.T) {
+	db := openTestDB(t)
+	rc := openTestRedis(t)
+	t.Cleanup(func() { truncateDataTables(t, db); rc.Close() })
+
+	app := buildTestApp(t, db, rc)
+
+	resp := doRequest(t, app, "POST", "/api/v1/auth/password-reset/confirm", map[string]any{
+		"token":        "completely-unknown-token-xyz",
+		"new_password": "validpassword123",
+	}, nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("bad token: status = %d, want 404; body = %v", resp.StatusCode, resp.Body)
+	}
+	if errBody, ok := resp.Body["error"].(map[string]any); ok {
+		if errBody["code"] != "auth.token_invalid" {
+			t.Errorf("error code = %v, want auth.token_invalid", errBody["code"])
+		}
+	}
+}
+
+func TestAuth_PasswordResetConfirm_WeakPassword_400(t *testing.T) {
+	db := openTestDB(t)
+	rc := openTestRedis(t)
+	t.Cleanup(func() { truncateDataTables(t, db); rc.Close() })
+
+	app := buildTestApp(t, db, rc)
+
+	// Validation runs before token lookup — weak password returns 400 immediately.
+	resp := doRequest(t, app, "POST", "/api/v1/auth/password-reset/confirm", map[string]any{
+		"token":        "anything",
+		"new_password": "short",
+	}, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("weak password: status = %d, want 400; body = %v", resp.StatusCode, resp.Body)
+	}
+	if errBody, ok := resp.Body["error"].(map[string]any); ok {
+		if errBody["code"] != "validation.invalid_input" {
+			t.Errorf("error code = %v, want validation.invalid_input", errBody["code"])
+		}
+	}
+}
+
+// mustParseUUID parses a UUID string, fatally failing the test on error.
+func mustParseUUID(t *testing.T, s string) uuid.UUID {
+	t.Helper()
+	id, err := uuid.Parse(s)
+	if err != nil {
+		t.Fatalf("mustParseUUID(%q): %v", s, err)
+	}
+	return id
 }

@@ -56,6 +56,26 @@ type EmailVerificationTokenRepository interface {
 	ConfirmTx(ctx context.Context, tokenID, identityID, accountID uuid.UUID, now time.Time) error
 }
 
+// PasswordResetTokenRepository defines storage operations on
+// auth_password_reset_tokens.
+type PasswordResetTokenRepository interface {
+	// Create inserts a new password reset token row.
+	Create(ctx context.Context, token PasswordResetToken) error
+
+	// RevokeActiveByIdentity sets revoked_at=now on all currently-active tokens
+	// of the identity (used_at IS NULL AND revoked_at IS NULL AND expires_at > now).
+	RevokeActiveByIdentity(ctx context.Context, identityID uuid.UUID, now time.Time) error
+
+	// FindByTokenHash returns the token row for the given hash regardless of state
+	// (nil, nil if absent). Caller derives state via IsActive.
+	FindByTokenHash(ctx context.Context, tokenHash string) (*PasswordResetToken, error)
+
+	// ConfirmTx atomically consumes the token, sets the new password hash +
+	// password_changed_at on the identity, and clears the account lockout.
+	// Returns ErrTokenExpired when the token was already consumed by a concurrent caller.
+	ConfirmTx(ctx context.Context, tokenID, identityID, accountID uuid.UUID, newPasswordHash string, now time.Time) error
+}
+
 // SecurityEventRepository defines append-only logging to security_events.
 type SecurityEventRepository interface {
 	// Log records a security event. Failures should not abort the main request.

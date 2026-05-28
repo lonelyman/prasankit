@@ -25,6 +25,8 @@ const (
 	SecurityEventLogout                     = "logout"
 	SecurityEventEmailVerificationRequested = "email.verification_requested"
 	SecurityEventEmailVerified              = "email.verified"
+	SecurityEventPasswordResetRequested     = "password.reset_requested"
+	SecurityEventPasswordReset              = "password.reset"
 )
 
 // Security event severity codes (§4.4).

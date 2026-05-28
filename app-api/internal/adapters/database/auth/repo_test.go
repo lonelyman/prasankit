@@ -54,6 +54,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 func truncateTestTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	tables := []string{
+		"auth_password_reset_tokens",
 		"auth_email_verification_tokens",
 		"security_events",
 		"auth_identities",
@@ -383,6 +384,192 @@ func TestVerificationTokenRepo_ConfirmTx_ConcurrentLoser(t *testing.T) {
 
 	// Second confirm should return ErrTokenExpired (concurrent-loser case).
 	err := verifyRepo.ConfirmTx(context.Background(), tok.ID, identity.ID, account.ID, now)
+	if !errors.Is(err, auth.ErrTokenExpired) {
+		t.Errorf("second ConfirmTx: err = %v, want ErrTokenExpired", err)
+	}
+}
+
+// buildPasswordResetToken creates a test password reset token for the given identity.
+func buildPasswordResetToken(identityID uuid.UUID, ttl time.Duration) auth.PasswordResetToken {
+	tokenID, _ := ids.New()
+	now := time.Now().UTC()
+	return auth.PasswordResetToken{
+		ID:             tokenID,
+		AuthIdentityID: identityID,
+		TokenHash:      fmt.Sprintf("reset-hash-%d", time.Now().UnixNano()),
+		ExpiresAt:      now.Add(ttl),
+		CreatedAt:      now,
+	}
+}
+
+func TestPasswordResetTokenRepo_CreateAndFind(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	accountRepo := authdbrepo.NewAccountRepo(db)
+	resetRepo := authdbrepo.NewPasswordResetTokenRepo(db)
+
+	email := "prset+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	_, identity := setupAccountWithIdentity(t, accountRepo, email)
+
+	tok := buildPasswordResetToken(identity.ID, 24*time.Hour)
+	if err := resetRepo.Create(context.Background(), tok); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	found, err := resetRepo.FindByTokenHash(context.Background(), tok.TokenHash)
+	if err != nil {
+		t.Fatalf("FindByTokenHash: %v", err)
+	}
+	if found == nil {
+		t.Fatal("expected token, got nil")
+	}
+	if found.ID != tok.ID {
+		t.Errorf("id = %v, want %v", found.ID, tok.ID)
+	}
+	if found.AuthIdentityID != identity.ID {
+		t.Errorf("auth_identity_id = %v, want %v", found.AuthIdentityID, identity.ID)
+	}
+
+	// Unknown hash returns nil, nil.
+	notFound, err := resetRepo.FindByTokenHash(context.Background(), "nonexistent-reset-hash")
+	if err != nil {
+		t.Fatalf("FindByTokenHash unknown hash: unexpected error: %v", err)
+	}
+	if notFound != nil {
+		t.Error("expected nil for unknown reset token hash")
+	}
+}
+
+func TestPasswordResetTokenRepo_RevokeActiveByIdentity(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	accountRepo := authdbrepo.NewAccountRepo(db)
+	resetRepo := authdbrepo.NewPasswordResetTokenRepo(db)
+
+	email := "prrevoke+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	_, identity := setupAccountWithIdentity(t, accountRepo, email)
+
+	// Create two active tokens.
+	tok1 := buildPasswordResetToken(identity.ID, 24*time.Hour)
+	tok2 := buildPasswordResetToken(identity.ID, 24*time.Hour)
+	if err := resetRepo.Create(context.Background(), tok1); err != nil {
+		t.Fatalf("create tok1: %v", err)
+	}
+	if err := resetRepo.Create(context.Background(), tok2); err != nil {
+		t.Fatalf("create tok2: %v", err)
+	}
+
+	now := time.Now().UTC()
+	if err := resetRepo.RevokeActiveByIdentity(context.Background(), identity.ID, now); err != nil {
+		t.Fatalf("RevokeActiveByIdentity: %v", err)
+	}
+
+	// Both tokens should now be inactive.
+	found1, _ := resetRepo.FindByTokenHash(context.Background(), tok1.TokenHash)
+	found2, _ := resetRepo.FindByTokenHash(context.Background(), tok2.TokenHash)
+	if found1 == nil || found2 == nil {
+		t.Fatal("tokens should still exist after revoke")
+	}
+	if found1.IsActive(now) {
+		t.Error("tok1 should not be active after revoke")
+	}
+	if found2.IsActive(now) {
+		t.Error("tok2 should not be active after revoke")
+	}
+	if found1.RevokedAt == nil {
+		t.Error("tok1 revoked_at should be set")
+	}
+	if found2.RevokedAt == nil {
+		t.Error("tok2 revoked_at should be set")
+	}
+}
+
+func TestPasswordResetTokenRepo_ConfirmTx_HappyPath(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	accountRepo := authdbrepo.NewAccountRepo(db)
+	resetRepo := authdbrepo.NewPasswordResetTokenRepo(db)
+
+	email := "prconfirm+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	account, identity := setupAccountWithIdentity(t, accountRepo, email)
+
+	// Lock the account to verify that ConfirmTx clears the lockout.
+	if err := db.Exec(
+		"UPDATE user_accounts SET failed_login_count = 5, locked_until = now() + interval '15 min' WHERE id = ?",
+		account.ID,
+	).Error; err != nil {
+		t.Fatalf("lock account: %v", err)
+	}
+
+	tok := buildPasswordResetToken(identity.ID, 24*time.Hour)
+	if err := resetRepo.Create(context.Background(), tok); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	now := time.Now().UTC()
+	newHash := "newhash-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	if err := resetRepo.ConfirmTx(context.Background(), tok.ID, identity.ID, account.ID, newHash, now); err != nil {
+		t.Fatalf("ConfirmTx: %v", err)
+	}
+
+	// Token should have used_at set.
+	found, _ := resetRepo.FindByTokenHash(context.Background(), tok.TokenHash)
+	if found == nil || found.UsedAt == nil {
+		t.Error("token should have used_at set after ConfirmTx")
+	}
+
+	// Identity password_hash should be updated.
+	var storedHash string
+	if err := db.Raw("SELECT password_hash FROM auth_identities WHERE id = ?", identity.ID).Scan(&storedHash).Error; err != nil {
+		t.Fatalf("query identity password_hash: %v", err)
+	}
+	if storedHash != newHash {
+		t.Errorf("password_hash = %q, want %q", storedHash, newHash)
+	}
+
+	// Account lockout should be cleared.
+	refreshed, err := accountRepo.FindByID(context.Background(), account.ID)
+	if err != nil || refreshed == nil {
+		t.Fatalf("FindByID after ConfirmTx: %v", err)
+	}
+	if refreshed.FailedLoginCount != 0 {
+		t.Errorf("failed_login_count = %d, want 0 after reset", refreshed.FailedLoginCount)
+	}
+	if refreshed.LockedUntil != nil {
+		t.Error("locked_until should be NULL after reset")
+	}
+}
+
+func TestPasswordResetTokenRepo_ConfirmTx_ConcurrentLoser(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	accountRepo := authdbrepo.NewAccountRepo(db)
+	resetRepo := authdbrepo.NewPasswordResetTokenRepo(db)
+
+	email := "prconcurrent+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	account, identity := setupAccountWithIdentity(t, accountRepo, email)
+
+	tok := buildPasswordResetToken(identity.ID, 24*time.Hour)
+	if err := resetRepo.Create(context.Background(), tok); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	now := time.Now().UTC()
+	// First confirm succeeds.
+	if err := resetRepo.ConfirmTx(context.Background(), tok.ID, identity.ID, account.ID, "firsthash", now); err != nil {
+		t.Fatalf("first ConfirmTx: %v", err)
+	}
+
+	// Second confirm should return ErrTokenExpired (concurrent-loser case).
+	err := resetRepo.ConfirmTx(context.Background(), tok.ID, identity.ID, account.ID, "secondhash", now)
 	if !errors.Is(err, auth.ErrTokenExpired) {
 		t.Errorf("second ConfirmTx: err = %v, want ErrTokenExpired", err)
 	}

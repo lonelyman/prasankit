@@ -28,6 +28,9 @@ const dummyHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 // emailVerificationTTL is how long a verification token remains valid.
 const emailVerificationTTL = 24 * time.Hour
 
+// passwordResetTTL is how long a password reset token remains valid.
+const passwordResetTTL = 1 * time.Hour
+
 // Service implements the auth use cases.
 type Service struct {
 	accounts      AccountRepository
@@ -37,6 +40,8 @@ type Service struct {
 	verifyTokens  EmailVerificationTokenRepository
 	emailSender   email.Sender
 	verifyBaseURL string
+	resetTokens   PasswordResetTokenRepository
+	resetBaseURL  string
 }
 
 // NewService constructs an auth Service wired with the provided ports.
@@ -48,6 +53,8 @@ func NewService(
 	verifyTokens EmailVerificationTokenRepository,
 	emailSender email.Sender,
 	verifyBaseURL string,
+	resetTokens PasswordResetTokenRepository,
+	resetBaseURL string,
 ) *Service {
 	return &Service{
 		accounts:      accounts,
@@ -57,6 +64,8 @@ func NewService(
 		verifyTokens:  verifyTokens,
 		emailSender:   emailSender,
 		verifyBaseURL: verifyBaseURL,
+		resetTokens:   resetTokens,
+		resetBaseURL:  resetBaseURL,
 	}
 }
 
@@ -408,6 +417,131 @@ func (s *Service) ResendVerification(ctx context.Context, emailAddr string) erro
 	}
 
 	s.issueAndSendVerification(ctx, *ident, emailAddr)
+	return nil
+}
+
+// issueAndSendReset generates a password reset token, stores it, and sends
+// the reset email. It is entirely best-effort — all errors are logged and
+// swallowed; the caller is never interrupted.
+func (s *Service) issueAndSendReset(ctx context.Context, identity Identity, recipientEmail string) {
+	rawToken, hash, err := securetoken.New()
+	if err != nil {
+		log.Printf("auth: issueAndSendReset: generate token: %v", err)
+		return
+	}
+
+	now := time.Now().UTC()
+	tok := PasswordResetToken{
+		ID:             mustNewID(),
+		AuthIdentityID: identity.ID,
+		TokenHash:      hash,
+		ExpiresAt:      now.Add(passwordResetTTL),
+		CreatedAt:      now,
+	}
+	if err := s.resetTokens.Create(ctx, tok); err != nil {
+		log.Printf("auth: issueAndSendReset: store token: %v", err)
+		return
+	}
+
+	link := fmt.Sprintf("%s?token=%s", s.resetBaseURL, rawToken)
+	msg := email.Message{
+		To:      recipientEmail,
+		Subject: "Reset your password",
+		TextBody: fmt.Sprintf(
+			"Hello,\n\nYou requested a password reset. Click the link below to set a new password:\n\n%s\n\n"+
+				"This link expires in 1 hour.\n\nIf you did not request a password reset, please ignore this email.\n",
+			link,
+		),
+	}
+	if err := s.emailSender.Send(ctx, msg); err != nil {
+		log.Printf("auth: issueAndSendReset: send email to %q: %v", recipientEmail, err)
+	}
+
+	_ = s.events.Log(ctx, SecurityEvent{
+		ID:            mustNewID(),
+		UserAccountID: &identity.UserAccountID,
+		EventType:     SecurityEventPasswordResetRequested,
+		Severity:      SecuritySeverityInfo,
+	})
+}
+
+// RequestPasswordReset issues a password reset email for the given email
+// address. It always returns nil on "no-op" paths to avoid enumeration
+// (no timing padding — see D34 rationale).
+func (s *Service) RequestPasswordReset(ctx context.Context, emailAddr string) error {
+	normalized := strings.ToLower(strings.TrimSpace(emailAddr))
+
+	ident, err := s.identities.FindByEmail(ctx, normalized)
+	if err != nil {
+		return fmt.Errorf("find identity for password reset: %w", err)
+	}
+	if ident == nil {
+		return nil // unknown email — silent (anti-enum)
+	}
+
+	now := time.Now().UTC()
+	if err := s.resetTokens.RevokeActiveByIdentity(ctx, ident.ID, now); err != nil {
+		log.Printf("auth: RequestPasswordReset: revoke active tokens: %v", err)
+	}
+
+	s.issueAndSendReset(ctx, *ident, emailAddr)
+	return nil
+}
+
+// ConfirmPasswordReset validates the token and sets a new password.
+func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string) error {
+	// Step 1: validate password length.
+	if len(newPassword) < 8 {
+		return &ValidationError{Fields: []FieldError{{Field: "new_password", Message: "must be at least 8 characters"}}}
+	}
+
+	// Step 2: look up token.
+	hash := securetoken.Hash(rawToken)
+	tok, err := s.resetTokens.FindByTokenHash(ctx, hash)
+	if err != nil {
+		return fmt.Errorf("find reset token: %w", err)
+	}
+	if tok == nil {
+		return ErrTokenInvalid
+	}
+
+	// Step 3: check token is active.
+	now := time.Now().UTC()
+	if !tok.IsActive(now) {
+		return ErrTokenExpired
+	}
+
+	// Step 4: load identity.
+	ident, err := s.identities.FindByID(ctx, tok.AuthIdentityID)
+	if err != nil {
+		return fmt.Errorf("find identity: %w", err)
+	}
+	if ident == nil {
+		return ErrTokenInvalid
+	}
+
+	// Step 5: hash the new password.
+	newHash, err := passwordhash.Hash(newPassword)
+	if err != nil {
+		return fmt.Errorf("hash new password: %w", err)
+	}
+
+	// Step 6: atomic confirm in transaction.
+	if err := s.resetTokens.ConfirmTx(ctx, tok.ID, ident.ID, ident.UserAccountID, newHash, now); err != nil {
+		if errors.Is(err, ErrTokenExpired) {
+			return ErrTokenExpired
+		}
+		return fmt.Errorf("confirm password reset tx: %w", err)
+	}
+
+	// Step 7: log security event best-effort.
+	_ = s.events.Log(ctx, SecurityEvent{
+		ID:            mustNewID(),
+		UserAccountID: &ident.UserAccountID,
+		EventType:     SecurityEventPasswordReset,
+		Severity:      SecuritySeverityInfo,
+	})
+
 	return nil
 }
 

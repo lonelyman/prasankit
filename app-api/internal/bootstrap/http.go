@@ -64,8 +64,9 @@ func NewHTTPApp(
 	identityRepo := authdbrepo.NewIdentityRepo(gormDB)
 	eventRepo := authdbrepo.NewSecurityEventRepo(gormDB)
 	verifyRepo := authdbrepo.NewVerificationTokenRepo(gormDB)
+	resetRepo := authdbrepo.NewPasswordResetTokenRepo(gormDB)
 	sessStore := sessionstore.NewStore(redisClient)
-	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, sessStore, verifyRepo, emailSender, mailCfg.VerifyBaseURL)
+	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, sessStore, verifyRepo, emailSender, mailCfg.VerifyBaseURL, resetRepo, mailCfg.ResetBaseURL)
 	authH := authhandler.NewHandler(authSvc, apiEnv)
 
 	// Workspace wiring.

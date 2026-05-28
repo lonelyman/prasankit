@@ -36,31 +36,33 @@ func modelToAccount(m accountModel) auth.Account {
 
 func identityToModel(i auth.Identity) identityModel {
 	return identityModel{
-		ID:               i.ID,
-		UserAccountID:    i.UserAccountID,
-		IdentityTypeCode: i.IdentityTypeCode,
-		Email:            i.Email,
-		EmailVerifiedAt:  i.EmailVerifiedAt,
-		PasswordHash:     i.PasswordHash,
-		LastUsedAt:       i.LastUsedAt,
-		CreatedAt:        i.CreatedAt,
-		UpdatedAt:        i.UpdatedAt,
-		DeletedAt:        i.DeletedAt,
+		ID:                i.ID,
+		UserAccountID:     i.UserAccountID,
+		IdentityTypeCode:  i.IdentityTypeCode,
+		Email:             i.Email,
+		EmailVerifiedAt:   i.EmailVerifiedAt,
+		PasswordHash:      i.PasswordHash,
+		PasswordChangedAt: i.PasswordChangedAt,
+		LastUsedAt:        i.LastUsedAt,
+		CreatedAt:         i.CreatedAt,
+		UpdatedAt:         i.UpdatedAt,
+		DeletedAt:         i.DeletedAt,
 	}
 }
 
 func modelToIdentity(m identityModel) auth.Identity {
 	return auth.Identity{
-		ID:               m.ID,
-		UserAccountID:    m.UserAccountID,
-		IdentityTypeCode: m.IdentityTypeCode,
-		Email:            m.Email,
-		EmailVerifiedAt:  m.EmailVerifiedAt,
-		PasswordHash:     m.PasswordHash,
-		LastUsedAt:       m.LastUsedAt,
-		CreatedAt:        m.CreatedAt,
-		UpdatedAt:        m.UpdatedAt,
-		DeletedAt:        m.DeletedAt,
+		ID:                m.ID,
+		UserAccountID:     m.UserAccountID,
+		IdentityTypeCode:  m.IdentityTypeCode,
+		Email:             m.Email,
+		EmailVerifiedAt:   m.EmailVerifiedAt,
+		PasswordHash:      m.PasswordHash,
+		PasswordChangedAt: m.PasswordChangedAt,
+		LastUsedAt:        m.LastUsedAt,
+		CreatedAt:         m.CreatedAt,
+		UpdatedAt:         m.UpdatedAt,
+		DeletedAt:         m.DeletedAt,
 	}
 }
 
@@ -78,6 +80,30 @@ func emailVerificationTokenToModel(t auth.EmailVerificationToken) emailVerificat
 
 func modelToEmailVerificationToken(m emailVerificationTokenModel) auth.EmailVerificationToken {
 	return auth.EmailVerificationToken{
+		ID:             m.ID,
+		AuthIdentityID: m.AuthIdentityID,
+		TokenHash:      m.TokenHash,
+		ExpiresAt:      m.ExpiresAt,
+		UsedAt:         m.UsedAt,
+		RevokedAt:      m.RevokedAt,
+		CreatedAt:      m.CreatedAt,
+	}
+}
+
+func passwordResetTokenToModel(t auth.PasswordResetToken) passwordResetTokenModel {
+	return passwordResetTokenModel{
+		ID:             t.ID,
+		AuthIdentityID: t.AuthIdentityID,
+		TokenHash:      t.TokenHash,
+		ExpiresAt:      t.ExpiresAt,
+		UsedAt:         t.UsedAt,
+		RevokedAt:      t.RevokedAt,
+		CreatedAt:      t.CreatedAt,
+	}
+}
+
+func modelToPasswordResetToken(m passwordResetTokenModel) auth.PasswordResetToken {
+	return auth.PasswordResetToken{
 		ID:             m.ID,
 		AuthIdentityID: m.AuthIdentityID,
 		TokenHash:      m.TokenHash,

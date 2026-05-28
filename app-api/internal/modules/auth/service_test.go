@@ -12,6 +12,7 @@ import (
 
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/internal/modules/email"
+	"prasankit-api/pkg/passwordhash"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -252,6 +253,101 @@ func (r *fakeVerificationRepo) ConfirmTx(ctx context.Context, tokenID, identityI
 	return nil
 }
 
+// fakeResetRepo implements auth.PasswordResetTokenRepository in memory.
+type fakeResetRepo struct {
+	mu     sync.Mutex
+	tokens map[string]*auth.PasswordResetToken // keyed by token hash
+
+	// back-references so ConfirmTx can mutate sibling fakes
+	accountRepo  *fakeAccountRepo
+	identityRepo *fakeIdentityRepo
+
+	// mirrors of confirmed state for assertions
+	usedTokens      map[uuid.UUID]time.Time // tokenID → usedAt
+	newPasswordHash map[uuid.UUID]string    // identityID → new password hash
+	lockoutCleared  map[uuid.UUID]bool      // accountID → lockout cleared
+}
+
+func newFakeResetRepo() *fakeResetRepo {
+	return &fakeResetRepo{
+		tokens:          map[string]*auth.PasswordResetToken{},
+		usedTokens:      map[uuid.UUID]time.Time{},
+		newPasswordHash: map[uuid.UUID]string{},
+		lockoutCleared:  map[uuid.UUID]bool{},
+	}
+}
+
+func (r *fakeResetRepo) Create(ctx context.Context, token auth.PasswordResetToken) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := token
+	r.tokens[token.TokenHash] = &cp
+	return nil
+}
+
+func (r *fakeResetRepo) RevokeActiveByIdentity(ctx context.Context, identityID uuid.UUID, now time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, t := range r.tokens {
+		if t.AuthIdentityID == identityID && t.IsActive(now) {
+			cp := now
+			t.RevokedAt = &cp
+		}
+	}
+	return nil
+}
+
+func (r *fakeResetRepo) FindByTokenHash(ctx context.Context, tokenHash string) (*auth.PasswordResetToken, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tokens[tokenHash]
+	if !ok {
+		return nil, nil
+	}
+	cp := *t
+	return &cp, nil
+}
+
+func (r *fakeResetRepo) ConfirmTx(ctx context.Context, tokenID, identityID, accountID uuid.UUID, newPasswordHash string, now time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// Find token by ID.
+	var tok *auth.PasswordResetToken
+	for _, t := range r.tokens {
+		if t.ID == tokenID {
+			tok = t
+			break
+		}
+	}
+	if tok == nil || tok.UsedAt != nil || tok.RevokedAt != nil {
+		return auth.ErrTokenExpired
+	}
+	tok.UsedAt = &now
+	r.usedTokens[tokenID] = now
+	r.newPasswordHash[identityID] = newPasswordHash
+
+	// Update identity password hash in the fake identity repo.
+	if r.identityRepo != nil {
+		r.identityRepo.mu.Lock()
+		if ident, ok := r.identityRepo.byID[identityID]; ok {
+			ident.PasswordHash = newPasswordHash
+		}
+		r.identityRepo.mu.Unlock()
+	}
+
+	// Clear account lockout.
+	if r.accountRepo != nil {
+		r.accountRepo.mu.Lock()
+		if a, ok := r.accountRepo.accounts[accountID]; ok {
+			a.FailedLoginCount = 0
+			a.LockedUntil = nil
+		}
+		r.accountRepo.mu.Unlock()
+	}
+	r.lockoutCleared[accountID] = true
+	return nil
+}
+
 // fakeEmailSender records sent messages.
 type fakeEmailSender struct {
 	mu       sync.Mutex
@@ -279,14 +375,17 @@ func buildSvc() (*auth.Service, *fakeAccountRepo, *fakeIdentityRepo, *fakeEventR
 	accounts := newFakeAccountRepo()
 	identities := newFakeIdentityRepo()
 	verifyRepo := newFakeVerificationRepo()
+	resetRepo := newFakeResetRepo()
 	// Wire back-references so the fakes stay consistent across Signup/ConfirmTx.
 	accounts.identityRepo = identities
 	verifyRepo.accountRepo = accounts
 	verifyRepo.identityRepo = identities
+	resetRepo.accountRepo = accounts
+	resetRepo.identityRepo = identities
 	events := &fakeEventRepo{}
 	sessions := newFakeSessionStore()
 	sender := &fakeEmailSender{}
-	svc := auth.NewService(accounts, identities, events, sessions, verifyRepo, sender, "http://localhost:13000/verify-email")
+	svc := auth.NewService(accounts, identities, events, sessions, verifyRepo, sender, "http://localhost:13000/verify-email", resetRepo, "http://localhost:13000/reset-password")
 	return svc, accounts, identities, events, sessions, verifyRepo, sender
 }
 
@@ -696,7 +795,7 @@ func TestConfirmEmailVerification_ExpiredToken(t *testing.T) {
 	verifyRepo2.tokens[h] = tok
 	verifyRepo2.mu.Unlock()
 
-	svc := auth.NewService(accounts2, identities2, &fakeEventRepo{}, newFakeSessionStore(), verifyRepo2, &fakeEmailSender{}, "http://localhost:13000/verify-email")
+	svc := auth.NewService(accounts2, identities2, &fakeEventRepo{}, newFakeSessionStore(), verifyRepo2, &fakeEmailSender{}, "http://localhost:13000/verify-email", newFakeResetRepo(), "http://localhost:13000/reset-password")
 
 	err := svc.ConfirmEmailVerification(context.Background(), rawToken)
 	if !errors.Is(err, auth.ErrTokenExpired) {
@@ -842,6 +941,297 @@ func TestResendVerification_Unverified_RevokesAndReissues(t *testing.T) {
 	}
 	_ = accounts
 	_ = identities
+}
+
+// ── RequestPasswordReset tests ────────────────────────────────────────────────
+
+func TestRequestPasswordReset_UnknownEmail_NilNoTokenNoEmail(t *testing.T) {
+	svc, _, _, _, _, _, sender := buildSvc()
+	// Access resetRepo via a dedicated build with visible reset repo.
+	accounts := newFakeAccountRepo()
+	identities := newFakeIdentityRepo()
+	verifyRepo := newFakeVerificationRepo()
+	resetRepo := newFakeResetRepo()
+	accounts.identityRepo = identities
+	verifyRepo.accountRepo = accounts
+	verifyRepo.identityRepo = identities
+	resetRepo.accountRepo = accounts
+	resetRepo.identityRepo = identities
+	events := &fakeEventRepo{}
+	sessions := newFakeSessionStore()
+	_ = sender
+	svc2 := auth.NewService(accounts, identities, events, sessions, verifyRepo, &fakeEmailSender{}, "http://localhost:13000/verify-email", resetRepo, "http://localhost:13000/reset-password")
+
+	err := svc2.RequestPasswordReset(context.Background(), "nobody@example.com")
+	if err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+	resetRepo.mu.Lock()
+	count := len(resetRepo.tokens)
+	resetRepo.mu.Unlock()
+	if count != 0 {
+		t.Errorf("expected 0 reset tokens, got %d", count)
+	}
+	_ = svc
+}
+
+func TestRequestPasswordReset_ExistingIdentity_RevokesAndIssues(t *testing.T) {
+	accounts := newFakeAccountRepo()
+	identities := newFakeIdentityRepo()
+	verifyRepo := newFakeVerificationRepo()
+	resetRepo := newFakeResetRepo()
+	accounts.identityRepo = identities
+	verifyRepo.accountRepo = accounts
+	verifyRepo.identityRepo = identities
+	resetRepo.accountRepo = accounts
+	resetRepo.identityRepo = identities
+	events := &fakeEventRepo{}
+	sessions := newFakeSessionStore()
+	sender := &fakeEmailSender{}
+	svc := auth.NewService(accounts, identities, events, sessions, verifyRepo, sender, "http://localhost:13000/verify-email", resetRepo, "http://localhost:13000/reset-password")
+
+	seedAccount(accounts, identities, "reset@example.com", "pass1234", auth.AccountStatusActive)
+
+	// First call — issues token + sends email.
+	if err := svc.RequestPasswordReset(context.Background(), "reset@example.com"); err != nil {
+		t.Fatalf("RequestPasswordReset: %v", err)
+	}
+
+	resetRepo.mu.Lock()
+	count1 := len(resetRepo.tokens)
+	resetRepo.mu.Unlock()
+	if count1 != 1 {
+		t.Fatalf("expected 1 reset token after first request, got %d", count1)
+	}
+	msgs1 := sender.Sent()
+	if len(msgs1) != 1 {
+		t.Fatalf("expected 1 email after first request, got %d", len(msgs1))
+	}
+	if !strings.Contains(msgs1[0].TextBody, "?token=") {
+		t.Errorf("email body missing '?token=': %s", msgs1[0].TextBody)
+	}
+
+	// Second call — prior active token should be revoked, new one issued.
+	if err := svc.RequestPasswordReset(context.Background(), "reset@example.com"); err != nil {
+		t.Fatalf("second RequestPasswordReset: %v", err)
+	}
+
+	resetRepo.mu.Lock()
+	count2 := len(resetRepo.tokens)
+	now := time.Now().UTC()
+	revokedCount := 0
+	for _, tok := range resetRepo.tokens {
+		if tok.RevokedAt != nil && !tok.IsActive(now) {
+			revokedCount++
+		}
+	}
+	resetRepo.mu.Unlock()
+
+	if count2 != 2 {
+		t.Errorf("expected 2 reset tokens total, got %d", count2)
+	}
+	if revokedCount < 1 {
+		t.Error("expected at least 1 revoked token after second request")
+	}
+	msgs2 := sender.Sent()
+	if len(msgs2) != 2 {
+		t.Errorf("expected 2 emails total, got %d", len(msgs2))
+	}
+}
+
+// ── ConfirmPasswordReset tests ─────────────────────────────────────────────────
+
+func TestConfirmPasswordReset_ValidToken_UpdatesPasswordAndClearsLockout(t *testing.T) {
+	accounts := newFakeAccountRepo()
+	identities := newFakeIdentityRepo()
+	verifyRepo := newFakeVerificationRepo()
+	resetRepo := newFakeResetRepo()
+	accounts.identityRepo = identities
+	verifyRepo.accountRepo = accounts
+	verifyRepo.identityRepo = identities
+	resetRepo.accountRepo = accounts
+	resetRepo.identityRepo = identities
+	events := &fakeEventRepo{}
+	sessions := newFakeSessionStore()
+	sender := &fakeEmailSender{}
+	svc := auth.NewService(accounts, identities, events, sessions, verifyRepo, sender, "http://localhost:13000/verify-email", resetRepo, "http://localhost:13000/reset-password")
+
+	a := seedAccount(accounts, identities, "confpwd@example.com", "oldpassword", auth.AccountStatusActive)
+
+	// Set a lockout on the account to verify it gets cleared.
+	until := time.Now().Add(10 * time.Minute)
+	accounts.mu.Lock()
+	accounts.accounts[a.ID].LockedUntil = &until
+	accounts.accounts[a.ID].FailedLoginCount = 3
+	accounts.mu.Unlock()
+
+	// Request a reset so we have a token.
+	if err := svc.RequestPasswordReset(context.Background(), "confpwd@example.com"); err != nil {
+		t.Fatalf("RequestPasswordReset: %v", err)
+	}
+
+	// Extract raw token from email.
+	msgs := sender.Sent()
+	if len(msgs) == 0 {
+		t.Fatal("no reset email sent")
+	}
+	body := msgs[0].TextBody
+	idx := strings.Index(body, "?token=")
+	if idx < 0 {
+		t.Fatalf("no ?token= in email body: %s", body)
+	}
+	rawToken := strings.TrimSpace(strings.SplitN(body[idx+len("?token="):], "\n", 2)[0])
+
+	// Confirm with new password.
+	newPwd := "newpassword123"
+	if err := svc.ConfirmPasswordReset(context.Background(), rawToken, newPwd); err != nil {
+		t.Fatalf("ConfirmPasswordReset: %v", err)
+	}
+
+	// Token should be marked used.
+	h := tokenHash(rawToken)
+	resetRepo.mu.Lock()
+	tok := resetRepo.tokens[h]
+	resetRepo.mu.Unlock()
+	if tok == nil || tok.UsedAt == nil {
+		t.Error("token should have used_at set after confirm")
+	}
+
+	// Identity password hash should be updated — old password should not verify.
+	identities.mu.Lock()
+	ident := identities.identities["confpwd@example.com"]
+	newHash := ident.PasswordHash
+	identities.mu.Unlock()
+
+	if err := passwordhash.Verify(newHash, newPwd); err != nil {
+		t.Errorf("new password does not verify against stored hash: %v", err)
+	}
+	if err := passwordhash.Verify(newHash, "oldpassword"); err == nil {
+		t.Error("old password should not verify against new hash")
+	}
+
+	// Account lockout should be cleared.
+	accounts.mu.Lock()
+	acct := accounts.accounts[a.ID]
+	accounts.mu.Unlock()
+	if acct.FailedLoginCount != 0 {
+		t.Errorf("failed_login_count = %d, want 0 after reset", acct.FailedLoginCount)
+	}
+	if acct.LockedUntil != nil {
+		t.Error("locked_until should be nil after reset")
+	}
+}
+
+func TestConfirmPasswordReset_WeakPassword_ValidationError(t *testing.T) {
+	svc, _, _, _, _, _, _ := buildSvc()
+	err := svc.ConfirmPasswordReset(context.Background(), "anytoken", "short")
+	var ve *auth.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want ValidationError", err)
+	}
+	found := false
+	for _, fe := range ve.Fields {
+		if fe.Field == "new_password" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected field 'new_password' in errors: %v", ve.Fields)
+	}
+}
+
+func TestConfirmPasswordReset_UnknownToken_ErrTokenInvalid(t *testing.T) {
+	svc, _, _, _, _, _, _ := buildSvc()
+	err := svc.ConfirmPasswordReset(context.Background(), "completelyunknowntoken", "newpassword123")
+	if !errors.Is(err, auth.ErrTokenInvalid) {
+		t.Errorf("err = %v, want ErrTokenInvalid", err)
+	}
+}
+
+func TestConfirmPasswordReset_ExpiredToken_ErrTokenExpired(t *testing.T) {
+	accounts := newFakeAccountRepo()
+	identities := newFakeIdentityRepo()
+	verifyRepo := newFakeVerificationRepo()
+	resetRepo := newFakeResetRepo()
+	accounts.identityRepo = identities
+	verifyRepo.accountRepo = accounts
+	verifyRepo.identityRepo = identities
+	resetRepo.accountRepo = accounts
+	resetRepo.identityRepo = identities
+	events := &fakeEventRepo{}
+	sessions := newFakeSessionStore()
+
+	a := seedAccount(accounts, identities, "expreset@example.com", "pass1234", auth.AccountStatusActive)
+
+	// Find the identity ID.
+	identities.mu.Lock()
+	ident := identities.identities["expreset@example.com"]
+	identities.mu.Unlock()
+
+	// Insert an already-expired reset token.
+	rawToken := "expiredresettoken"
+	h := tokenHash(rawToken)
+	now := time.Now().UTC()
+	expiredTok := &auth.PasswordResetToken{
+		ID:             mustUUID(),
+		AuthIdentityID: ident.ID,
+		TokenHash:      h,
+		ExpiresAt:      now.Add(-1 * time.Hour), // in the past
+		CreatedAt:      now,
+	}
+	resetRepo.mu.Lock()
+	resetRepo.tokens[h] = expiredTok
+	resetRepo.mu.Unlock()
+
+	svc := auth.NewService(accounts, identities, events, sessions, verifyRepo, &fakeEmailSender{}, "http://localhost:13000/verify-email", resetRepo, "http://localhost:13000/reset-password")
+
+	err := svc.ConfirmPasswordReset(context.Background(), rawToken, "newpassword123")
+	if !errors.Is(err, auth.ErrTokenExpired) {
+		t.Errorf("err = %v, want ErrTokenExpired", err)
+	}
+	_ = a
+}
+
+func TestConfirmPasswordReset_AlreadyUsedToken_ErrTokenExpired(t *testing.T) {
+	accounts := newFakeAccountRepo()
+	identities := newFakeIdentityRepo()
+	verifyRepo := newFakeVerificationRepo()
+	resetRepo := newFakeResetRepo()
+	accounts.identityRepo = identities
+	verifyRepo.accountRepo = accounts
+	verifyRepo.identityRepo = identities
+	resetRepo.accountRepo = accounts
+	resetRepo.identityRepo = identities
+	events := &fakeEventRepo{}
+	sessions := newFakeSessionStore()
+
+	seedAccount(accounts, identities, "usedreset@example.com", "pass1234", auth.AccountStatusActive)
+	identities.mu.Lock()
+	ident := identities.identities["usedreset@example.com"]
+	identities.mu.Unlock()
+
+	// Insert an already-used reset token.
+	rawToken := "usedresettoken12345"
+	h := tokenHash(rawToken)
+	now := time.Now().UTC()
+	usedTok := &auth.PasswordResetToken{
+		ID:             mustUUID(),
+		AuthIdentityID: ident.ID,
+		TokenHash:      h,
+		ExpiresAt:      now.Add(1 * time.Hour),
+		UsedAt:         &now, // already used
+		CreatedAt:      now,
+	}
+	resetRepo.mu.Lock()
+	resetRepo.tokens[h] = usedTok
+	resetRepo.mu.Unlock()
+
+	svc := auth.NewService(accounts, identities, events, sessions, verifyRepo, &fakeEmailSender{}, "http://localhost:13000/verify-email", resetRepo, "http://localhost:13000/reset-password")
+
+	err := svc.ConfirmPasswordReset(context.Background(), rawToken, "newpassword123")
+	if !errors.Is(err, auth.ErrTokenExpired) {
+		t.Errorf("already-used token: err = %v, want ErrTokenExpired", err)
+	}
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
