@@ -36,6 +36,8 @@ demo แรกนี้ **ภายใน** — พิสูจน์ 2 อย�
 
 **Next.js + TypeScript** (React/SSR). responsive web (vision §9 ใช้ web ก่อน mobile). consume backend API ผ่าน envelope §8 ของ 02-architecture; auth ผ่าน session cookie (httpOnly) + ส่ง `X-Workspace-Slug` ต่อ request (02 §5).
 
+**Baseline (ล็อก D22):** App Router · Tailwind CSS · **pnpm** · เรียก API แบบ client-side `fetch` (`credentials:'include'` — พิสูจน์ CORS+cookie จริง) · test lane = **Vitest**. อยู่ที่ `app-web/` คู่กับ `app-api/`.
+
 ## 4. Build Approach (D19)
 
 - **1 milestone = 1 vertical slice** ที่ demo ได้ (BE+FE) — proof-of-loop ต้องเห็นของจริงทำงานทุกรอบ
