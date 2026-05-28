@@ -23,6 +23,11 @@ RUN pnpm build
 FROM node:22-alpine AS runner
 
 ENV NODE_ENV=production
+# Next standalone server binds to process.env.HOSTNAME; Docker sets HOSTNAME to the
+# container id, which makes it listen only on the container IP. Force 0.0.0.0 so the
+# in-container healthcheck (localhost) and all interfaces work.
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
 
 WORKDIR /app
 
