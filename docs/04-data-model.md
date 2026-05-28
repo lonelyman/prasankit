@@ -352,6 +352,7 @@ goose, ต่อจาก `000001_enable_extensions` (มี CITEXT แล้ว
 ## 8. ค้างไว้ให้ milestone ถัดไป
 
 - per-workspace **profile** (v1 `memberships.profile_id`) — ถ้า M2 ต้องการชื่อ/ตำแหน่งราย workspace
+- **Placeholder member + claim-by-email (M2 — User request 2026-05-28):** รองรับ "คน/โปรไฟล์" ใน workspace ที่ **ยังไม่มี account** (สร้างไว้ลอย ๆ, assign งานใน project ได้ แต่ **ล็อกอินไม่ได้** — ต่างจาก invite ที่ให้สิทธิ์เข้า) แล้ว **"claim/link"** ผูกเข้ากับ `user_account` จริงเมื่อเจ้าตัวสมัครภายหลัง. ต้อง **verify email-match** ตอน claim (กัน claim ผิดคน, เหมือน accept-invite §4.3). pattern: GitHub commit-claim-by-email / Jira assign-before-join. ต้องแยก **profile (workspace-scoped)** ออกจาก **user_account (global)** — v1 `memberships.profile_id` เป็นเค้าเดิม. **ติดที่ M1 ตอนนี้:** `workspace_memberships.user_account_id` = NOT NULL (สมาชิกต้องมี account); M2 ต้องเพิ่มชั้น profile ที่ account-optional. ออกแบบรวมกับ assignee-FK ด้านล่าง
 - workspace `mode` (demo/production), `email_verified_required` policy — เมื่อมี onboarding policy จริง
 - OAuth columns บน `auth_identities` (`provider_user_id` ฯลฯ) — เมื่อ vision §9 un-non-goal SSO
 - audit_logs **UI** (03 §2 ตัดออก first cut) + `project_id` column (เพิ่มตอน M2 มี projects)
