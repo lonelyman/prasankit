@@ -8,7 +8,7 @@ POSTGRES_PRIMARY_PASSWORD ?= change_me
 POSTGRES_PRIMARY_NAME ?= prasankit
 POSTGRES_EXTERNAL_PORT ?= 15432
 POSTGRES_SSL_MODE ?= disable
-API_PORT ?= 8080
+API_EXTERNAL_PORT ?= 18080
 
 GOOSE_DSN ?= postgres://$(POSTGRES_PRIMARY_USER):$(POSTGRES_PRIMARY_PASSWORD)@localhost:$(POSTGRES_EXTERNAL_PORT)/$(POSTGRES_PRIMARY_NAME)?sslmode=$(POSTGRES_SSL_MODE)
 
@@ -35,7 +35,7 @@ web-up: env-init
 dev-up: infra-up db-migrate api-up web-up health
 
 health: env-init
-	curl -fsS "http://localhost:$(API_PORT)/api/v1/health/ready"
+	curl -fsS "http://localhost:$(API_EXTERNAL_PORT)/api/v1/health/ready"
 
 ps:
 	docker compose ps
