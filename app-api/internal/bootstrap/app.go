@@ -27,7 +27,7 @@ type App struct {
 }
 
 func InitializeApp(cfg config.Config) (*App, error) {
-	_, postgresSQLDB, err := OpenPostgres(cfg)
+	gormDB, postgresSQLDB, err := OpenPostgres(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func InitializeApp(cfg config.Config) (*App, error) {
 
 	return &App{
 		config:      cfg,
-		httpApp:     NewHTTPApp(postgresSQLDB, redisClient, storageClient, cfg.CORSAllowedOrigins),
+		httpApp:     NewHTTPApp(postgresSQLDB, gormDB, redisClient, storageClient, cfg.CORSAllowedOrigins, cfg.APIEnv),
 		postgresSQL: postgresSQLDB,
 		redis:       redisClient,
 		storage:     storageClient,

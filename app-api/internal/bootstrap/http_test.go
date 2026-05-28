@@ -223,6 +223,8 @@ func newTestHTTPApp(checks map[string]healthCheck) *fiber.App {
 		app,
 		health.NewHandler(checkFuncs),
 		[]string{"http://localhost:3000"},
+		nil, // authSvc — not needed for health tests
+		nil, // authH — not needed for health tests
 	)
 	return app
 }
