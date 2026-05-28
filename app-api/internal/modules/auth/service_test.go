@@ -125,6 +125,18 @@ func (r *fakeIdentityRepo) FindByID(ctx context.Context, id uuid.UUID) (*auth.Id
 	return &cp, nil
 }
 
+func (r *fakeIdentityRepo) FindByUserAccountID(ctx context.Context, accountID uuid.UUID) (*auth.Identity, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, i := range r.byID {
+		if i.UserAccountID == accountID {
+			cp := *i
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
+
 type fakeEventRepo struct {
 	mu     sync.Mutex
 	events []auth.SecurityEvent
@@ -1231,6 +1243,75 @@ func TestConfirmPasswordReset_AlreadyUsedToken_ErrTokenExpired(t *testing.T) {
 	err := svc.ConfirmPasswordReset(context.Background(), rawToken, "newpassword123")
 	if !errors.Is(err, auth.ErrTokenExpired) {
 		t.Errorf("already-used token: err = %v, want ErrTokenExpired", err)
+	}
+}
+
+// ── ResolveSessionAccount (lazy session revocation, 5c) ────────────────────────
+
+func TestResolveSessionAccount_NoPasswordChange_ReturnsAccount(t *testing.T) {
+	svc, accounts, identities, _, sessions, _, _ := buildSvc()
+	a := seedAccount(accounts, identities, "sess1@example.com", "pw", auth.AccountStatusActive)
+
+	raw := "raw-token-1"
+	sessions.sessions[tokenHash(raw)] = auth.SessionRecord{AccountID: a.ID, CreatedAt: time.Now().UTC().Add(-time.Hour)}
+
+	got, err := svc.ResolveSessionAccount(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if got == nil || got.ID != a.ID {
+		t.Errorf("account mismatch")
+	}
+}
+
+func TestResolveSessionAccount_SessionOlderThanPasswordChange_RevokesAnd401(t *testing.T) {
+	svc, accounts, identities, _, sessions, _, _ := buildSvc()
+	a := seedAccount(accounts, identities, "sess2@example.com", "pw", auth.AccountStatusActive)
+
+	now := time.Now().UTC()
+	// password changed AFTER the session was created → stale session.
+	changed := now
+	identities.identities["sess2@example.com"].PasswordChangedAt = &changed
+
+	raw := "raw-token-2"
+	hash := tokenHash(raw)
+	sessions.sessions[hash] = auth.SessionRecord{AccountID: a.ID, CreatedAt: now.Add(-time.Hour)}
+
+	_, err := svc.ResolveSessionAccount(context.Background(), raw)
+	if !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Fatalf("err = %v, want ErrUnauthenticated", err)
+	}
+	// Session must have been deleted (lazy revoke).
+	sessions.mu.Lock()
+	_, exists := sessions.sessions[hash]
+	sessions.mu.Unlock()
+	if exists {
+		t.Error("stale session should have been deleted")
+	}
+}
+
+func TestResolveSessionAccount_SessionNewerThanPasswordChange_ReturnsAccount(t *testing.T) {
+	svc, accounts, identities, _, sessions, _, _ := buildSvc()
+	a := seedAccount(accounts, identities, "sess3@example.com", "pw", auth.AccountStatusActive)
+
+	now := time.Now().UTC()
+	changed := now.Add(-time.Hour) // password changed BEFORE session created
+	identities.identities["sess3@example.com"].PasswordChangedAt = &changed
+
+	raw := "raw-token-3"
+	sessions.sessions[tokenHash(raw)] = auth.SessionRecord{AccountID: a.ID, CreatedAt: now}
+
+	got, err := svc.ResolveSessionAccount(context.Background(), raw)
+	if err != nil || got == nil {
+		t.Fatalf("err = %v, account = %v; want account, nil err", err, got)
+	}
+}
+
+func TestResolveSessionAccount_NoSession_Unauthenticated(t *testing.T) {
+	svc, _, _, _, _, _, _ := buildSvc()
+	_, err := svc.ResolveSessionAccount(context.Background(), "does-not-exist")
+	if !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Errorf("err = %v, want ErrUnauthenticated", err)
 	}
 }
 

@@ -681,3 +681,79 @@ func mustParseUUID(t *testing.T, s string) uuid.UUID {
 	}
 	return id
 }
+
+// TestAuth_SessionRevokedAfterPasswordReset proves lazy session revocation (5c):
+// a session created before the password reset is invalidated on its next request.
+func TestAuth_SessionRevokedAfterPasswordReset(t *testing.T) {
+	db := openTestDB(t)
+	rc := openTestRedis(t)
+	t.Cleanup(func() { truncateDataTables(t, db); rc.Close() })
+	truncateDataTables(t, db)
+
+	app := buildTestApp(t, db, rc)
+	email := "sess-revoke+" + fmt.Sprintf("%d", time.Now().UnixNano()) + "@example.com"
+	oldPassword := "oldpass1234!"
+
+	// Signup + activate + login → get an old session cookie.
+	doRequest(t, app, "POST", "/api/v1/auth/signup", map[string]any{
+		"email": email, "password": oldPassword, "display_name": "Sess Revoke",
+	}, nil)
+	activateAccount(t, db, email)
+
+	loginResp := doRequest(t, app, "POST", "/api/v1/auth/login", map[string]any{
+		"email": email, "password": oldPassword,
+	}, nil)
+	oldCookie := cookieByName(loginResp.Cookies, auth.SessionCookieName)
+	if oldCookie == nil {
+		t.Fatal("login: no session cookie")
+	}
+
+	// Sanity: old cookie works before reset.
+	meResp := doRequest(t, app, "GET", "/api/v1/auth/me", nil, []*http.Cookie{oldCookie})
+	if meResp.StatusCode != http.StatusOK {
+		t.Fatalf("me before reset: status = %d, want 200", meResp.StatusCode)
+	}
+
+	// Insert a reset token directly and confirm a new password.
+	var identityID string
+	if err := db.Raw("SELECT id FROM auth_identities WHERE email = ?", email).Scan(&identityID).Error; err != nil || identityID == "" {
+		t.Fatalf("look up identity id: err=%v id=%q", err, identityID)
+	}
+	rawToken := "sess-revoke-reset-token"
+	tokenID, _ := ids.New()
+	now := time.Now().UTC()
+	if err := authdbrepo.NewPasswordResetTokenRepo(db).Create(context.Background(), auth.PasswordResetToken{
+		ID:             tokenID,
+		AuthIdentityID: mustParseUUID(t, identityID),
+		TokenHash:      securetoken.Hash(rawToken),
+		ExpiresAt:      now.Add(time.Hour),
+		CreatedAt:      now,
+	}); err != nil {
+		t.Fatalf("create reset token: %v", err)
+	}
+	confirmResp := doRequest(t, app, "POST", "/api/v1/auth/password-reset/confirm", map[string]any{
+		"token": rawToken, "new_password": "brandnewpass123",
+	}, nil)
+	if confirmResp.StatusCode != http.StatusOK {
+		t.Fatalf("confirm reset: status = %d, want 200; body = %v", confirmResp.StatusCode, confirmResp.Body)
+	}
+
+	// Old cookie must now be revoked → 401.
+	meAfter := doRequest(t, app, "GET", "/api/v1/auth/me", nil, []*http.Cookie{oldCookie})
+	if meAfter.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("me after reset with old cookie: status = %d, want 401", meAfter.StatusCode)
+	}
+
+	// Fresh login with the new password yields a working session.
+	newLogin := doRequest(t, app, "POST", "/api/v1/auth/login", map[string]any{
+		"email": email, "password": "brandnewpass123",
+	}, nil)
+	newCookie := cookieByName(newLogin.Cookies, auth.SessionCookieName)
+	if newCookie == nil {
+		t.Fatal("login with new password: no session cookie")
+	}
+	meNew := doRequest(t, app, "GET", "/api/v1/auth/me", nil, []*http.Cookie{newCookie})
+	if meNew.StatusCode != http.StatusOK {
+		t.Fatalf("me with new cookie: status = %d, want 200", meNew.StatusCode)
+	}
+}

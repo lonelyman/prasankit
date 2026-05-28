@@ -38,6 +38,23 @@ func (r *IdentityRepo) FindByEmail(ctx context.Context, email string) (*auth.Ide
 	return &i, nil
 }
 
+// FindByUserAccountID returns the active email_password identity for the account.
+// Returns nil, nil when not found.
+func (r *IdentityRepo) FindByUserAccountID(ctx context.Context, accountID uuid.UUID) (*auth.Identity, error) {
+	var m identityModel
+	err := r.db.WithContext(ctx).
+		Where("user_account_id = ? AND identity_type_code = ? AND deleted_at IS NULL", accountID, auth.IdentityTypeEmailPassword).
+		First(&m).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find identity by user account id: %w", err)
+	}
+	i := modelToIdentity(m)
+	return &i, nil
+}
+
 // FindByID returns the identity for the given ID. Returns nil, nil when not found.
 func (r *IdentityRepo) FindByID(ctx context.Context, id uuid.UUID) (*auth.Identity, error) {
 	var m identityModel

@@ -27,6 +27,7 @@ const (
 	SecurityEventEmailVerified              = "email.verified"
 	SecurityEventPasswordResetRequested     = "password.reset_requested"
 	SecurityEventPasswordReset              = "password.reset"
+	SecurityEventSessionRevoked             = "session.revoked"
 )
 
 // Security event severity codes (§4.4).

@@ -19,16 +19,9 @@ func RequireSession(svc *auth.Service) fiber.Handler {
 			return presenter.RenderError(c, fiber.StatusUnauthorized, "auth.unauthenticated", "Not authenticated")
 		}
 
-		rec, err := svc.GetSession(c.Context(), rawToken)
-		if err != nil {
-			return presenter.RenderError(c, fiber.StatusUnauthorized, "auth.unauthenticated", "Not authenticated")
-		}
-		if rec == nil {
-			return presenter.RenderError(c, fiber.StatusUnauthorized, "auth.unauthenticated", "Session expired or not found")
-		}
-
-		// Load account FRESH from Postgres (D16).
-		account, err := svc.GetAccountByID(c.Context(), rec.AccountID)
+		// Resolve session → fresh account (D16), with lazy session revocation
+		// (a session created before password_changed_at is invalidated).
+		account, err := svc.ResolveSessionAccount(c.Context(), rawToken)
 		if err != nil || account == nil {
 			return presenter.RenderError(c, fiber.StatusUnauthorized, "auth.unauthenticated", "Not authenticated")
 		}

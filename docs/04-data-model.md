@@ -161,7 +161,9 @@ verification/reset token + invitation **ไม่มีคอลัมน์ sta
 >
 > **Password reset (D35, dispatch 5b):**
 > - **Request** (`POST /auth/password-reset/request`) คืน **204 เสมอ** (anti-enum; ออก token ได้แม้ account ยัง `pending_verification` — recovery). **Confirm** (`POST /auth/password-reset/confirm {token,new_password}`): validate password ≥8 → guarded consume token (`RowsAffected==0`→410) → set `password_hash`+`password_changed_at` → **clear lockout** (`failed_login_count=0`,`locked_until=NULL`). **ไม่ auto-login**; **ไม่แตะ `account_status_code`** (reset ≠ verify email, แยก concern). token TTL=1h, 1 active/identity.
-> - `password_changed_at` อยู่ใน `auth_identities` (เขียนตอน reset) — มีใน GORM model+domain เพื่อ model สะท้อน table (external review รอบ 2). จะ load-bearing เต็มตัวใน **D36/5c (lazy session revocation)**: `requireSession` เทียบ `session.created_at < password_changed_at` → ทำลาย session + 401.
+> - `password_changed_at` อยู่ใน `auth_identities` (เขียนตอน reset) — มีใน GORM model+domain เพื่อ model สะท้อน table.
+>
+> **Lazy session revocation (D36, dispatch 5c — ปิด M1 BE):** `requireSession` → `ResolveSessionAccount`: ถ้า `session.created_at < identity.password_changed_at` → ลบ session ออกจาก Redis + 401 (password reset เตะอุปกรณ์เก่าทั้งหมดออกโดยไม่ต้องมี account→session index). `password_changed_at == nil` → ข้าม (no regression). consolidate `GetSession`+`GetAccountByID` → `ResolveSessionAccount`. **Open thread (future, จาก external review):** load account+identity เป็น single JOIN ถ้า `requireSession` กลายเป็น hot path; rethink revocation semantics เมื่อมี multi-identity/MFA (M2+).
 
 > **Session ไม่อยู่ใน Postgres (D13).** opaque token สุ่ม 32B → เก็บ **sha256 hash ใน Redis** เป็น `SessionRecord` พร้อม TTL (ดู §6). v1 มี `auth_sessions` ใน Postgres — v2 **ไม่ทำ** (revoke = ลบ key Redis). device/session-list = future.
 

@@ -266,19 +266,47 @@ func (s *Service) Logout(ctx context.Context, rawToken string, accountID *uuid.U
 	return nil
 }
 
-// GetSession resolves a raw token to its SessionRecord.
-func (s *Service) GetSession(ctx context.Context, rawToken string) (*SessionRecord, error) {
+// ResolveSessionAccount validates a raw session token and returns the fresh
+// account (D16 — no stale payload). It also enforces lazy session revocation:
+// a session created before the account's password_changed_at is invalidated
+// (deleted + ErrUnauthenticated), so a password reset logs out every prior
+// device without needing an account→session index in Redis.
+func (s *Service) ResolveSessionAccount(ctx context.Context, rawToken string) (*Account, error) {
 	hash := securetoken.Hash(rawToken)
 	rec, err := s.sessions.Get(ctx, hash)
 	if err != nil {
 		return nil, fmt.Errorf("get session: %w", err)
 	}
-	return rec, nil
-}
+	if rec == nil {
+		return nil, ErrUnauthenticated
+	}
 
-// GetAccountByID loads an account by ID — used by requireSession to get fresh data.
-func (s *Service) GetAccountByID(ctx context.Context, id uuid.UUID) (*Account, error) {
-	return s.accounts.FindByID(ctx, id)
+	account, err := s.accounts.FindByID(ctx, rec.AccountID)
+	if err != nil {
+		return nil, fmt.Errorf("find account: %w", err)
+	}
+	if account == nil {
+		return nil, ErrUnauthenticated
+	}
+
+	// Lazy session revocation: if the password changed after this session was
+	// created, the session is stale — kill it and reject.
+	ident, err := s.identities.FindByUserAccountID(ctx, account.ID)
+	if err != nil {
+		return nil, fmt.Errorf("find identity: %w", err)
+	}
+	if ident != nil && ident.PasswordChangedAt != nil && rec.CreatedAt.Before(*ident.PasswordChangedAt) {
+		_ = s.sessions.Delete(ctx, hash) // best-effort revoke
+		_ = s.events.Log(ctx, SecurityEvent{
+			ID:            mustNewID(),
+			UserAccountID: &account.ID,
+			EventType:     SecurityEventSessionRevoked,
+			Severity:      SecuritySeverityInfo,
+		})
+		return nil, ErrUnauthenticated
+	}
+
+	return account, nil
 }
 
 // validateSignupInput returns a *ValidationError when any field is invalid.

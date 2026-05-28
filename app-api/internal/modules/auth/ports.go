@@ -32,6 +32,10 @@ type IdentityRepository interface {
 	// FindByID returns the identity for the given ID.
 	// Returns nil, nil when not found.
 	FindByID(ctx context.Context, id uuid.UUID) (*Identity, error)
+
+	// FindByUserAccountID returns the active email_password identity for the
+	// account. Returns nil, nil when not found.
+	FindByUserAccountID(ctx context.Context, accountID uuid.UUID) (*Identity, error)
 }
 
 // EmailVerificationTokenRepository defines storage operations on
