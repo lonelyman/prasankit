@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { apiGet, apiPost, ApiError } from "./api";
+import type { MockInstance } from "vitest";
 
 beforeAll(() => {
   process.env.NEXT_PUBLIC_API_URL = "http://localhost:8080";
@@ -135,5 +136,69 @@ describe("apiPost", () => {
     expect(caught).toBeInstanceOf(ApiError);
     expect((caught as ApiError).code).toBe("validation.invalid_input");
     expect((caught as ApiError).details).toEqual(details);
+  });
+});
+
+describe("apiGet — workspaceSlug header", () => {
+  it("sends X-Workspace-Slug header when workspaceSlug option is provided", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: { id: "ws-1" } }),
+    } as unknown as Response);
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    await apiGet("/api/v1/workspaces/current", { workspaceSlug: "my-ws" });
+
+    const callArgs = (mockFetch as MockInstance).mock.calls[0] as [string, RequestInit];
+    const headers = callArgs[1].headers as Record<string, string>;
+    expect(headers["X-Workspace-Slug"]).toBe("my-ws");
+  });
+
+  it("does NOT send X-Workspace-Slug header when workspaceSlug is omitted", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: { status: "ok" } }),
+    } as unknown as Response);
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    await apiGet("/api/v1/health/ready");
+
+    const callArgs = (mockFetch as MockInstance).mock.calls[0] as [string, RequestInit];
+    const headers = (callArgs[1].headers ?? {}) as Record<string, string>;
+    expect(headers["X-Workspace-Slug"]).toBeUndefined();
+  });
+});
+
+describe("apiPost — workspaceSlug header", () => {
+  it("sends X-Workspace-Slug header when workspaceSlug option is provided", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      text: async () => JSON.stringify({ data: { id: "inv-1" } }),
+    } as unknown as Response);
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    await apiPost("/api/v1/workspaces/invitations", { email: "a@b.com", org_role_code: "user" }, { workspaceSlug: "my-ws" });
+
+    const callArgs = (mockFetch as MockInstance).mock.calls[0] as [string, RequestInit];
+    const headers = callArgs[1].headers as Record<string, string>;
+    expect(headers["X-Workspace-Slug"]).toBe("my-ws");
+  });
+
+  it("does NOT send X-Workspace-Slug header when workspaceSlug is omitted", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 204,
+      text: async () => "",
+    } as unknown as Response);
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    await apiPost("/api/v1/auth/logout", {});
+
+    const callArgs = (mockFetch as MockInstance).mock.calls[0] as [string, RequestInit];
+    const headers = (callArgs[1].headers ?? {}) as Record<string, string>;
+    expect(headers["X-Workspace-Slug"]).toBeUndefined();
   });
 });

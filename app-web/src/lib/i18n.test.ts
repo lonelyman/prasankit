@@ -17,6 +17,19 @@ describe("errorMessage — known codes", () => {
     "auth.token_expired",
     "auth.unauthenticated",
     "validation.invalid_input",
+    // Workspace / tenant / invitation codes (5b-FE)
+    "workspace.slug_reserved",
+    "workspace.slug_taken",
+    "tenant.workspace_required",
+    "tenant.workspace_not_found",
+    "tenant.forbidden",
+    "tenant.permission_denied",
+    "invitation.role_not_allowed",
+    "invitation.already_member",
+    "invitation.already_pending",
+    "invitation.invalid",
+    "invitation.expired",
+    "invitation.email_mismatch",
   ] as const;
 
   for (const code of knownCodes) {

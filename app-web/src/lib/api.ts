@@ -35,9 +35,17 @@ async function parseBody(res: Response): Promise<unknown> {
   return JSON.parse(text);
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
+export interface ApiRequestOptions {
+  workspaceSlug?: string;
+}
+
+export async function apiGet<T>(path: string, opts?: ApiRequestOptions): Promise<T> {
   const base = getBaseUrl();
-  const res = await fetch(`${base}${path}`, { credentials: "include" });
+  const headers: Record<string, string> = {};
+  if (opts?.workspaceSlug) {
+    headers["X-Workspace-Slug"] = opts.workspaceSlug;
+  }
+  const res = await fetch(`${base}${path}`, { credentials: "include", headers });
   const body = await parseBody(res);
 
   if (!res.ok) {
@@ -52,12 +60,16 @@ export async function apiGet<T>(path: string): Promise<T> {
   return (body as { data: T }).data as T;
 }
 
-export async function apiPost<T>(path: string, reqBody: unknown): Promise<T | null> {
+export async function apiPost<T>(path: string, reqBody: unknown, opts?: ApiRequestOptions): Promise<T | null> {
   const base = getBaseUrl();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (opts?.workspaceSlug) {
+    headers["X-Workspace-Slug"] = opts.workspaceSlug;
+  }
   const res = await fetch(`${base}${path}`, {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(reqBody),
   });
 

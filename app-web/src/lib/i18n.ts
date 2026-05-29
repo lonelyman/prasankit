@@ -82,6 +82,57 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
   "password_too_short": { th: "รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร", en: "Password must be at least 8 characters." },
   "display_name_required": { th: "กรุณากรอกชื่อที่แสดง", en: "Display name is required." },
   "display_name_too_long": { th: "ชื่อที่แสดงต้องไม่เกิน 100 ตัวอักษร", en: "Display name must be 100 characters or fewer." },
+  "workspace_name_required": { th: "กรุณากรอกชื่อ workspace", en: "Workspace name is required." },
+  "workspace_name_too_long": { th: "ชื่อ workspace ต้องไม่เกิน 100 ตัวอักษร", en: "Workspace name must be 100 characters or fewer." },
+  "slug_invalid": {
+    th: "Slug ต้องใช้ตัวอักษรพิมพ์เล็ก ตัวเลข หรือขีดกลาง และต้องเริ่มต้น/ลงท้ายด้วยตัวอักษรหรือตัวเลข",
+    en: "Slug must use lowercase letters, numbers, or hyphens, and must start and end with a letter or number.",
+  },
+
+  // --- workspace list / empty-state ---
+  "page.workspaces.title": { th: "Workspaces ของคุณ", en: "Your Workspaces" },
+  "page.workspaces.empty_heading": { th: "ยังไม่มี Workspace", en: "No workspaces yet" },
+  "msg.invite_hint": {
+    th: "มีคำเชิญอยู่? ตรวจสอบอีเมลของคุณเพื่อคลิกลิงก์",
+    en: "Have an invitation? Check your email for the link.",
+  },
+  "page.workspaces.create_heading": { th: "สร้าง Workspace ใหม่", en: "Create a new workspace" },
+
+  // --- workspace form labels ---
+  "label.workspace_name": { th: "ชื่อ Workspace", en: "Workspace name" },
+  "label.slug": { th: "Slug (URL identifier)", en: "Slug (URL identifier)" },
+  "label.contact_email": { th: "อีเมลติดต่อ", en: "Contact email" },
+
+  // --- workspace actions ---
+  "btn.enter_workspace": { th: "เข้าใช้งาน", en: "Enter" },
+  "btn.create_workspace": { th: "สร้าง Workspace", en: "Create workspace" },
+  "btn.switch_workspace": { th: "เปลี่ยน Workspace", en: "Switch workspace" },
+
+  // --- workspace home ---
+  "page.home.title": { th: "หน้าหลัก", en: "Home" },
+  "label.role": { th: "บทบาท", en: "Role" },
+
+  // --- invite form ---
+  "label.invite_email": { th: "อีเมลที่ต้องการเชิญ", en: "Invite email" },
+  "label.invite_role": { th: "บทบาท", en: "Role" },
+  "btn.send_invite": { th: "ส่งคำเชิญ", en: "Send invite" },
+  "msg.invitation_sent": { th: "ส่งคำเชิญสำเร็จแล้ว", en: "Invitation sent successfully." },
+  "page.home.invite_heading": { th: "เชิญสมาชิก", en: "Invite a member" },
+
+  // --- role option labels ---
+  "role.admin": { th: "Admin", en: "Admin" },
+  "role.executive": { th: "Executive", en: "Executive" },
+  "role.user": { th: "User", en: "User" },
+  "role.owner": { th: "Owner", en: "Owner" },
+
+  // --- accept invite states ---
+  "page.accept_invite.title": { th: "ยอมรับคำเชิญ", en: "Accept invitation" },
+  "msg.accepting_invite": { th: "กำลังยอมรับคำเชิญ…", en: "Accepting invitation…" },
+  "msg.accept_invite_success": { th: "ยอมรับคำเชิญสำเร็จ! กำลังพาคุณไปยัง Workspace…", en: "Invitation accepted! Redirecting to your workspace…" },
+  "msg.accept_invite_missing_token": {
+    th: "ไม่พบโทเค็นคำเชิญ กรุณาคลิกลิงก์จากอีเมล",
+    en: "No invitation token found. Please click the link in your email.",
+  },
 };
 
 export function t(key: string, lang: Lang): string {
@@ -126,6 +177,54 @@ const ERROR_MESSAGES: Record<string, Record<Lang, string>> = {
   "validation.invalid_input": {
     th: "ข้อมูลที่กรอกไม่ถูกต้อง กรุณาตรวจสอบและลองอีกครั้ง",
     en: "Some fields are invalid. Please check and try again.",
+  },
+  "workspace.slug_reserved": {
+    th: "Slug นี้ถูกสงวนไว้ กรุณาเลือก slug อื่น",
+    en: "This slug is reserved. Please choose a different one.",
+  },
+  "workspace.slug_taken": {
+    th: "Slug นี้ถูกใช้งานแล้ว กรุณาเลือก slug อื่น",
+    en: "This slug is already taken. Please choose a different one.",
+  },
+  "tenant.workspace_required": {
+    th: "กรุณาระบุ workspace",
+    en: "A workspace is required.",
+  },
+  "tenant.workspace_not_found": {
+    th: "ไม่พบ workspace นี้",
+    en: "Workspace not found.",
+  },
+  "tenant.forbidden": {
+    th: "คุณไม่มีสิทธิ์เข้าถึง workspace นี้",
+    en: "You do not have access to this workspace.",
+  },
+  "tenant.permission_denied": {
+    th: "คุณไม่มีสิทธิ์ดำเนินการนี้",
+    en: "You do not have permission to perform this action.",
+  },
+  "invitation.role_not_allowed": {
+    th: "บทบาทนี้ไม่สามารถเชิญได้",
+    en: "This role cannot be invited.",
+  },
+  "invitation.already_member": {
+    th: "ผู้ใช้นี้เป็นสมาชิกของ workspace แล้ว",
+    en: "This user is already a member of the workspace.",
+  },
+  "invitation.already_pending": {
+    th: "มีคำเชิญที่ยังไม่ได้รับการยืนยันสำหรับอีเมลนี้อยู่แล้ว",
+    en: "There is already a pending invitation for this email.",
+  },
+  "invitation.invalid": {
+    th: "คำเชิญนี้ไม่ถูกต้องหรือใช้งานไปแล้ว",
+    en: "This invitation is invalid or has already been used.",
+  },
+  "invitation.expired": {
+    th: "คำเชิญนี้หมดอายุแล้ว กรุณาขอคำเชิญใหม่",
+    en: "This invitation has expired. Please request a new one.",
+  },
+  "invitation.email_mismatch": {
+    th: "คำเชิญนี้ถูกส่งไปยังอีเมลอื่น กรุณาเข้าสู่ระบบด้วยอีเมลที่ถูกเชิญ",
+    en: "This invitation was sent to a different email address. Please log in with the invited email.",
   },
 };
 

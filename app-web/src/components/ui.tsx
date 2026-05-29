@@ -107,3 +107,47 @@ export function Alert({ variant, children, className = "" }: AlertProps) {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Select
+// ---------------------------------------------------------------------------
+
+export interface SelectOption {
+  value: string;
+  label: string;
+}
+
+export interface SelectProps
+  extends React.SelectHTMLAttributes<HTMLSelectElement> {
+  label?: string;
+  error?: string;
+  options: SelectOption[];
+}
+
+export function Select({ label, error, id, options, className = "", ...props }: SelectProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      {label && (
+        <label htmlFor={id} className="text-sm font-medium text-zinc-700">
+          {label}
+        </label>
+      )}
+      <select
+        id={id}
+        className={`rounded-md border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-zinc-400 bg-white ${
+          error
+            ? "border-red-400 bg-red-50 focus:ring-red-300"
+            : "border-zinc-300"
+        } ${className}`}
+        {...props}
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}

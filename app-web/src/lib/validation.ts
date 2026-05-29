@@ -27,3 +27,17 @@ export function validateNewPassword(v: string): string | null {
   if (v.length < 8) return "password_too_short";
   return null;
 }
+
+const SLUG_RE = /^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$/;
+
+export function validateWorkspaceName(v: string): string | null {
+  const trimmed = v.trim();
+  if (!trimmed) return "workspace_name_required";
+  if (trimmed.length > 100) return "workspace_name_too_long";
+  return null;
+}
+
+export function validateSlug(v: string): string | null {
+  if (!SLUG_RE.test(v)) return "slug_invalid";
+  return null;
+}
