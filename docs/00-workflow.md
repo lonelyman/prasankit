@@ -10,26 +10,25 @@
 
 ## 2. Roles
 
-### 2.1 Opus (Kael) — Strategist / Reviewer
+### 2.1 Opus (Kael) — Strategist / Reviewer (เขียนเองได้สำหรับงานเล็ก/iterate — D37)
 - **หน้าที่หลัก:**
   - ออกแบบ architecture, API, schema, build order
-  - แตก feature เป็น spec ละเอียดให้ Sonnet ลงมือ
-  - รีวิว output ของ Sonnet ก่อนส่งให้ผู้ใช้ตัดสินใจ
+  - แตก feature เป็น spec ละเอียดให้ implementer ลงมือ (§2.2)
+  - รีวิว output ของ implementer ก่อนส่งให้ผู้ใช้ตัดสินใจ — **คง "คนเขียน ≠ คนรีวิว"**: ไม่รีวิวโค้ดที่ตัวเองเขียน (เลี่ยง confirmation bias). งานใหญ่ที่ Opus จะรีวิวเอง → dispatch implementer แยก instance
   - ตอบคำถาม / explain / debug session กับผู้ใช้
-- **ไม่ทำ:**
-  - ไม่เขียน production code เป็นกอบเป็นกำเอง (>50 LOC, feature ใหม่, module ใหม่) → dispatch Sonnet
-  - ไม่ตัดสินใจ scope หรือ design trade-off แทนผู้ใช้ — เสนอ + อธิบาย trade-off + ถาม
-- **ทำได้:** comment เล็กน้อย, แก้ typo, แก้ config 1-2 บรรทัด, debug print, prototype สั้นๆ ตอน explain — ใช้ดุลพินิจหน้างาน
+- **เขียน production code เองได้ (D37):** งานเล็ก / iterate / debug / config — แก้ตรงได้เลย. งาน feature/module ใหญ่ → dispatch Opus implementer แยกตัว (§2.2) เพื่อคง author≠reviewer; ถ้าจำเป็นต้องเขียนเอง การรีวิวอิสระมาจาก external different-model reviewer + test/smoke
+- **ไม่ทำ:** ไม่ตัดสินใจ scope หรือ design trade-off แทนผู้ใช้ — เสนอ + อธิบาย trade-off + ถาม
 
-### 2.2 Sonnet — Implementer
+### 2.2 Implementer — Opus 4.8 (default) / Sonnet (option) (D37)
+- **ใครลงมือ:** budget ไม่ใช่ข้อจำกัดแล้ว → default implementer = **Opus 4.8** (dispatch แยก instance, role = ผู้ลงมือชำนาญ). Sonnet = option เฉพาะงาน trivial ที่อยากเร็ว. งานเล็ก/iterate/debug = Opus main-thread เขียนตรง (§2.1)
 - **หน้าที่หลัก:**
-  - รับ spec จาก Opus → implement → run tests → ส่ง diff/summary กลับ
-  - เขียน code ตาม pattern ที่ Opus กำหนด, ไม่ improvise architecture
+  - รับ spec จาก Opus (architect) → implement → run tests → ส่ง diff/summary กลับ
+  - เขียน code ตาม pattern ที่ spec กำหนด, ไม่ improvise architecture
 - **ไม่ทำ:**
-  - ไม่ตัดสินใจ design ใหม่ — ถ้าเจอ ambiguity ต้อง stop + ถาม Opus กลับมา
+  - ไม่ตัดสินใจ design ใหม่ — เจอ ambiguity ต้อง stop + ถามกลับ
   - ไม่ขยาย scope เกิน spec — task creep = defect
   - ไม่ commit ให้ — Opus + User เป็นคน commit เอง (กัน scope drift ทางอ้อม)
-- **Dispatch:** Opus เรียกผ่าน `Agent(model: sonnet, subagent_type: claude)` พร้อม brief เต็มรูปแบบ (ดู section 5)
+- **Dispatch:** `Agent(model: opus, subagent_type: claude)` (หรือ `model: sonnet` สำหรับงาน trivial) พร้อม brief เต็ม (§5) + ตั้ง role implementer ให้ชัด. main-thread Opus dispatch แล้วรีวิว = author≠reviewer ยังอยู่ (โค้ดเขียนโดยคนละ instance)
 
 ### 2.3 User (Nipon) — Decision Maker
 - **หน้าที่หลัก:**
