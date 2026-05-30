@@ -4,45 +4,68 @@
 > รายละเอียดเต็มอยู่ใน docs ที่ลิงก์. log การตัดสินใจอยู่ใน [DECISIONS.md](DECISIONS.md).
 
 ## อัปเดตล่าสุด
-**2026-05-28** — ปิด session: **M1 Backend เสร็จครบทุก dispatch** (account-safety 5a/5b/5c ปิดจบ). M1 BE ตอนนี้มี: auth (signup/login/logout, session, lockout) · workspace+membership+invitation · **email-verify + login-gating** · **password-reset** · **lazy session revocation**. จุดต่อไป = **M1 FE (Next.js)** เพื่อปิด M1 ทั้ง milestone. push ครบขึ้น origin/dev แล้ว.
+**2026-05-30** — ปิด session: **M1 ปิดครบทั้ง milestone** (BE + 5a FE auth + 5b FE workspace) · **Workflow อัปเป็น Opus 4.8 hybrid (D37)** · **M2 data-model design folded (D38-D44, amend 02 §4.3 → 4 invariants)** · **M2 6a-BE projects core เสร็จ** (CRUD + status_change + masters + audit_logs.project_id). ก้าวต่อ = **6b-BE-M2-team-positions** ปิด M2 BE ครึ่งหลัง. 6 commit นี้ session อยู่ local `dev` **ยังไม่ push**.
 
 ## สถานะตอนนี้
-- ✅ docs ฐานครบ: [00-workflow](00-workflow.md) · [01-vision](01-vision.md) · [02-architecture](02-architecture.md) · [03-build-plan](03-build-plan.md) · [04-data-model](04-data-model.md) · [DECISIONS](DECISIONS.md) (**D1–D36**)
-- ✅ **M0 walking skeleton (dual-stack)** — boot verified
-- ✅ **M1 data-model doc** — fold D24–D29
-- ✅ **M1 BE — committed + reviewed ครบ (Opus review ไม่ rubber-stamp + external review ต่าง-model หลายรอบ):**
-  - Foundation (migrations 000002–000007 + `pkg/{ids,securetoken,passwordhash}`) · Auth core · Email infra (Mailpit) · Tenancy backbone (4a) · Invitation (4b) — *จาก session ก่อน*
-  - **5a Email verification** (`f052b64`) — signup auto-ส่ง verify email + confirm (guarded consume, flip `pending_verification→active`) + resend + **login block จนกว่า verify** (403 `email_not_verified` หลัง password ผ่าน)
-  - **5b Password reset** (`e10efb8`) — request (anti-enum 204 เสมอ) + confirm (guarded consume → set password + clear lockout) + `password_changed_at`; reset **ไม่** verify email; TTL 1h
-  - **5c Lazy session revocation** (`a7cbcf1`) — `requireSession`→`ResolveSessionAccount`: session ที่สร้างก่อน `password_changed_at` ถูกลบ + 401 (reset เตะอุปกรณ์เก่าทุกตัว, ไม่ต้องมี Redis index)
-- ✅ decisions session นี้ fold แล้ว: **D33** (login gating) · **D34** (anti-abuse defer) · **D35** (password-reset BE) · **D36** (lazy session revocation)
+- ✅ docs ฐานครบ: [00-workflow](00-workflow.md) · [01-vision](01-vision.md) · [02-architecture](02-architecture.md) · [03-build-plan](03-build-plan.md) · [04-data-model](04-data-model.md) (รวม **§M2 ครบ — projects/team/positions/audit-by-project**) · [DECISIONS](DECISIONS.md) (**D1–D44**)
+- ✅ **M1 = Identity & Tenancy ปิดครบทั้ง milestone** — BE auth/account-safety/workspace/invitation + FE 5a auth (signup/login/verify/reset) + FE 5b workspace (list/create/accept-invite/home). proof-of-loop รอบแรกพิสูจน์ vertical slice ใช้ได้จริง
+- ✅ **Workflow §2 อัปเป็น Opus 4.8 hybrid (D37, cadeb6a)** — feature/module ใหญ่ = dispatch Opus แยก instance (role implementer) คง คนเขียน≠คนรีวิว · งานเล็ก/iterate/debug = Opus main-thread เขียนตรง · Sonnet = option เฉพาะ trivial
+- ✅ **M2 data-model design folded (06f284f)** — §M2 ใน [04-data-model.md](04-data-model.md): conventions §2.8-§2.11 (composite FK iron rule, ws-scoped customizable master, project slug 403→404, FK-by-code customizable) · schema projects/project_members/positions/junction + ALTER ws_memberships/audit_logs · isolation invariant ขยายเป็น 6 ข้อ · migration plan Pin A (6a 000008-000011 + 6b 000012-000016). D38-D44 ครบ
+- ✅ **M2 Phase 1 = data-model done** · ✅ **M2 Phase 2 step 6a-BE done (feb3f91)** — projects table + 3 masters + audit project_id + project module (domain/service/repo/handler) + middleware + routes; 43 project tests pass, gates ครบ, smoke e2e 13/13 (รวม D43 #6 SQL proof)
+- ✅ infra-bug fix (696c997) — `.env.example` inline comment → own-line (กัน make-export pollution)
 
-## วิธีรัน / เทสต์ M1 (สำคัญ — กันงงรอบหน้า)
-- `make dev-up` (infra→migrate→BE→FE→health). `make down` ปิด.
+## วิธีรัน / เทสต์ (สำคัญ — กันงงรอบหน้า)
+- `make dev-up` (infra→migrate→BE→FE→health). `make down` ปิด. `make api-up` rebuild api เฉพาะ
 - **host ports:** API `18080`, Web `13000`, pg `15433`*, redis `16380`*, minio `19000/19001`, **Mailpit SMTP `11025` / UI-API `18025`** (`*`=local `.env` ต่างจาก example เพราะชนเครื่อง dev)
-- **เทสต์ ต้องใช้ `cd app-api && make test`** (= `go test -p 1 ./...`) — **ห้าม `go test ./...` เปล่า ๆ** (integration ใช้ DB+Redis+Mailpit ร่วม + `TRUNCATE` → ขนานตีกัน flake). ⚠️ การ์ดเตือน: Sonnet สรุปว่า "เสร็จ" บางทีไม่จบจริง — **รัน `make test` + อ่าน diff เองทุกครั้ง**; เทสต์ integration ที่ "cached/skip" ให้ force-run `-count=1 -v` ดูว่า PASS จริงไม่ใช่ skip
+- **เทสต์ ต้องใช้ `cd app-api && make test`** (= `go test -p 1 ./...`) — **ห้าม `go test ./...` เปล่า ๆ** (integration ใช้ DB+Redis+Mailpit ร่วม + `TRUNCATE` → ขนานตีกัน flake). ⚠️ การ์ดเตือน: implementer สรุปว่า "เสร็จ" บางทีไม่จบจริง — **รัน `make test` + อ่าน diff เองทุกครั้ง**; เทสต์ integration ที่ "cached/skip" ให้ force-run `-count=1 -v` ดูว่า PASS จริงไม่ใช่ skip
+- **Goose CLI:** `make goose-up` (apply all), `make goose-down` (ถอย 1 step), `make goose-status`. หมายเหตุ Makefile default `GOOSE_DSN` ใช้ port 15432 แต่ docker bind 15433 — set env `GOOSE_DSN=postgres://prasankit:change_me@localhost:15433/prasankit?sslmode=disable` (สอดคล้องกับ integration test DSN) — minor infra inconsistency ไม่ใช่ blocker
 - **Mailpit UI:** `http://localhost:18025`
-- `.env` (gitignored) มี MAIL_* + **MAIL_INVITE_BASE_URL + MAIL_VERIFY_BASE_URL + MAIL_RESET_BASE_URL** ครบ; fresh clone ดู `.env.example`
+- **FE dev (`pnpm dev`):** ต้องมี `app-web/.env.local` ชี้ `NEXT_PUBLIC_API_URL=http://localhost:18080` (root `.env` ครอบ docker build-arg อยู่แล้ว)
+
+## Workflow patterns ที่ proven แล้ว session นี้ (Ultracode + D37)
+- **Design phase = multi-agent workflow แบบ N architect parallel → synthesize → M critic parallel → refine** — ใช้ใน M2 data-model (9 agents) + 6a spec (4 agents). ทั้ง 2 รอบจับ issue ระดับ design ก่อน implementation
+- **Implementer dispatch = D37 hybrid** (workflow 1 phase = 1 Opus implementer; main-thread Opus = architect/reviewer separate instance) — ใช้ใน 6a (1 implementer + 2 adversarial verifier). คง author≠reviewer ที่ระดับ instance
+- **StructuredOutput failure mode (v1 ของ 6a spec workflow)**: prompt prescriptive ยาวมาก (CONTEXT_BLOCK เกิน 50 บรรทัด) → agent ไม่เรียก StructuredOutput tool, response เป็น prose. **Fix** = ทำ prompt สั้น (point to docs แทน prescribe inline) + เตือน "MUST call StructuredOutput" ชัดเจน + ลด architect count (1 ดีกว่า 3 ที่งงตาย). v2 ผ่านสบาย
+- **trust-but-verify ตอน implementer return:** อ่าน diff เอง + `make test -count=1` (กัน cached) + smoke test e2e (curl ผ่าน live API หลัง `make api-up`) + SQL check audit invariant. ทุกข้อจับได้จริงรอบ session นี้
 
 ## ทำอะไรต่อ (เลือก — ถาม User ก่อน, ระบุข้อแนะนำ; ถามแบบ numbered list ในข้อความ ไม่ใช้ option-picker)
-1. **M1 FE (Next.js) — แนะนำ, ปิด M1 ทั้ง milestone** — login/signup + empty-state → create/accept-invite workspace (D20). FE stack = Next.js App Router + Tailwind + pnpm + client `fetch(credentials:'include')` + `X-Workspace-Slug` + Vitest, อยู่ `app-web/` (D18/D22). BE contract นิ่ง 100% แล้ว. ผ่าน `/spec`, 1 dispatch = 1 stack (D19). FE ต้อง consume: `/auth/{signup,login,logout,me,verify-email,verify-email/resend,password-reset/request,password-reset/confirm}` + `/workspaces` + `/invitations/accept`; หน้า `/verify-email`, `/reset-password`, `/invitations/accept` รับ `?token=`
-2. **flow-doc / permission matrix** (option) — user flow เต็ม หรือ matrix org×project role×action ก่อนลง M2
-3. **Security/rate-limit pass** (option) — ทำ rate-limit รวมทุก auth endpoint (D34 เลื่อนไว้)
+1. **6b-BE-M2-team-positions — แนะนำ ปิด M2 BE ครึ่งหลัง** — migrations 000012-000016 (position_masters / project_members composite FK / projects.owner FK ALTER / project_member_positions junction / ws_memberships company_position_code ALTER) + project_members domain/service/handler + positions CRUD + owner-set in projects.create flow + invite/role-change/position-assign audit. ตาม workflow pattern เดิม: Phase 2.1 spec design workflow → Phase 2.2 dispatch Opus implementer → Phase 2.3 review+smoke+commit
+2. **M2 FE (project list/detail/create + team mgmt)** — ทำหลัง 6b เสร็จ (D19 BE นำ FE) เพื่อปิด M2 ทั้ง milestone
+3. **flow-doc / permission matrix / Security-rate-limit pass / push** — งาน sideline ที่ defer ไว้
+4. **Push to origin/dev** — 6 commit นี้ session ยัง local อยู่; ถ้าอยาก backup → push
 
 ## Open threads (ยังไม่ตัดสิน — อย่าลืม)
-- **Rate-limit/cooldown auth endpoints** (login/signup/resend/reset) — เลื่อนไป dedicated pass (D34), ยังไม่มี ratelimit infra
-- **requireSession +1 query** (5c โหลด identity แยกเพื่อเช็ค `password_changed_at`) — ถ้าเป็น hot path เปลี่ยนเป็น single JOIN account+identity (external review 5c เสนอ; decline สำหรับ M1)
-- **Session-revocation semantics เมื่อมี multi-identity/MFA** (M2+) — `FindByUserAccountID` คืน identity เดียว ตอนนี้พอ; ต้อง rethink เมื่อ 1 account มีหลาย identity
-- **Dead code:** `extractVerifyTokenFromDB` ใน `auth_handler_test.go` (ตกค้างจาก 5a, ไม่เคยถูกเรียก) — ยังไม่ลบ (raw-SQL match เสี่ยง); ลบได้ทีหลัง
-- **Placeholder member + claim-by-email** = M2 ([04 §8](04-data-model.md)) — profile ที่ยังไม่มี account + ผูกทีหลัง verify email
-- **Assignee/approver FK → `workspace_memberships(id)` vs `user_accounts(id)`** = ตัดสิน M2 ([04 §8](04-data-model.md))
-- **Owner soft-delete invariant** — ห้าม soft-delete account ที่ owns active workspace (service-level ตอนทำ account-deletion + ownership transfer, post-M1)
-- **Test parallel-safety (tech-debt)** — พึ่ง `-p 1` (shared DB + global TRUNCATE). fix สะอาด = test DB แยก/scoped cleanup. ไม่ด่วน
-- **`isUniqueViolation` string-match `"23505"`** — harden เป็น typed `pgconn.PgError` ได้ทีหลัง
-- **RLS hardening** (02 §4.4) — candidate security pass · M5 finance = trim-candidate (03 §2)
+**จาก M2 §M2.8 (open threads ของ data-model — ดูเต็มใน [04 §M2.8](04-data-model.md)):**
+- **Placeholder member + claim-by-email** — confirm defer ออก M2 ตามเดิม; เปิดทาง M3+ split profile+user_account
+- **Project lifecycle state machine** (D44 free transition ใน M2) — M3+ พิจารณาถ้า deliverable/finance ผูก lifecycle
+- **Project owner soft-delete + ownership-transfer flow** — service-level M3+
+- **Project restore + slug uniqueness** (external review pass #2 จับ) — M3+ ตัดสิน policy: (a) prompt rename, (b) slug-mutate-on-delete, (c) interactive conflict-resolve
+- **Multi-company-position per membership** (D41 trade-off = 1:1 nullable) — M3+ upgrade เป็น join table ถ้าจำเป็น
+- **`requesting_unit` upgrade to master** — M3+ ถ้า executive rollup pain ของจริง
+- **Position seed default per workspace** — M3+ บน workspace.create service
+- **Project-scoped invitation / bulk add-remove / role-history table** — M3-M5+
+- **RLS hardening + audit policy for nullable ws_id** — security pass
 
-## M1 = Identity & Tenancy (build-plan §5) — เหลืออะไร
-**BE เสร็จครบแล้ว** (auth + account-safety + workspace/membership/invitation + resolver + permission gate + isolation invariant + audit log + i18n code + master-table). **เหลือแค่ M1 FE** (login/signup + empty-state create/accept-invite workspace) → ทำเสร็จ = ปิด M1 ทั้ง milestone แล้วไป M2 (Functional Project).
+**จาก M1 §8 ที่ยังค้าง:**
+- **Rate-limit/cooldown auth endpoints** (D34) — dedicated combined pass; ยังไม่มี ratelimit infra
+- **requireSession +1 query** (5c) — single JOIN ถ้าเป็น hot path; defer
+- **Session-revocation เมื่อ multi-identity/MFA** — M2+ rethink
+- **Dead code:** `extractVerifyTokenFromDB` ใน `auth_handler_test.go` — ลบได้ทีหลัง
+- **Test parallel-safety** (`-p 1` dependency) — tech-debt, ไม่ด่วน
+- **`isUniqueViolation` string-match "23505"** — harden เป็น typed `pgconn.PgError` ทีหลัง
+
+**Repo hygiene เล็ก ๆ:**
+- `app-web/.env.example` ถูก gitignore (`app-web/.gitignore:34 .env*`) — template ใน app-web ไม่มีผลต่อ fresh clone. ถ้าอยากให้ helpful ต้อง un-ignore แยก
+- Makefile root `GOOSE_DSN` default 15432 vs docker bind 15433 — ใช้ env override ผ่านได้ ไม่ใช่ blocker
+
+## M2 = Functional Project (build-plan §5) — เหลืออะไร
+**Phase 1 data-model = done** (D38-D44 folded) · **Phase 2 step 6a-BE = done** (project core + masters + audit project_id) · **Phase 2 step 6b-BE = ถัดไป** (team layer: project_members + positions + owner FK + ws company_position) · **Phase 3 FE = หลัง 6b** → ปิด M2 ทั้ง milestone แล้วไป M3 (Deliverable + ตรวจรับ — wedge ครึ่งแรก).
 
 ## เริ่ม session หน้ายังไง
-อ่านตามลำดับ: **ไฟล์นี้ → 00-workflow → 01-vision → 02-architecture → 03-build-plan → 04-data-model → DECISIONS** แล้วถาม User ว่าจะไปข้อไหนใน "ทำอะไรต่อ" (แนะนำ **M1 FE** ปิด milestone — ผ่าน `/spec`, stack = Next.js ที่ `app-web/`). อย่าลืม: dispatch ทุกก้อน = spec → Sonnet → **Opus review (ไม่ rubber-stamp) + trust-but-verify รัน make test เอง** → User เคาะ → commit; เทสต์ใช้ `make test`.
+อ่านตามลำดับ: **ไฟล์นี้ → 00-workflow (D37 hybrid implementer policy) → 01-vision → 02-architecture (§4.3 4 invariants) → 03-build-plan → 04-data-model (§M2 ทั้งหมด) → DECISIONS** แล้วถาม User ว่าจะไปข้อไหนใน "ทำอะไรต่อ" (แนะนำ **6b-BE-M2-team-positions** ผ่าน workflow design+dispatch pattern เดิม).
+
+อย่าลืม:
+- **Workflow ทุก substantive task** (Ultracode active) — design phase = multi-agent fan-out; implementation = D37 dispatch + adversarial verify
+- **trust-but-verify** ตอน implementer return — make test (`-count=1` กัน cached) + diff อ่านเอง + smoke e2e + SQL check invariants
+- **Decision ทุกอันที่ตกลงต้อง fold เข้า docs/ + DECISIONS.md ใน round เดียว** (§9 — ไม่ fold = ไม่ตัดสิน)
+- **dispatch implementer = D37 hybrid** (Opus คนละ instance, ไม่ใช่ main-thread เขียนเอง+รีวิวเอง — confirmation bias)
