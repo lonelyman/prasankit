@@ -377,3 +377,536 @@ goose, ต่อจาก `000001_enable_extensions` (มี CITEXT แล้ว
 - [01-vision.md](01-vision.md) — role §6, cross-cutting §8
 - [03-build-plan.md](03-build-plan.md) — M1 scope §5, cross-cutting ทอ M1 §6
 - `archive/v1-legacy` — reference schema (`git show archive/v1-legacy:app-api/database/migrations/...`) — ไม่ใช่ข้อผูกมัด (v2 ต่างที่ master-everywhere, no-tenant_id, session-in-Redis)
+
+---
+
+## M2 — Functional Project
+
+> **Status: Canonical (proposed).** เอกสารส่วนนี้ extend §M1 ตาม [03-build-plan §5 row M2](03-build-plan.md) — เพิ่ม `projects`, project lifecycle/type/role masters, `project_members`, positions (project + company) และ ALTER `audit_logs` เพิ่ม `project_id`. **อ้างอิงและสานต่อ conventions §2 และ tenant model §3 ของ M1 — ไม่เปิดใหม่.**
+> Decisions เสนอที่นี่: **D38–D44** (รอ User เคาะ; ดู §M2.7).
+
+## M2.1 ขอบเขตเอกสารนี้
+
+**อยู่ในนี้ (M2):**
+- `projects` (workspace-scoped business; CRUD + lifecycle status + type + owner + date range + slug)
+- `project_statuses` (global system master, 8 rows — vision §4.2)
+- `project_types` (global system master, 2 rows — vision §4.3) + `projects.requesting_unit` (free TEXT ตาม vision §4.3 wording; ดู notes §M2.3.3)
+- `project_roles` (global system master, 5 rows — vision §6.2)
+- `project_members` (workspace-scoped business; **composite FK `(workspace_id, workspace_membership_id)`** — "iron rule" §M2.2.1)
+- `project_positions` + `company_positions` (workspace-scoped **customizable** masters — 2 ตารางแยก, ดู §M2.3.2 และ **D39**)
+- `project_member_positions` (M:N link — 1 project_member สวมหลาย project position ได้, **D39**); **FK-by-code** ขนาน D28 (ดู §M2.2.4)
+- ALTER `workspace_memberships` (เพิ่ม `company_position_code` + backing `UNIQUE (workspace_id, id)`)
+- ALTER `audit_logs` (เพิ่ม nullable `project_id` + CHECK `project_id IS NULL OR workspace_id IS NOT NULL`) — ปิด open thread M1 §8
+
+**ยังไม่อยู่ (defer to M3+):**
+- **Placeholder member + claim-by-email** (M1 §8) — confirm defer ออกจาก M2; ต้อง profile layer ที่ account-optional, ออกแบบรวมกับ placeholder ใน M3+. M2 สมาชิก project ต้องมี `workspace_membership` active (ซึ่งมี `user_account` จริง). **D4 reaffirm:** external collaborator path ใน M2 = ws-invite (M1, D32) + add to project_members (M2) — external person ต้อง verify email ตาม D33 ก่อนถูก add. ไม่มี project-scoped invitation ใน M2
+- **Per-workspace profile** (`memberships.profile_id`, M1 §8) — coupling กับ placeholder-member; defer พร้อมกัน. 3-axis vision §6 (Role / Project Position / Company Position) แสดงครบได้โดยไม่ต้องมี profile row
+- **Project lifecycle state machine / transition guard** — M2 = free transitions (D44, build-plan locked). FK บังคับแค่ vocabulary; transition graph (เช่น Closed→Draft ห้าม) รอ M3+ เมื่อ deliverable/finance ผูก lifecycle จึงค่อยตัดสิน
+- **Project owner soft-delete + ownership-transfer flow** — เทียบ workspace owner-orphan M1 §4.1; ห้าม remove ownership ที่ยัง own project active. enforce ที่ service-layer ตอน account-deletion / member-removal use case (ทั้งคู่ M3+)
+- **Project-scoped invitation** (เชิญตรงเข้า project โดยไม่ผ่าน ws invite) — ปัจจุบันใช้ 2-step (ws invite → add to project) ครอบงานได้
+- **Project member bulk add/remove + role history table** — service-level M3+; ในระหว่างนี้ role history reconstruct ผ่าน `audit_logs` (`project_member.role_change`) — single source of truth
+- **Position seed default ตอน create workspace** — M2 workspace ใหม่เริ่มว่าง; ถ้า demo flow ต้องการ default = M3+ บน `workspace.create` service ไม่ใช่ migration seed
+- Deliverable (M3) / Task (M4) / Finance (M5) — milestone ถัดไป (M5 finance read-gate hook ดู §M2.5)
+
+**Decisions ที่ User ตัดสินไปแล้วก่อน M2 dispatch (fold เข้ารอบนี้):**
+- Placeholder-member + claim-by-email **defer** — สมาชิกต้องมี `workspace_membership` active (มี `user_account_id`)
+- Assignee/approver FK target = **`workspace_memberships(id)` composite `(workspace_id, membership_id)`** (iron rule จาก M1 external review, ปิด M1 §8 open thread)
+- `project_statuses`/`project_types`/`project_roles` = **global system master** (`is_system=true`, ไม่มี `workspace_id`, vocab ล็อกโดย product)
+- `positions` = **workspace-scoped customizable** master (มี `workspace_id`, อยู่ใต้ isolation invariant §4.3)
+- Project lifecycle = **free transitions** ใน M2 (D44)
+
+## M2.2 Conventions extension (M2)
+
+นอกจาก conventions §2 (M1) ที่ apply ต่อทั้งหมด, M2 เพิ่ม 4 pattern:
+
+### 2.8 Composite FK `(workspace_id, membership_id)` — "iron rule" (เสนอ **D38**; amend architecture §4.3)
+
+**กฎใหม่:** ทุก workspace-scoped business row ที่อ้างถึง "คน/entity ใน ws" ใช้ **composite FK** ไปที่ parent table:
+
+```sql
+FOREIGN KEY (workspace_id, workspace_membership_id)
+    REFERENCES workspace_memberships (workspace_id, id)
+```
+
+**ต้องมี backing UNIQUE บน parent (M2 ALTER):**
+```sql
+ALTER TABLE workspace_memberships
+    ADD CONSTRAINT uq_workspace_memberships_workspace_id_id
+    UNIQUE (workspace_id, id);
+```
+`id` ยังเป็น PK เดิม; constraint นี้เป็น no-op ด้าน data (PK guarantee uniqueness ของ `id` อยู่แล้ว) แต่ Postgres ต้องการ explicit composite UNIQUE บน referenced columns เป็น FK target.
+
+**ทำไมไม่ใช้ single-column FK → `workspace_memberships(id)`:**
+- single-column FK ยืนยันแค่ว่า "membership_id มีอยู่จริง" — **ไม่ยืนยันว่า membership อยู่ใน workspace เดียวกับ row ที่ถืออยู่**
+- ถ้า `project_members.workspace_id = ws_A` แต่ `membership_id` ชี้ไป membership ของ `ws_B` → Postgres รับ; กลายเป็น app-level invariant ที่พลาดได้
+- composite FK บังคับ `project_members.workspace_id == workspace_memberships.workspace_id` ที่ระดับ **DB** → cross-workspace assignment = constraint violation, ไม่ใช่ silent leak. นี่คือ **DB-level backstop** ของ isolation invariant §4.3 — service+repo ลืม `WHERE workspace_id` กลายเป็น insert/update fail (FK violation) ไม่ใช่ data leak
+
+> **Amends architecture §4.3 isolation invariant:** เดิม 3 ข้อ (repo รับ workspace_id, service ไม่เชื่อ client, test cross-ws). D38 เพิ่ม **ข้อ 4: DB-level composite FK backstop** บน workspace-scoped business row ที่อ้าง entity ใน ws. commit เดียวกับ M2 merge ต้อง update [02-architecture §4.3](02-architecture.md) ให้แสดง 4 ข้อ.
+
+**Scope exclusion (ไม่ใช้ composite FK):**
+- **Audit/identity columns** (`created_by`, `updated_by`, `deleted_by`, `invited_by`, `actor_user_account_id`, `owner_user_account_id` ที่ workspace-boundary level) → ใช้ single-column FK → `user_accounts(id)`. คน 1 คนมี membership หลาย ws (D3); actor อาจทำ action ก่อนได้ membership (เช่น owner สร้าง workspace) หรือหลัง membership ถูก remove (audit history). composite FK ที่นี่ผิด class
+- **Self-referential workspace_id FK** เช่น `projects.workspace_id → workspaces(id)` ใช้ single-column FK (workspace boundary เอง — left==right จะ self-redundant)
+- iron rule apply เฉพาะ **assignment columns** (assignee, approver, member-of-something, owner-of-something-ใน-ws)
+
+**Worked example — `project_members` insert:**
+
+ws A (`019d…aaa`) มี project P (`019d…ppp`) และ user U เป็นสมาชิก ws A ผ่าน membership M (`019d…mmm`, workspace_id=`019d…aaa`). สร้าง row assign U เข้า P เป็น Project Manager:
+
+```sql
+INSERT INTO project_members (
+    id, workspace_id, project_id,
+    workspace_membership_id, project_role_code, ...
+) VALUES (
+    '019d…xxx', '019d…aaa', '019d…ppp',
+    '019d…mmm', 'project_manager', ...
+);
+```
+
+DB ตรวจ:
+1. `(workspace_id=…aaa, project_id=…ppp)` → `projects(workspace_id, id)` — ต้อง match
+2. `(workspace_id=…aaa, workspace_membership_id=…mmm)` → `workspace_memberships(workspace_id, id)` — **บังคับ membership อยู่ ws เดียวกับ project_member**
+3. `project_role_code='project_manager'` → `project_roles(code)` — vocabulary check
+
+ถ้า attacker ส่ง payload assign membership ของ ws B (`…bbb`) เข้า project ของ ws A:
+- service resolve `workspace_id` จาก `TenantContext` (= `…aaa`, ไม่เชื่อ client)
+- insert จะมี `workspace_id=…aaa` แต่ `workspace_membership_id` ชี้ row ที่มี `workspace_id=…bbb`
+- composite FK #2 ล้ม → ROLLBACK ก่อน data leak
+
+> **Multi-ws user case (test requirement §M2.5):** ถ้า user U เป็นสมาชิก **ทั้ง** ws A และ ws B (membership_A, membership_B), attacker ที่รู้ `membership_B.id` แต่ context เป็น ws A → insert `workspace_id=…aaa, workspace_membership_id=membership_B.id` ก็ล้มที่ FK #2 ด้วยเหตุผลเดียวกัน. iron rule กัน "พลาด membership ผิด ws" ไม่ใช่กัน "user ผิด"
+
+**ใช้ใน M2:** `projects.owner_project_member_id` (composite ไป `project_members`, D40), `project_members.workspace_membership_id` + `.project_id`, `project_member_positions.project_member_id` + `.project_position_code` (FK-by-code, §M2.2.4), `workspace_memberships.company_position_code`. **M3+** ทุก task_assignee / budget_approver / deliverable_reviewer ใช้ pattern เดียวกัน
+
+### 2.9 Workspace-scoped customizable master ("user เพิ่ม row เองได้")
+
+M1 มีแต่ global/system master. M2 เปิด class ใหม่: **workspace-scoped customizable master** (architecture §7 ระบุไว้). กฎที่ต่างจาก global master §2.2:
+
+- มี `workspace_id NOT NULL` → อยู่ใต้ isolation invariant §4.3 (repo รับ `workspace_id` + ใส่ใน `WHERE` เสมอ)
+- `is_system` = `false` สำหรับ row ที่ user สร้าง; ถ้า seed default ตอนสร้าง ws (M3+) ค่อย `is_system=true` กัน user แก้/ลบ/เปลี่ยน `code` (enforce **ที่ service layer** เหมือน M1 §2.2 — ไม่ใช่ DB CHECK เพราะกฎ "ต่าง field แก้ได้/ไม่ได้" ตามชนิด row ไม่ static)
+- `code` UNIQUE **per workspace** ไม่ใช่ global: `UNIQUE (workspace_id, code)`
+- `code ~ '^[a-z][a-z0-9_]{1,62}$'` ยังบังคับ (format เดียวกับ system master เพื่อ predictable URL/API)
+- **`code` immutable ทุก row** (system **และ** non-system) — แก้ label/description/sort_order/status ได้ แต่ **ไม่เปลี่ยน code** เพราะ FK-by-code (D28, §M2.2.4) อ้างถึง. FE: ฟอร์ม edit ตัด field code ออกหลัง first save
+- **ห้าม reuse code ที่ deprecated** — `INSERT` row ใหม่ที่ code ตรงกับ row ใด ๆ ใน ws นั้น (ไม่ว่า `active` หรือ `deprecated`) = service reject. enforce ที่ service layer + test; UNIQUE ที่ `(workspace_id, code)` non-partial บังคับ DB-level อยู่แล้ว ("eternal code per workspace" — คง referential history)
+- **เลิกใช้ soft-delete pattern (`deleted_at`) — ใช้ `status='active'|'deprecated'` แทน** (matched M1 system master §2.2). เหตุผล: (1) consistent กับ M1; (2) Postgres FK target ต้องการ UNIQUE non-partial, ถ้าใช้ partial `WHERE deleted_at IS NULL` จะตั้ง composite FK ไม่ได้ → ใช้ `(workspace_id, code)` non-partial; (3) `deprecated` row คง referential history; FE filter ออกจาก picker
+- เพิ่ม audit column `created_by`/`updated_by` (user เพิ่ม row เอง → ต้อง trace ใครทำ) — ต่างจาก system master ที่ใส่ทาง migration
+- `description` = single-language เหมือน M1 §2.2 master (operator-facing TH ใน M2 product; ภาษาที่ 2 = migration เพิ่ม column ภายหลัง — YAGNI path เดียวกับ D27)
+
+### 2.10 Project slug = public identifier per workspace (apply D32 pattern + cross-ws probe fix)
+
+`projects.slug CITEXT NULL` — optional public identifier ภายใน workspace. URL: `/{workspace_slug}/projects/{project_slug}`.
+- **nullable** — Draft/imported project ใช้ UUID ก็ทำงานได้; slug = FE convenience auto-gen จาก `project_name` ตอน create
+- workspace-scoped unique: `UNIQUE (workspace_id, slug) WHERE deleted_at IS NULL AND slug IS NOT NULL`
+- format `CHECK (slug IS NULL OR slug ~ '^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$')` — ตรงกับ workspace slug pattern
+- **public-identifier treatment (refine D32 สำหรับ project):** D32 ต้นฉบับ (workspace) ใช้ 404 (ไม่พบ) vs 403 (พบแต่ไม่ใช่สมาชิก) เพราะ workspace existence รั่วทาง create 409 อยู่แล้ว. **Project ต่าง:** member ของ ws A สามารถ probe `/wsB/projects/{guess}` แล้วแยก 404 vs 403 ได้ → enumerate project name ของ ws B ที่ตัวเองรู้ slug. **M2 collapse 403↔404 สำหรับ cross-workspace probe:** ถ้า requester ไม่มี active membership ใน ws ของ URL → return **404 เสมอ** (ทั้งกรณี project ไม่มี และกรณี project มีแต่ไม่ใช่สมาชิก ws). ภายใน ws ที่ตัวเองเป็นสมาชิก → 404 (ไม่พบ project) vs 403 (พบแต่ project_role ไม่อนุญาต) แยกตามปกติ
+- **D32 email-match clause ไม่ extend มา project ใน M2** — joining project ต้องมี `workspace_membership` active; ws-invite-accept (M1) บังคับ email-match แล้ว (D32). project-scoped invitation = M3+ → ทบทวนตอนนั้น
+
+### 2.11 FK-by-code สำหรับ workspace-scoped customizable master (refine D28 scope)
+
+D28 ระบุ "master FK by `code` (TEXT)" สำหรับ global master. M2 ขยายให้ครอบ **workspace-scoped customizable master** ด้วย ด้วยเหตุผลเดียวกัน + 1 ข้อใหม่:
+
+- predicate อ่านออก, ไม่ต้อง resolve, denormalize ปลอดภัย — เหมือน D28 เดิม
+- **ใหม่:** `status='deprecated'` row คง `code` เดิม → FK อ้าง `code` ยัง resolve ได้ (deprecate ≠ delete, §2.9). assignment เก่าทั้งหมดยังเชื่อม row เดิม. FK-by-`id` ไม่ได้ดีกว่าตรงนี้เพราะ `code` immutable ทุก row (§2.9)
+- composite FK pattern (§M2.2.1) extend ให้ FK target = `(workspace_id, code)` non-partial UNIQUE
+- **Apply consistently ทุก customizable master ใน M2:** `workspace_memberships.company_position_code → company_positions(workspace_id, code)` **และ** `project_member_positions.project_position_code → project_positions(workspace_id, code)` (ไม่มี exception)
+
+## M2.3 M2 Schema
+
+### M2.3.1 Global / system masters (no `workspace_id`, `is_system=true`)
+
+**`project_statuses`** — project lifecycle (vision §4.2 — 8 rows, immutable)
+
+มาตรฐาน master §2.2:
+
+| Column | Type | Note |
+| --- | --- | --- |
+| `id` | UUID PK | UUIDv7 hardcoded ใน migration |
+| `code` | TEXT NOT NULL UNIQUE | `CHECK (code ~ '^[a-z][a-z0-9_]{1,62}$')` |
+| `label_th` | TEXT NOT NULL | |
+| `label_en` | TEXT NOT NULL | canonical English |
+| `description` | TEXT | nullable; single-language (TH ใน M2; ภาษาเพิ่ม = migration column, YAGNI per D27) |
+| `sort_order` | INT NOT NULL | `CHECK (sort_order >= 0)` |
+| `is_system` | BOOLEAN NOT NULL DEFAULT true | M2 = ทุก row system |
+| `status` | TEXT NOT NULL DEFAULT 'active' | `CHECK (status IN ('active','deprecated'))` |
+| `created_at/updated_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+
+- `uq_project_statuses_code` UNIQUE (`code`).
+- Domain constants (Go): **per-master package** กัน collision กับ M1 (`WorkspaceStatusActive`, `MembershipStatusActive`, `AccountStatusActive` ก็มีค่า `"active"`). ใช้ `projectstatus.Draft`, `projectstatus.Planning`, `projectstatus.Proposal`, `projectstatus.Active`, `projectstatus.Closing`, `projectstatus.Maintenance`, `projectstatus.Closed`, `projectstatus.Archived` — ไม่ flat constants ที่ปนกัน package เดียว. test/lint บังคับว่า service ส่งค่า status ลง `projects.project_status_code` ต้องเป็น `projectstatus.*` เท่านั้น (DB FK ไม่จับ literal-value collision เพราะค่า `"active"` มีอยู่ทั้ง 4 master)
+- **M2 = free transition** (D44; โค้ดไม่ branch validate "ไปไหนได้บ้าง"); FK บังคับแค่ "code อยู่ใน vocabulary". M3+ อาจเพิ่ม state-machine ที่ service layer (ไม่ใช่ DB CHECK) — ดู §M2.8
+- seed → §M2.4
+
+**`project_types`** — vision §4.3 (2 rows)
+
+โครงเดียวกับ `project_statuses`. Domain constants: `projecttype.Internal="internal"`, `projecttype.Client="client"`. seed §M2.4.
+
+- **Code branch ที่มี:** service validate "ถ้า `project_type_code='internal'` → `projects.requesting_unit` ควรไม่ว่าง" (warning, ไม่ใช่ DB CHECK — `requesting_unit` เป็น free text optional, ดู `projects` notes §M2.3.3)
+
+**`project_roles`** — vision §6.2 (5 rows)
+
+โครงเดียวกับ `project_statuses`. Domain constants: `projectrole.Owner="project_owner"`, `projectrole.Manager="project_manager"`, `projectrole.Member="member"`, `projectrole.Finance="finance"`, `projectrole.Viewer="viewer"`. seed §M2.4.
+
+- **Code branch ที่มี (M5 finance read-gate, vision §6.3 / D4):** `viewer` default ไม่เห็นข้อมูลการเงิน; `finance` อ่าน/แก้ตามสิทธิ์; `project_owner`/`project_manager` เห็นการเงินตาม project role. M5 finance read-path จะ branch จาก `projectrole.*` constant — **rename code = breaking M5 contract**. M2 pin contract ที่นี่ (ดู §M2.5 invariant ข้อ 5)
+
+> **คนละเรื่องกับ `org_roles` (M1).** `org_roles` = สิทธิ์ระดับ workspace (Owner/Admin/Executive/User, vision §6.1); `project_roles` = สิทธิ์ระดับโปรเจค (vision §6.2). 3-axis vision §6 แยกกันชัดเจน.
+
+### M2.3.2 Workspace-scoped customizable masters (มี `workspace_id`)
+
+**Design call — two tables, not one with category column** (เสนอ **D39**)
+
+vision §6 แยก **Project Position** (เช่น Technical Lead, BA — บทบาทในโปรเจคหนึ่ง) ออกจาก **Company Position** (เช่น Infrastructure Manager — ตำแหน่งงานในบริษัท) เป็น 2 แกนใน 3-axis model. M2 implement เป็น **2 ตารางแยก**:
+
+- **คนละ attachment point + cardinality:** Project Position attach ที่ `project_members` แบบ **M:N** (1 คนสวมหลาย hat ได้: TL + Architect — vision §6 ไม่ constraint 1-to-1); Company Position attach ที่ `workspace_memberships` แบบ **1:1 nullable** ใน M2 (ดู notes §M2.3.5 เรื่อง cardinality + upgrade path)
+- **คนละ lifecycle + admin:** Company Position = HR/org chart stable นานๆ; Project Position = หมุนเวียนตามโปรเจค, PMO/Project Owner คุม
+- **ป้องกัน category leak:** ถ้ารวมตารางเดียว + `category_code` → FK จาก `project_member_positions` กับ `workspace_memberships.company_position_code` จะอ้าง pool เดียวกัน = company title โผล่ใน project hat picker, vice versa — ต้อง guard ที่ service หรือ partial-index ด้วย `WHERE category_code='...'` (re-import enum-like predicate ที่ D28 พยายามหนี)
+- **ราคา:** boilerplate schema ซ้ำ (~12 column mirrored) — ยอมรับเพราะ master pattern templated อยู่แล้ว และ duplication เป็น mechanical ไม่ใช่ conceptual
+
+**`project_positions`** — หน้าที่ในโปรเจค (workspace-scoped customizable)
+
+| Column | Type | Note |
+| --- | --- | --- |
+| `id` | UUID PK | UUIDv7 (app) |
+| `workspace_id` | UUID NOT NULL → `workspaces(id)` | **isolation key** |
+| `code` | TEXT NOT NULL | unique **per workspace**, immutable (§2.9), no reuse after deprecate |
+| `label_th` | TEXT NOT NULL | |
+| `label_en` | TEXT NOT NULL | |
+| `description` | TEXT | nullable; single-language (§2.9) |
+| `sort_order` | INT NOT NULL DEFAULT 0 | `CHECK (sort_order >= 0)` |
+| `is_system` | BOOLEAN NOT NULL DEFAULT false | M2 ไม่ seed; ws ใหม่เริ่มว่าง |
+| `status` | TEXT NOT NULL DEFAULT 'active' | `CHECK (status IN ('active','deprecated'))` — ใช้แทน soft-delete (§2.9) |
+| `created_at/updated_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| `created_by` | UUID NOT NULL → `user_accounts(id)` | |
+| `updated_by` | UUID → `user_accounts(id)` | |
+
+Constraints/indexes:
+- `CHECK (code ~ '^[a-z][a-z0-9_]{1,62}$')`
+- `CREATE UNIQUE INDEX uq_project_positions_workspace_code ON project_positions (workspace_id, code)` — **non-partial** (covers ทั้ง active+deprecated); FK target ของ `project_member_positions` ตาม §M2.2.4
+- `CREATE INDEX ix_project_positions_workspace_status ON project_positions (workspace_id, status)` — list picker filter `status='active'`
+- **Isolation invariant §4.3:** repo method ทุกตัวรับ `workspace_id` + ใส่ใน `WHERE` เสมอ
+- **Test requirement:** "workspace B สร้าง `code='tech_lead'` ได้แม้ workspace A มีอยู่แล้ว"; "workspace A query ไม่เห็น project_positions ของ workspace B"; "เพิ่ม row ที่ code ตรงกับ row deprecated ใน ws เดียวกัน → service reject (no code reuse §2.9)"
+- M2 = **ไม่ seed** (ws ใหม่เริ่มว่าง); user/admin เพิ่มผ่าน CRUD ใน UI. vision §6 ตัวอย่าง (Technical Lead, ...) specific ต่ออุตสาหกรรม → ห้าม preset (vision §3 ไม่ล็อก industry)
+- `is_system=true` immutability (กัน user แก้/ลบ/เปลี่ยน code) enforce ที่ **service layer** ตาม M1 §2.2 pattern — ไม่ใช่ DB CHECK
+
+**`company_positions`** — ตำแหน่งงานในบริษัท (workspace-scoped customizable)
+
+โครงเดียวกับ `project_positions` ทุกประการ (column + constraint mirror; เปลี่ยนชื่อ index/constraint จาก `project_` → `company_`). attach ที่ `workspace_memberships.company_position_code` (ALTER §M2.3.5).
+
+- `uq_company_positions_workspace_code` UNIQUE (`workspace_id`, `code`) — **non-partial**; FK target ของ `workspace_memberships`
+- `ix_company_positions_workspace_status` ON (`workspace_id`, `status`)
+- Isolation + test ตามแบบ `project_positions`
+
+### M2.3.3 Workspace-scoped business — `projects`
+
+**`projects`** — entity หลักของ M2 (workspace-scoped, soft-delete)
+
+| Column | Type | Note |
+| --- | --- | --- |
+| `id` | UUID PK | UUIDv7 (app) |
+| `workspace_id` | UUID NOT NULL → `workspaces(id)` | **isolation key** |
+| `project_name` | TEXT NOT NULL | `CHECK (length(project_name) BETWEEN 1 AND 200)` |
+| `slug` | CITEXT | nullable — public identifier per ws (§2.10, D42) |
+| `project_type_code` | TEXT NOT NULL → `project_types(code)` | FK master by code (§2.4) |
+| `project_status_code` | TEXT NOT NULL → `project_statuses(code)` | FK master by code; **free transition** ใน M2 (D44) |
+| `owner_project_member_id` | UUID | single canonical Project Owner; composite FK ด้านล่าง (D40) — **NULL ได้ชั่วครู่ใน create-tx เท่านั้น** |
+| `requesting_unit` | TEXT | nullable; free text สำหรับ Internal Project (vision §4.3); `CHECK (requesting_unit IS NULL OR length(requesting_unit) BETWEEN 1 AND 200)` — DoS guard |
+| `description` | TEXT | nullable; `CHECK (description IS NULL OR length(description) <= 10000)` — DoS guard (consistent กับ project_name CHECK; service-layer validation ทับเพิ่มได้) |
+| `start_date` | DATE | nullable; วันเริ่มจริง |
+| `end_date` | DATE | nullable; วันสิ้นสุดตามแผน |
+| `created_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| `created_by` | UUID NOT NULL → `user_accounts(id)` | audit trail |
+| `updated_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| `updated_by` | UUID → `user_accounts(id)` | |
+| `deleted_at` | TIMESTAMPTZ | soft delete |
+| `deleted_by` | UUID → `user_accounts(id)` | |
+
+Constraints/indexes (ครบใน migration step 4, §M2.6):
+- `CHECK (slug IS NULL OR slug ~ '^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$')` — pattern เดียวกับ `workspaces.slug`
+- `CHECK (start_date IS NULL OR end_date IS NULL OR start_date <= end_date)` — date sanity
+- `CREATE UNIQUE INDEX uq_projects_workspace_slug_active ON projects (workspace_id, slug) WHERE deleted_at IS NULL AND slug IS NOT NULL` — slug unique per ws ตอน active
+- `CREATE INDEX ix_projects_workspace_status_created ON projects (workspace_id, project_status_code, created_at DESC) WHERE deleted_at IS NULL` — list view + status filter (executive dashboard, vision §6.1)
+- `CREATE INDEX ix_projects_workspace_type ON projects (workspace_id, project_type_code) WHERE deleted_at IS NULL`
+- `CREATE INDEX ix_projects_workspace_owner ON projects (workspace_id, owner_project_member_id) WHERE deleted_at IS NULL` — "โปรเจคของฉัน" view
+- `ALTER TABLE projects ADD CONSTRAINT uq_projects_workspace_id_id UNIQUE (workspace_id, id)` — backing สำหรับ composite FK ของ `project_members.(workspace_id, project_id)` (ตั้ง inline ใน create-table step)
+- **Owner composite FK (ใส่หลัง `project_members` exists; migration step 6 §M2.6):**
+  ```sql
+  ALTER TABLE projects
+      ADD CONSTRAINT fk_projects_owner_project_member
+      FOREIGN KEY (workspace_id, owner_project_member_id)
+      REFERENCES project_members (workspace_id, id);
+      -- IMMEDIATE FK (refined D40 หลัง external review #1, 2026-05-30).
+      -- column nullable → standard 3-step sequence ทำงานได้กับ IMMEDIATE
+      -- โดยไม่ต้อง DEFERRABLE: INSERT projects (owner=NULL) ผ่าน (NULL no check),
+      -- INSERT project_members ผ่าน, UPDATE projects SET owner_id ผ่าน (target exists แล้ว).
+      -- เลิกใช้ DEFERRABLE INITIALLY DEFERRED ที่เคยอยู่ใน workflow candidate.
+  ```
+
+**Notes:**
+- **`owner_project_member_id` = single canonical Project Owner column (D40, refined):** ขนาน `workspaces.owner_user_account_id` (M1 §4.3). **IMMEDIATE composite FK + standard 3-step sequence** (refined post-external-review #1): 1 tx → INSERT projects (owner_id=NULL) → INSERT project_members (creator role=`project_owner`) → UPDATE projects SET owner_project_member_id = new project_member.id → COMMIT. FK ผ่านทุก statement (NULL ตอน INSERT, member-exists ตอน UPDATE) — ไม่ต้อง DEFERRABLE.
+- ทำไมไม่ derive owner จาก `project_members WHERE project_role_code='project_owner'`: (1) O(1) ownership lookup ทุก list query (ไม่ JOIN+filter); (2) ขนาน `workspaces.owner_user_account_id`; (3) single-owner ที่ระดับ column (1 FK = 1 owner); ถ้าเก็บใน project_members ต้องบังคับด้วย partial unique ที่ขัดกับ role-reassign flow
+- **Service-layer guard 3 ข้อ** ตอน set/update `owner_project_member_id` (FK เป็น backstop, b/c คุม semantic ที่ FK ไม่จับ):
+  1. **mutation pattern ที่ legal มีเดียว**: create flow ด้านบน หรือ ownership-transfer flow (M3+) เท่านั้น — ห้าม UPDATE owner_id raw จาก path อื่น
+  2. service-layer guard ตอน set/update:
+     - (a) target `project_member.workspace_id` = project.workspace_id (composite FK เป็น backstop — DB จับให้ที่ FK violation **ทันที** ตอน statement, ไม่ต้องรอ COMMIT)
+     - (b) target `project_member.project_role_code = 'project_owner'` (cross-table CHECK ทำใน Postgres ไม่ได้)
+     - (c) target `project_member.removed_at IS NULL` (กัน owner ที่ออกจาก project ไปแล้ว — composite FK target เป็น non-partial UNIQUE จึงไม่จับเอง §M2.3.4)
+  3. test cases (§M2.5): set owner ไป non-owner role → service reject 422; set owner ไป removed member → service reject 422; UPDATE owner ไปคน ws อื่น → IMMEDIATE composite FK reject ที่ statement (proof DB backstop)
+- **Role-drift guard:** ห้าม UPDATE `project_members.project_role_code` ของ row ที่ `projects.owner_project_member_id` ชี้อยู่ โดยไม่ผ่าน ownership-transfer service. M2 enforce ที่ service + test (โอกาส abuse ใน M2 ต่ำเพราะ ownership-transfer ยังไม่อยู่ scope); M3+ พิจารณา trigger ถ้า service-layer พิสูจน์ leaky
+- **Owner-orphan invariant (parallel กับ M1 §4.1 workspace owner):** ห้าม transition owner's `workspace_membership` → `removed` หรือ remove จาก project_members ถ้า project ยัง status ≠ `archived`/`closed` — bind ที่ **service layer** ตอน member-removal/ownership-transfer use case (เหมือน workspace owner-orphan M1). ไม่ทำ DB trigger. ทั้ง use case ยังไม่อยู่ M2 scope → §M2.8
+- **`requesting_unit` = free text (ไม่ใช่ master FK):** vision §4.3 ระบุชัด "ระบุ Requesting Unit **แทนการสร้าง type ใหม่**" → ตั้งใจให้ per-project free text. ราคา: cross-project rollup by department (vision §6.1 executive view) ไม่มี vocabulary consistency → คำถาม "งบรวมแผนก IT" ตอบไม่ได้ตรง ๆ. **ยอมรับใน M2** เพราะ vision wording explicit; ถ้า product พิสูจน์ pain → upgrade เป็น `requesting_units` workspace-scoped customizable master (M3+) — ดู §M2.8
+- **`slug` = nullable, auto-gen at service:** project_id ใช้งานได้เสมอ; slug = FE convenience. service slugify จาก `project_name` ตอน create (พร้อม uniqueness check ใน ws); user แก้ได้ภายหลัง
+- **Project lifecycle = free transition (D44):** FK บังคับแค่ "code อยู่ใน vocabulary"; ทุก status change เขียน `audit_logs` (action=`project.status_change`, old/new) — ตามได้ทาง log แม้ user ทำผิด. state machine = M3+ ที่ service layer
+- **Soft-delete:** index ทุกตัวมี `WHERE deleted_at IS NULL`; restore = service-level (`UPDATE deleted_at=NULL`)
+- **Isolation invariant §4.3:** repo รับ `workspace_id` + `WHERE` เสมอ. test "workspace อื่นมองไม่เห็น project ของ ws นี้" + "สร้าง project ที่ owner เป็น project_member ของ ws อื่น → FK reject"
+
+### M2.3.4 Workspace-scoped business — `project_members` + `project_member_positions`
+
+**`project_members`** — ผูก `workspace_membership` เข้ากับ `project` พร้อม project role
+
+| Column | Type | Note |
+| --- | --- | --- |
+| `id` | UUID PK | UUIDv7 (app) |
+| `workspace_id` | UUID NOT NULL → `workspaces(id)` | **isolation key** (denormalized; bind composite FK) |
+| `project_id` | UUID NOT NULL | composite FK ↓ |
+| `workspace_membership_id` | UUID NOT NULL | composite FK ↓ ("iron rule" §M2.2.1) |
+| `project_role_code` | TEXT NOT NULL → `project_roles(code)` | FK by code; 1 role/member/project |
+| `joined_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | timestamp เข้าโปรเจค |
+| `removed_at` | TIMESTAMPTZ | NULL = ยังอยู่; non-NULL = ออกจาก project (state derive จาก timestamp, §2.6) |
+| `created_at/updated_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| `created_by` | UUID NOT NULL → `user_accounts(id)` | ใคร add member |
+| `updated_by` | UUID → `user_accounts(id)` | |
+
+Composite FKs (iron rule §M2.2.1):
+```sql
+FOREIGN KEY (workspace_id, project_id)
+    REFERENCES projects (workspace_id, id),
+
+FOREIGN KEY (workspace_id, workspace_membership_id)
+    REFERENCES workspace_memberships (workspace_id, id)
+```
+
+Constraints/indexes:
+- `CREATE UNIQUE INDEX uq_project_members_active ON project_members (workspace_id, project_id, workspace_membership_id) WHERE removed_at IS NULL` — 1 membership = 1 active row ต่อ project (กัน double-add; re-add หลัง remove = row ใหม่)
+- `CREATE INDEX ix_project_members_project_role ON project_members (workspace_id, project_id, project_role_code) WHERE removed_at IS NULL` — list "ทีมโปรเจคนี้" + filter ตาม role
+- `CREATE INDEX ix_project_members_membership ON project_members (workspace_id, workspace_membership_id) WHERE removed_at IS NULL` — "user นี้อยู่ project ไหนบ้างใน ws นี้"
+- `ALTER TABLE project_members ADD CONSTRAINT uq_project_members_workspace_id_id UNIQUE (workspace_id, id)` — **non-partial**; FK target สำหรับ `projects.owner_project_member_id` และ `project_member_positions`
+
+**Notes:**
+- **ไม่ใช้ soft-delete แบบ `deleted_at`** — semantic ของ "remove member from project" = ออกจากทีม ไม่ใช่ "ลบ row data". ใช้ `removed_at` (timestamp-derived state ตาม §2.6) เหมือน invitation/token. ผลลัพธ์: history คง row; M3+ deliverable/task ที่อ้าง member นี้ยังเชื่อม row เดิมได้
+- **ไม่มี `member_status_code` master** — vision §6.2 ไม่ระบุ vocabulary; `removed_at` เป็น single source of truth (เลี่ยง dual-source drift §2.6)
+- **Suspended เฉพาะ project = ไม่ทำ M2** — over-design; suspend ที่ระดับ ws via `workspace_memberships.membership_status_code='suspended'` ครอบ (ws-suspended member filter ออกจาก project view ที่ service layer)
+- **Role change = in-place UPDATE** `project_role_code` + audit_log (`project_member.role_change`, old/new); ไม่ remove+add. **Role history reconstructable จาก `audit_logs` เท่านั้น** (no temporal column ใน M2) — เพียงพอจน M5 finance/compliance ต้องการ "role as of timestamp" query ตรง ๆ จึงพิจารณา `project_member_role_history` table (M5+, ไม่กระทบ M2 schema)
+- **`removed_at` กับ composite FK target:** UNIQUE `(workspace_id, id)` non-partial → removed row ยังเป็น FK target ที่ valid. service ต้องตรวจ `removed_at IS NULL` เมื่อ set `projects.owner_project_member_id` หรือเมื่อ insert `project_member_positions.project_member_id` (cross-table CHECK ทำไม่ได้). test ครอบ §M2.5
+- **Isolation invariant §4.3:** repo รับ `workspace_id` + `WHERE` เสมอ
+- **Test requirements (≥6 cases, ดู §M2.5):** cross-ws membership reject, cross-ws project_id reject, ws-isolation read, re-add หลัง remove, multi-ws user (worked example §M2.2.1), display_name JOIN ผ่าน workspace_memberships ของ ws เดียวกัน
+
+**`project_member_positions`** — M:N project_member ↔ project_position (D39, FK-by-code §M2.2.4)
+
+vision §6 ไม่ constraint 1-1 ระหว่าง member กับ project position; ทีมจริงสวมหลาย hat (TL + Solution Architect). single-FK บน project_members จะบังคับ fake "primary position" rule ที่ vision ไม่ได้พูด → M:N safe default; collapse ทีหลังถ้า product พิสูจน์.
+
+| Column | Type | Note |
+| --- | --- | --- |
+| `id` | UUID PK | UUIDv7 (app) |
+| `workspace_id` | UUID NOT NULL → `workspaces(id)` | **isolation key** (denormalized) |
+| `project_member_id` | UUID NOT NULL | composite FK ↓ |
+| `project_position_code` | TEXT NOT NULL | composite FK ↓ (FK-by-code §M2.2.4) |
+| `created_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| `created_by` | UUID NOT NULL → `user_accounts(id)` | |
+
+Composite FKs:
+```sql
+FOREIGN KEY (workspace_id, project_member_id)
+    REFERENCES project_members (workspace_id, id),
+
+FOREIGN KEY (workspace_id, project_position_code)
+    REFERENCES project_positions (workspace_id, code)
+    -- บังคับ member กับ position อยู่ ws เดียวกัน + FK-by-code ขนาน D28
+```
+
+Constraints/indexes:
+- `CREATE UNIQUE INDEX uq_pmp_member_position ON project_member_positions (workspace_id, project_member_id, project_position_code)` — กัน assign position ซ้ำกับ member เดียวกัน
+- `CREATE INDEX ix_pmp_position ON project_member_positions (workspace_id, project_position_code)` — "ใครเป็น `tech_lead` ใน project นี้/ws นี้" reverse query
+
+**Notes:**
+- **ไม่มี soft-delete; ไม่มี `updated_at`/`updated_by`** — junction row ตามชื่อบ่งบอก = append/delete only (ไม่มี UPDATE path: ถอด position = DELETE, เพิ่ม = INSERT row ใหม่). **deviation จาก §2.1 "ทุกตาราง มี updated_at"** ขนาน M1 token tables (`auth_email_verification_tokens` / `auth_password_reset_tokens`) ที่ omit ด้วยเหตุผลเดียวกัน — flag ที่ note นี้
+- history (ใครเคย hold position อะไรเมื่อไหร่) อยู่ใน `audit_logs` (action=`position.assign` / `position.unassign`, project_id ฝัง — ดู §M2.3.5)
+- **FK-by-code = stable across deprecate:** `deprecated` position row ยังคง code → assignment เก่ายังเชื่อม row เดิม (§2.9 + §M2.2.4). FE filter `status='deprecated'` ออกจาก picker ของใหม่
+- service ต้องตรวจ `project_member.removed_at IS NULL` ก่อน INSERT (กัน assign position ให้ member ที่ออกจาก project แล้ว — composite FK ไม่จับเพราะ target UNIQUE non-partial)
+- **Test (§M2.5):** "workspace อื่นเห็น assignment ของ ws นี้ไม่ได้"; "reject assignment ที่ member.ws ≠ position.ws (composite FK ปฏิเสธที่ DB)"; "assign position ของ ws อื่นให้ member → FK reject"
+
+### M2.3.5 ALTER M1 tables
+
+**ALTER `workspace_memberships`** — backing UNIQUE (step 1, §M2.6) + company_position (step 8, §M2.6)
+
+> **Why 2 ALTERs:** step 1 (backing `UNIQUE (workspace_id, id)`) ต้องลง **ก่อน** step 5 (`project_members` composite FK ใช้ workspace_memberships เป็น parent target). step 8 (`company_position_code`) ต้องลง **หลัง** step 3 (`company_positions` create-table). FK dependency graph บังคับ split — ขนาน M1 §7 migration narrative.
+
+```sql
+-- step 1 (000008): backing composite UNIQUE (iron rule §M2.2.1 — FK target)
+ALTER TABLE workspace_memberships
+    ADD CONSTRAINT uq_workspace_memberships_workspace_id_id
+    UNIQUE (workspace_id, id);
+
+-- step 8 (000015): company_position_code (nullable; D41)
+ALTER TABLE workspace_memberships
+    ADD COLUMN company_position_code TEXT;
+
+ALTER TABLE workspace_memberships
+    ADD CONSTRAINT fk_workspace_memberships_company_position
+    FOREIGN KEY (workspace_id, company_position_code)
+    REFERENCES company_positions (workspace_id, code);
+```
+
+Index เพิ่ม: `CREATE INDEX ix_workspace_memberships_company_position ON workspace_memberships (workspace_id, company_position_code) WHERE company_position_code IS NOT NULL`.
+
+- `company_position_code` **nullable** — M1 onboarding ไม่บังคับให้ตอบ; user เพิ่มทีหลัง. existing M1 rows = NULL (no backfill)
+- Composite FK บังคับว่า company_position อยู่ ws เดียวกับ membership ("iron rule" §M2.2.1 + FK-by-code §M2.2.4 — consistent กับ `project_member_positions`)
+- **Cardinality = 1:1 nullable (M2 choice, explicit trade-off):** vision §6 ตัวอย่าง singular ("Infrastructure Manager"). ราคา: ถ้าจริงๆ คนถือ "Engineering Manager + Acting Head of Platform" พร้อมกัน → M2 บังคับเลือก 1. **Upgrade path คงเปิด:** ถ้า requirement multi-position ของจริง → migration เพิ่ม `workspace_membership_company_positions` join table (โครงขนาน `project_member_positions`) + drop column + API response คืน array — ไม่ break contract (FE handle 0/1/N เสมอ). M3+ พิจารณาตามหลักฐาน
+- **Ops note (production):** step 1 build UNIQUE index บน existing table. M1 ws-sized DB เล็ก lock สั้น; production-scale data ให้ใช้ `CREATE UNIQUE INDEX CONCURRENTLY` + `ADD CONSTRAINT ... USING INDEX` กัน table lock (M2 migration ใช้ inline เพราะ pre-prod)
+- **Open thread (M3+ placeholder member):** ถ้า profile layer มา (`memberships.profile_id`), company_position อาจย้ายลง profile table เพราะเป็น attribute ของ "ตัวบุคคลใน ws" มากกว่า "membership row" → revisit ตอนนั้น
+
+**ALTER `audit_logs`** — เพิ่ม `project_id` (เสนอ **D43**; ปิด M1 §8 open thread)
+
+```sql
+ALTER TABLE audit_logs ADD COLUMN project_id UUID;  -- nullable, NO FK
+
+ALTER TABLE audit_logs
+    ADD CONSTRAINT chk_audit_logs_project_implies_workspace
+    CHECK (project_id IS NULL OR workspace_id IS NOT NULL);
+    -- structural integrity: project-scoped event ต้องมี workspace context
+    -- (อยู่ใน carve-out D29 ที่ห้าม CHECK เฉพาะ vocabulary columns ไม่ใช่ structural)
+
+CREATE INDEX ix_audit_workspace_project_created
+    ON audit_logs (workspace_id, project_id, created_at DESC)
+    WHERE project_id IS NOT NULL;
+```
+
+- **nullable** — workspace-level mutation (workspace.create, member.invite) ไม่มี project context → NULL. existing M1 rows = NULL (no backfill needed; semantic ถูกต้อง)
+- **NO FK to `projects(id)`** ตามเหตุผลเดียวกับ `resource_id` (M1 §4.4): (1) log append-only ต้องคงอยู่แม้ project soft-deleted หรือ hard-deleted (M3+); (2) วงจร dep ใน migration. pattern เดียวกับ `resource_id` (bare UUID)
+- **CHECK `project_id IS NULL OR workspace_id IS NOT NULL`** — structural invariant: project มี ws เสมอ → project-scoped log ต้องมี ws ด้วย. D29 carve-out ห้าม CHECK เฉพาะ **vocabulary columns** (`action`/`resource_type`/`result`/`event_type`/`severity`); CHECK structural แบบนี้อยู่นอก carve-out
+- **Partial index** `WHERE project_id IS NOT NULL` — workspace-level event ไม่ bloat index นี้; ใช้ `ix_audit_workspace_created` เดิมสำหรับ ws-level
+- **`project_id` ไม่ใช่ isolation key — `workspace_id` ยังเป็นตัวเดียว.** read invariant (must-enforce, ดู §M2.5 invariant ข้อ 1 + 6):
+  1. **Write path:** `auditRepo.LogTx(tx, entry)` รับ `workspaceID` + `projectID` แยก param. `projectID != nil` ต้องคู่กับ `workspaceID != nil` (CHECK บังคับ DB-level อยู่แล้ว แต่ repo assertion fail fast); `projectID` ต้องเป็นค่าเดียวกับ `project_id` ที่ validated against `TenantContext.WorkspaceID` ใน tx ปัจจุบัน — ห้ามรับจาก client raw
+  2. **Read path:** ทุก query บน `audit_logs` ที่ filter ด้วย `project_id` ต้อง `WHERE workspace_id = ? AND project_id = ?` พร้อมกัน. ห้าม `WHERE project_id = ?` เดี่ยว. PR review = **P0 block** ถ้าเจอ
+  3. ถ้า service bug เขียน `(workspace_id=A, project_id=B's-project)` → CHECK ไม่จับ (workspace_id ไม่ NULL), read ตาม invariant 2 จะไม่ surface row นั้นใน ws A's "audit by project" view เพราะ workspace_id WHERE bind = A. test ครอบกรณีนี้ (§M2.5)
+- M2 mutation ใหม่ที่เขียน audit (project_id ฝัง): `project.create` / `project.update` / `project.delete` / `project.status_change` / `project_member.add` / `project_member.remove` / `project_member.role_change` / `project_position.create` / `project_position.update` / `project_position.deprecate` / `company_position.create` / `company_position.update` / `company_position.deprecate` / `position.assign` / `position.unassign`
+
+## M2.4 Seed data (M2 system masters)
+
+> seed master row: hardcode `id` UUIDv7 + `code` ใน migration (immutable system row, M1 pattern). FK ใช้ `code` (§2.4) → ไม่ต้อง resolve id; partial index ใช้ text literal. cache รอตอน startup เพื่อ label display ได้.
+> `description` = TH only (single-language convention §M2.2.2 §2.9 / M1 §2.2). บรรทัด vision §4.2 ที่มี " / MA" suffix ถูกตัดออกจาก label เพื่อ UI สะอาด; ข้อมูล MA อยู่ใน `description` แทน — flag ที่นี่กัน drift ตรวจสอบกับ vision verbatim.
+
+### `project_statuses` (vision §4.2 — 8 rows, `is_system=true`, `status='active'`)
+
+| code | label_th | label_en | sort_order | description (TH) |
+| --- | --- | --- | --- | --- |
+| `draft` | ร่าง | Draft | 10 | เก็บข้อมูลไว้ก่อน ยังไม่ครบหรือเป็นแนวคิดเบื้องต้น |
+| `planning` | วางแผน | Planning | 20 | ยังไม่เริ่มจริง แต่เตรียมทีม เอกสาร แผน งบ |
+| `proposal` | เสนองาน | Proposal | 30 | เสนอราคา / ยื่นประมูล / รอลูกค้าตัดสินใจ |
+| `active` | ดำเนินงาน | Active | 40 | เริ่มทำจริง มี task, team, deliverable, ค่าใช้จ่าย |
+| `closing` | ปิดงาน | Closing | 50 | ส่งมอบหลักแล้ว/ใกล้จบ รอตรวจรับ เคลียร์เอกสาร |
+| `maintenance` | ดูแลหลังส่งมอบ | Maintenance | 60 | ส่งมอบแล้ว แต่ยังมี MA / warranty / support (vision §4.2 verbatim) |
+| `closed` | จบงาน | Closed | 70 | จบภาระผูกพันทั้งหมด |
+| `archived` | จัดเก็บ | Archived | 80 | ซ่อนจากงานหลัก แต่ค้นย้อนหลังได้ |
+
+### `project_types` (vision §4.3 — 2 rows)
+
+| code | label_th | label_en | sort_order | description (TH) |
+| --- | --- | --- | --- | --- |
+| `internal` | งานภายในองค์กร | Internal Project | 10 | งานภายใน อาจมาจากแผนกตัวเองหรือแผนกอื่น (ระบุ Requesting Unit) |
+| `client` | งานลูกค้า / งานรับจ้าง | Client Project | 20 | งานให้ลูกค้า / ผู้ว่าจ้างภายนอก |
+
+### `project_roles` (vision §6.2 — 5 rows)
+
+| code | label_th | label_en | sort_order | description (TH) |
+| --- | --- | --- | --- | --- |
+| `project_owner` | เจ้าของโปรเจค | Project Owner | 10 | รับผิดชอบภาพรวมของโปรเจค |
+| `project_manager` | ผู้จัดการโปรเจค | Project Manager | 20 | จัดการงาน, ทีม, งวดงาน, ความคืบหน้า |
+| `member` | สมาชิกโปรเจค | Member | 30 | ทำงานตามที่ได้รับมอบหมาย |
+| `finance` | การเงินโปรเจค | Finance | 40 | ดู/จัดการข้อมูลการเงินตามสิทธิ์ |
+| `viewer` | ผู้ดูอย่างเดียว | Viewer | 50 | ดูข้อมูลที่อนุญาต โดย default ไม่เห็นข้อมูลการเงิน (vision §6.3 / D4) |
+
+### `project_positions` / `company_positions` — **ไม่ seed ใน M2**
+
+workspace-scoped customizable; ws ใหม่เริ่มว่าง; user/admin เพิ่มผ่าน CRUD ใน UI (M2 FE scope). vision §6 list ตัวอย่าง (Technical Lead, Infrastructure Manager) แต่ specific ต่ออุตสาหกรรม — vision §3 ไม่ล็อก industry → ห้าม preset ใน migration. ถ้า product พบ pain ของ empty list → M3+ พิจารณา seed default ตอน `workspace.create` service (ไม่ใช่ migration seed) เพื่อให้ tenant-scoped customizable คง pattern; ตั้ง `is_system=true` กัน user แก้ code.
+
+## M2.5 Isolation invariant mapping (M2 — extend M1 §5 + amend architecture §4.3)
+
+Inherit ทุกข้อจาก M1 §5. M2 ขยายดังนี้:
+
+| ข้อ (02 §4.3 หลัง amend D38) | M2 บังคับที่ไหน |
+| --- | --- |
+| 1. repo method ตาราง workspace-scoped รับ `workspace_id` + ใส่ `WHERE` เสมอ | `projects`, `project_members`, `project_member_positions`, `project_positions`, `company_positions`, `audit_logs` (`project_id` เป็น filter เสริม; `workspace_id` WHERE ยังเป็นตัวเดียว). repo method ที่ filter project_id ต้อง bind ทั้ง `workspace_id` + `project_id` (PR review P0) |
+| 2. service ไม่รับ `workspace_id` จาก client input | M2 endpoints (`POST /projects`, `GET /projects`, `POST /projects/{id}/members`, …) resolve `workspace_id` จาก `TenantContext` (M1 §5); `project_id` จาก path/body ตรวจที่ service ว่าอยู่ใน `TenantContext.WorkspaceID` (composite FK เป็น backstop) |
+| 3. test "workspace อื่นมองไม่เห็น" อย่างน้อย 1 ต่อ repo | `projects` repo, `project_members` repo, `project_member_positions` repo, `project_positions` repo, `company_positions` repo, `audit_logs` (per-project filter test) |
+| **4. (NEW M2, D38 amends architecture §4.3) DB-level composite FK backstop** บน workspace-scoped business row ที่อ้าง entity ใน ws | composite FK iron rule §M2.2.1 — `project_members.(workspace_id, workspace_membership_id)` → `workspace_memberships(workspace_id, id)`, `project_members.(workspace_id, project_id)` → `projects(workspace_id, id)`, `project_member_positions.(workspace_id, project_member_id)` + `.(workspace_id, project_position_code)`, `workspace_memberships.(workspace_id, company_position_code)` → `company_positions(workspace_id, code)`, `projects.(workspace_id, owner_project_member_id)` → `project_members(workspace_id, id)` (IMMEDIATE, refined D40 post-external-review #1). test ≥ 1 ต่อ FK ที่ proof "insert ข้าม ws → DB reject" |
+| **5. (NEW M2, M5 contract pin) Finance read-gate hook** | `project_roles.code` = source of truth สำหรับ finance gating ที่ M5. `viewer` (และ role อื่นที่ไม่ใช่ `project_owner`/`project_manager`/`finance`) MUST NOT เห็น finance field by default (vision §6.3 / D4). Domain constants `projectrole.*` = M5 contract — **rename code = breaking M5**. enforce ตอน M5 build; M2 pin pattern เพื่อกัน drift |
+| **6. (NEW M2) Audit-by-project read discipline** | `audit_logs.project_id` ไม่มี FK + ไม่มี composite-FK backstop (เป็น append-only bare UUID เหมือน `resource_id`). compensating control = **read invariant** (§M2.3.5 ALTER notes): ทุก query filter `project_id` ต้อง `WHERE workspace_id = ? AND project_id = ?` พร้อมกัน. write invariant: `LogTx` รับ workspaceID+projectID แยก param, projectID ต้อง validated ก่อน. PR review P0 block ถ้าเจอ `WHERE project_id` เดี่ยว |
+
+**ทำไม composite FK ปิดช่องที่ M1 invariant อาศัย service-discipline อย่างเดียว**
+
+isolation invariant §4.3 (เดิม 3 ข้อ) พึ่ง "repo+service ใส่ `WHERE workspace_id`" ครบทุกที่ — พลาด = silent leak. M2 ยก **DB เป็น defense-in-depth (ข้อ 4 ใหม่)**: แม้ service บั๊กลืม guard, insert/update ที่ workspace_id ไม่ match parents จะถูก Postgres reject → bug กลายเป็น 500 ที่ test/log จับได้, ไม่ใช่ silent leak. นี่คือ pattern ที่ M1 external review (iron rule) ขอ adopt — ปิด M1 §8 open thread. **`audit_logs.project_id` คือ exception (ข้อ 6)** ที่ DB backstop ไม่ครอบ → compensating discipline strict กว่าและ test ครอบ proof case
+
+### Test requirements per repo (M2 — รวมขั้นต่ำ)
+
+- **`projectRepo`**:
+  (a) list ของ ws A ไม่เห็น project ของ ws B; (b) update/delete ผ่าน ws-A context → not-found; (c) UPDATE `owner_project_member_id` เป็น project_member ของ ws อื่น → IMMEDIATE composite FK reject ที่ statement (proof DB backstop, refined D40); (d) set owner เป็น project_member ที่ `project_role_code != 'project_owner'` → service reject 422; (e) set owner เป็น project_member ที่ `removed_at IS NOT NULL` → service reject 422
+- **`projectMemberRepo`**:
+  (a) cross-ws membership assignment → FK reject (worked example §M2.2.1); (b) cross-ws project_id → FK reject; (c) workspace B query ไม่เห็น member ของ workspace A; (d) remove แล้ว re-add ได้ (partial unique `WHERE removed_at IS NULL`); (e) **multi-ws user**: user U เป็นสมาชิก ws A + ws B; attempt insert project_member ที่ ws-A's project P ด้วย U's ws-B membership_id → DB reject (composite FK proof); (f) JOIN `project_members → workspace_memberships → user_accounts`: returned `display_name` ต้องมาจาก membership ใน project's workspace (sanity check กัน JOIN bug ที่ดึง display_name จาก sibling membership ของ user เดียวกันใน ws อื่น)
+- **`projectMemberPositionRepo`**: (a) assign position ของ ws อื่นให้ member → FK reject; (b) ws อื่นมองไม่เห็น; (c) assign position ให้ project_member ที่ `removed_at IS NOT NULL` → service reject 422
+- **`projectPositionRepo` / `companyPositionRepo`**: (a) workspace A และ B สร้าง `code='tech_lead'` ได้ทั้งคู่; (b) ws อื่นมองไม่เห็น; (c) reuse code ที่ deprecated ใน ws เดียวกัน → service reject (§2.9 no-reuse rule); (d) UPDATE `code` ของ row → service reject (§2.9 code immutable)
+- **`auditLogRepo` (NEW M2)**:
+  (a) write `(workspace_id=A, project_id=B's-project)` ผ่าน raw INSERT (bypass service) → CHECK ผ่าน (workspace_id ไม่ NULL) — proof ว่า read-side ต้อง bind workspace_id; (b) query "audit ของ project X" ผ่าน `auditLogRepo.ListByProject(workspaceID=A, projectID=X)` ไม่ surface row จาก (a) เพราะ WHERE workspace_id=A bind; (c) attempt `LogTx` ที่ projectID != nil แต่ workspaceID == nil → repo assertion panic/error fast; (d) attempt write `project_id != NULL` + `workspace_id IS NULL` ผ่าน raw → CHECK reject
+- **Standard sequence create test:** 1 tx → INSERT projects (owner=NULL) → INSERT project_members → UPDATE projects SET owner → COMMIT; assert ทุก statement ผ่าน, project มี owner_id เซตถูก (refined D40: ไม่ต้อง DEFERRABLE)
+
+## M2.6 Migration plan (M2)
+
+goose, ต่อจาก `000007_create_crosscutting_logs`. ลำดับ — **ALTER M1 backing UNIQUE ก่อน → masters → business → ALTER ที่ต้องรอ FK target → audit ALTER**:
+
+1. **`000008_alter_workspace_memberships_backing_unique`** — `ALTER TABLE workspace_memberships ADD CONSTRAINT uq_workspace_memberships_workspace_id_id UNIQUE (workspace_id, id);`. **Rationale แยกจาก step 8 (`company_position_code` ALTER same table):** step 1 = prerequisite ของ step 5 (`project_members` FK target → workspace_memberships); step 8 = post-requisite ของ step 3 (`company_positions` create-table). FK dependency graph แยก 2 ALTER. **Ops note:** บน M1 ws-sized DB เล็ก lock สั้น; production-scale ใช้ `CREATE UNIQUE INDEX CONCURRENTLY` + `ADD CONSTRAINT ... USING INDEX` ภายหลัง
+2. **`000009_create_project_masters`** — `project_statuses`, `project_types`, `project_roles` (+ seed 8/2/5 rows) — global system master. indexes: `uq_*_code` UNIQUE
+3. **`000010_create_position_masters`** — `project_positions`, `company_positions` (workspace-scoped customizable; ไม่ seed). indexes ต่อ table: `uq_*_workspace_code` UNIQUE non-partial (FK target backing), `ix_*_workspace_status`
+4. **`000011_create_projects`** — `projects` table; FK `workspace_id → workspaces(id)`, `project_status_code → project_statuses(code)`, `project_type_code → project_types(code)`; **indexes ใน file นี้**: `uq_projects_workspace_slug_active` (partial), `ix_projects_workspace_status_created`, `ix_projects_workspace_type`, `ix_projects_workspace_owner`, `uq_projects_workspace_id_id` UNIQUE (FK target backing). **ยังไม่ตั้ง** FK `owner_project_member_id` (project_members ยังไม่มี — ตั้งใน step 6). CHECKs: `project_name`/`slug`/`requesting_unit`/`description`/`start_date<=end_date`
+5. **`000012_create_project_members`** — `project_members` table; composite FKs ครบ (projects, workspace_memberships); `uq_project_members_workspace_id_id` UNIQUE non-partial (FK target backing สำหรับ project_member_positions + projects.owner). indexes: `uq_project_members_active` (partial WHERE removed_at IS NULL), `ix_project_members_project_role`, `ix_project_members_membership`
+6. **`000013_alter_projects_add_owner_fk`** — `ALTER TABLE projects ADD CONSTRAINT fk_projects_owner_project_member FOREIGN KEY (workspace_id, owner_project_member_id) REFERENCES project_members (workspace_id, id);` **IMMEDIATE** (refined D40 post-external-review #1 — เลิกใช้ `DEFERRABLE INITIALLY DEFERRED`; ดู §M2.3.3 notes)
+7. **`000014_create_project_member_positions`** — `project_member_positions` junction; composite FKs ไป `project_members` + `project_positions` (FK-by-code §M2.2.4). indexes: `uq_pmp_member_position` UNIQUE, `ix_pmp_position`
+8. **`000015_alter_workspace_memberships_company_position`** — `ALTER workspace_memberships ADD COLUMN company_position_code TEXT` + composite FK ไป `company_positions(workspace_id, code)` + `ix_workspace_memberships_company_position` (partial)
+9. **`000016_alter_audit_logs_add_project_id`** — `ALTER audit_logs ADD COLUMN project_id UUID` (nullable, no FK) + `CHECK (project_id IS NULL OR workspace_id IS NOT NULL)` + partial index `ix_audit_workspace_project_created`
+
+> **ทำไมแยก 9 migrations:** (1) traceability ต่อ entity/operation (ตาม M1 pattern 000002–000007); (2) rollback granular (down ทีละขั้นถ้า issue); (3) FK ordering ชัดเจน — แต่ละ migration assume tables ก่อนหน้า exists; (4) seed master ใน file เดียวกับ CREATE TABLE master = atomic ต่อ vocabulary.
+> **No backfill needed:** existing M1 audit_logs rows มี `project_id = NULL` (workspace-level events ก่อน M2 — semantic ถูกต้องโดย default + CHECK ผ่านเพราะ workspace_id อาจ NULL หรือ NOT NULL ก็ได้เมื่อ project_id NULL); membership rows มี `company_position_code = NULL`.
+> **Down migration:** reverse order (000016→000008). DROP TABLE / DROP CONSTRAINT / DROP COLUMN; CI ต้องทดสอบ up/down idempotent.
+> **Seed pattern:** hardcode `id` UUIDv7 + `code` ใน INSERT (immutable system row, M1 §7). FK ใช้ `code` (§2.4) → ไม่ต้อง resolve. label cache ตอน startup ได้ (optional).
+
+## M2.7 Decisions to fold (เสนอ D38–D44 — รอ User เคาะ)
+
+ขอ User เคาะ append เข้า `DECISIONS.md` (กฎ append-only ไม่แก้ row เก่า). D38 ต้อง **commit คู่กับ update [02-architecture §4.3](02-architecture.md)** จาก 3 invariants → 4 invariants ใน commit เดียวกับ M2 doc merge:
+
+| # | Decision | Rationale | Section ลิงก์ |
+| --- | --- | --- | --- |
+| **D38** | **Composite FK iron rule — amend architecture §4.3 จาก 3→4 invariants** — ทุก workspace-scoped business row ที่อ้าง "assignment/owner/member-of-something" ใช้ composite FK `(workspace_id, *)` ไปที่ parent โดยมี backing `UNIQUE (workspace_id, id)` หรือ `(workspace_id, code)`. DB = **defense-in-depth** ข้อ 4 ของ isolation invariant (เดิม 3 ข้อพึ่ง service-discipline). **Scope exclusion:** audit/identity columns (created_by, updated_by, deleted_by, invited_by, owner_user_account_id ที่ workspace-boundary) ใช้ single-column FK → `user_accounts(id)` เพราะ actor เป็น global identity (D3 multi-ws). M2 apply: projects.owner, project_members.(project+membership), project_member_positions, workspace_memberships.company_position. M3+: task_assignee, budget_approver, deliverable_reviewer | [04 §M2.2 (2.8)](04-data-model.md) + [02 §4.3](02-architecture.md) |
+| **D39** | **Positions = 2 ตารางแยก + FK-by-code consistent + junction append/delete-only** — `project_positions` (M:N ผ่าน `project_member_positions`, 1 member สวมหลาย hat) + `company_positions` (1:1 nullable column บน `workspace_memberships`, M2 trade-off). 2 ตารางป้องกัน category leak ที่ table เดียว+category_code จะเปิด. **FK strategy consistent** ทั้ง 2 customizable masters = FK-by-code ขนาน D28 (§M2.2.4); code immutable + no-reuse-after-deprecate ทำให้ stable เท่า id (§2.9). **`project_member_positions` junction = append/delete-only** (ไม่มี `updated_at`/`updated_by`; history อยู่ใน `audit_logs`) — ขนาน M1 token tables. **External review #1 disagreement (recorded):** reviewer เสนอเพิ่ม `status='active'|'revoked'` + `updated_at`/`updated_by` บน junction (เพื่อ row-level history). Kael ค้านว่าขัด §2.6 (single-source-of-truth: timestamp/status enum ไม่เก็บซ้อนกัน) — status column + audit_logs = dual source ที่ drift inevitable; audit_logs เป็น proper history mechanism อยู่แล้ว ไม่สิ้นเปลือง; ถ้า future compliance ต้องการ "as of timestamp" query → `project_member_role_history` table แยก (§M2.8). **User เลือกตาม Kael — คงเดิม.** | [04 §M2.3.2, §M2.3.4, §M2.3.5](04-data-model.md) |
+| **D40** | **Project owner = column `projects.owner_project_member_id` composite IMMEDIATE FK** ไป `project_members(workspace_id, id)`. ขนาน `workspaces.owner_user_account_id` (M1 §4.3). O(1) ownership lookup; single-owner ที่ column-level. **Standard 3-step create sequence** (INSERT projects NULL owner → INSERT project_members → UPDATE projects SET owner) ทำงานได้กับ IMMEDIATE เพราะ column nullable. Service-layer guard 3 ข้อ (ws-match จาก composite FK / role-match `project_owner` / `removed_at IS NULL`) + role-drift guard ห้าม UPDATE project_role_code ของ owner row นอก ownership-transfer service. **External review #1 refinement (history):** workflow candidate ใช้ `DEFERRABLE INITIALLY DEFERRED` รองรับ chicken-and-egg ที่ COMMIT-time. Reviewer ทักว่า DEFERRABLE เพิ่ม complexity + claim deadlock risk (เหตุผล deadlock อ้าง "Postgres internal execution plan swap" ของ DML — ไม่ตรง Postgres semantics: Postgres ไม่ reorder DML statements ใน tx; INSERT row ใหม่ไม่ block cross-tx). Reviewer เสนอ swap INSERT order (member ก่อน project) — ใช้ไม่ได้กับ composite FK iron rule (`project_members.(workspace_id, project_id) → projects` IMMEDIATE จะ fail ทันที). **Underlying concern (DEFERRABLE เพิ่ม complexity) ถูก** → Kael พลิกเป็น IMMEDIATE + nullable + standard sequence: ทำงานได้โดยไม่ต้อง DEFERRABLE feature, ตรงเจตนา reviewer ที่จะเลี่ยง DEFERRABLE | [04 §M2.3.3](04-data-model.md) |
+| **D41** | **Company position = ALTER `workspace_memberships`** (nullable `company_position_code` + composite FK ไป `company_positions(workspace_id, code)`, FK-by-code §M2.2.4). **Cardinality 1:1 nullable** ตาม vision §6 ตัวอย่าง singular ("Infrastructure Manager") — trade-off explicit: ถ้าจริงๆ multi-position (Engineering Manager + Acting Head) → migration upgrade เป็น join table + API คืน array (FE handle 0/1/N เสมอ, no break). M3+ พิจารณาตามหลักฐาน | [04 §M2.3.5](04-data-model.md) |
+| **D42** | **Project slug = optional public identifier per workspace + cross-ws 404 collapse** (refine D32 สำหรับ project). CITEXT nullable, UNIQUE per ws among non-deleted, format pattern เดียวกับ workspace slug. **Cross-workspace probe collapse 403→404:** member ของ ws A probe `/wsB/projects/{guess}` → return 404 เสมอ (ไม่แยก "ไม่มี" vs "มีแต่ไม่ใช่สมาชิก ws B") กัน enumerate project name ของ ws B. ภายใน ws ที่ตัวเป็นสมาชิก → 404 vs 403 แยกตามปกติ. D32 email-match clause ไม่ extend มา project ใน M2 (ws-invite-accept บังคับ email-match แล้ว) | [04 §M2.2 (2.10), §M2.3.3](04-data-model.md) |
+| **D43** | **`audit_logs.project_id` ALTER policy** — ปิด M1 §8 open thread. nullable + partial index `WHERE project_id IS NOT NULL` + **`CHECK (project_id IS NULL OR workspace_id IS NOT NULL)`** (structural, อยู่นอก D29 carve-out ที่ห้าม CHECK เฉพาะ vocabulary columns). **NO FK to `projects(id)`** เพราะ audit append-only ต้อง outlive resource deletion + กัน circular dep migration (pattern M1 `resource_id`). **Compensating discipline (NEW invariant #6 §M2.5):** write path `LogTx` รับ workspaceID+projectID แยก param; read path WHERE workspace_id + project_id พร้อมกัน; PR review P0 block `WHERE project_id` เดี่ยว. **External review #1 disagreement (recorded):** reviewer เสนอ runtime existence-check ใน `LogTx` (SELECT projects ก่อนบันทึก audit) เพื่อกัน "orphaned log injection". Kael ค้านว่า threat model misaligned (`LogTx` = internal repo, ไม่ exposed ต่อ client; ถ้า attacker เรียกได้ตรง = code execution อยู่แล้ว, FK ไม่ช่วย) + fix เพิ่ม +1 SELECT ทุก audit-write (hot-path overhead) + ซ้ำซ้อน service-layer validation; "FE crash" ไม่ realistic (JOIN-miss → "Unknown project" graceful fallback คือ pattern audit-outlive-resource ปกติ). read invariant + FE graceful-handle ครอบ scenario จริงพอ. **User เลือกตาม Kael — คงเดิม.** | [04 §M2.3.5, §M2.5, §M2.6 step 9](04-data-model.md) |
+| **D44** | **Project lifecycle = free transitions ใน M2** (no state machine, no DB CHECK, no transition table) — FK บังคับแค่ vocabulary; ทุก status change เขียน `audit_logs`. confirm-only ตาม build-plan §5 row M2. M3+ อาจเพิ่ม transition guard ที่ **service layer** (ไม่ใช่ DB CHECK) ถ้า product พบ misuse บ่อย — review ตอน deliverable/finance entity มาผูก lifecycle | [04 §M2.1, §M2.3.1, §M2.3.3](04-data-model.md) |
+
+## M2.8 ค้างไว้ให้ milestone ถัดไป
+
+- **Placeholder member + claim-by-email** (M1 §8 — confirm defer) — M2 ยังคง `workspace_memberships.user_account_id NOT NULL`. M3+ ต้อง: (1) split profile (workspace-scoped, account-optional) จาก user_account (global); (2) FK target ของ `project_members.workspace_membership_id` อาจ revisit ว่าอ้าง profile หรือ membership; (3) `company_position_code` อาจย้ายลง profile. pattern อ้างอิง: GitHub commit-claim / Jira assign-before-join. verify email-match ตอน claim (เหมือน accept-invite D32)
+- **Per-workspace profile** (`memberships.profile_id`, M1 §8) — defer พร้อม placeholder; ถ้าไม่ทำ placeholder ใน M3+ ก็ไม่มีค่าเพิ่ม
+- **Project lifecycle state machine / transition guard** (D44) — M3+ พิจารณาถ้า product พบ invalid transition บ่อย (เช่น Draft→Archived ข้าม Active) หรือ deliverable/finance ผูก lifecycle (เช่น "ห้าม `closed` ถ้ายังมี deliverable ค้าง"). ทำที่ service layer (ไม่ใช่ DB CHECK) หรือ master `project_status_transitions(from_code, to_code)`
+- **Project owner soft-delete + ownership-transfer flow** — เหมือน workspace owner-orphan §4.1; ห้าม remove project owner จาก project ถ้ายัง own project active. enforce service layer ตอน account-deletion / member-removal use case (ทั้งคู่ M3+). Trigger-based assertion ที่ DB consider ถ้า service-layer พิสูจน์ leaky
+- **Project archive policy** — `archived` status vs `deleted_at` ทำงานยังไง? M2: archived = ยัง query ได้แต่ filter ออกจาก default view (status-based); deleted = soft-removed (UI ซ่อน). hard-delete archived projects เพื่อ data retention → M3+ policy
+- **Project restore flow + slug uniqueness** (raised by external review #1, 2026-05-30) — M2 มีแค่ soft-delete; restore = service-level `UPDATE deleted_at=NULL` ที่ยังไม่อยู่ scope. **Edge case ตอน restore feature มา (M3+):** user soft-delete project slug=`alpha` → สร้างใหม่ slug=`alpha` (partial index `WHERE deleted_at IS NULL` รับ — ถูกต้อง) → ต้องการ restore เก่า = unique violation ที่ `uq_projects_workspace_slug_active`. M3+ ต้องตัดสิน policy 1 ใน 3 ตอน restore feature ถูกใส่: (a) prompt user rename slug ตอน restore (UX friction, ข้อมูลคงเดิม); (b) auto-mutate slug ของ deleted row เป็น `{slug}-deleted-{ts}` ตอน soft-delete (reviewer's suggestion — slug หลักว่างทันที, แต่ mutate "preserved" data → audit-trail history สับสน); (c) restore = service prompts conflict resolution interactive. **ไม่ blocker M2** (restore ไม่อยู่ scope); flag pattern พร้อมเลือกตอน M3+ deliverable/restore work
+- **Project member suspended state** — M2 = ไม่มี; suspend ที่ระดับ ws ครอบ. ถ้า "อยู่ใน project แต่ห้ามทำอะไร" use case จริง → เพิ่ม `suspended_at` ใน project_members (single source of truth §2.6)
+- **`requesting_unit` upgrade to master** — ถ้า product พิสูจน์ value (group/report by แผนกใน executive dashboard vision §6.1) → upgrade เป็น `requesting_units` workspace-scoped customizable. M2 ไม่ทำ (vision §4.3 wording explicit "ระบุ ... แทนการสร้าง type ใหม่" → free text intent); YAGNI จนกว่า data จะพิสูจน์
+- **Position seed default per workspace** — M2 ไม่ seed (vision §3 ไม่ล็อก industry). M3+ พิจารณา seed ตอน `workspace.create` service (ไม่ใช่ migration) หรือผูกกับ industry template; `is_system=true` กัน user แก้ code
+- **Multi-company-position ต่อคน** (D41 trade-off) — M2 inline column 1:1. ถ้า requirement multi-position จริง → migration เพิ่ม `workspace_membership_company_positions` join table + drop column. ไม่ break API contract (response array)
+- **Project-scoped invitation** — flow ปัจจุบัน = ws invite + add to project (2-step). ถ้า "เชิญตรงเข้า project พร้อมสร้าง ws membership" use case → unified invitation pattern M3+
+- **Project member bulk operation** — add/remove หลายคนพร้อมกัน → service-level API M3+ ถ้าจำเป็น
+- **`project_member_role_history` table (M5+ compliance)** — M2 role history reconstruct จาก `audit_logs` (`project_member.role_change`). ถ้า M5 finance/compliance ต้องการ "role as of timestamp" query ตรงๆ → เพิ่ม table; ไม่กระทบ M2 schema
+- **Date-range business rule** — M2 = CHECK soft (`end_date >= start_date`); product อาจต้องการ "Closing → Closed ต้องมี actual_end_date" → service layer M3+
+- **Task assignee / budget approver FK** — apply iron rule D38 (composite FK ไป `workspace_memberships`) ตอน M4/M5; ห้ามเปิดทาง `user_accounts(id)` shortcut. test_assignee จะมี `removed_at` check pattern เดียวกับ owner_project_member_id
+- **`projects.slug` anti-enumeration timing pad** — M2 = D42 (404 collapse cross-ws, distinct within-ws); review ตอน security pass
+- **RLS hardening** (M1 §8 ต่อ) — composite FK ของ D38 ช่วย Policy `workspace_id = current_setting('app.workspace_id')` natural fit; ทำตอน M3+ คุ้มกว่า (table มากขึ้น + pattern ครบ). RLS สำหรับ `audit_logs` ที่มี nullable `workspace_id` ต้องคิด policy แยก (workspace-level events ไม่มี ws context → admin-only)
+- **Hot-path JOIN ของ list project_members + workspace_memberships + user_accounts** — display_name ต้อง join 3 ตาราง. profiling พบ slow → cache หรือ denormalize `display_name_cached` (M1 GORM ใช้ได้ตาม D11)
+- **Audit log UI** (M1 §8 ค้าง) — M2 มี `project_id` แล้ว → query "log per project" พร้อม. UI = append เมื่อ User เปิด
+- **`requireSession` JOIN optimization + multi-identity/MFA revocation semantics** — carried from M1 §4.1 (D36 open thread)
+- **Backing UNIQUE pattern สำหรับ M3+ entities** — ถ้า M3+ entity (deliverable, task) มี composite FK ไป `user_accounts(workspace_id, id)` pattern (ซึ่งจะผิดเพราะ user เป็น global) — confirm scope exclusion D38 ไว้กันความเข้าใจผิด
