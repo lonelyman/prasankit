@@ -12,6 +12,7 @@ import (
 type auditLogModel struct {
 	ID                 uuid.UUID  `gorm:"type:uuid;primaryKey"`
 	WorkspaceID        *uuid.UUID `gorm:"type:uuid;column:workspace_id"`
+	ProjectID          *uuid.UUID `gorm:"type:uuid;column:project_id"`
 	ActorUserAccountID *uuid.UUID `gorm:"type:uuid;column:actor_user_account_id"`
 	Action             string     `gorm:"column:action;not null"`
 	ResourceType       string     `gorm:"column:resource_type;not null"`

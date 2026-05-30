@@ -7,15 +7,18 @@ import (
 	sessionstore "prasankit-api/internal/adapters/cache/session"
 	auditdbrepo "prasankit-api/internal/adapters/database/audit"
 	authdbrepo "prasankit-api/internal/adapters/database/auth"
+	projectdbrepo "prasankit-api/internal/adapters/database/project"
 	workspacedbrepo "prasankit-api/internal/adapters/database/workspace"
 	smtpadapter "prasankit-api/internal/adapters/email/smtp"
 	"prasankit-api/internal/config"
 	"prasankit-api/internal/modules/auth"
+	"prasankit-api/internal/modules/project"
 	"prasankit-api/internal/modules/workspace"
 	httptransport "prasankit-api/internal/transport/http"
 	authhandler "prasankit-api/internal/transport/http/auth"
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
+	projecthandler "prasankit-api/internal/transport/http/project"
 	workspacehandler "prasankit-api/internal/transport/http/workspace"
 
 	"github.com/gofiber/fiber/v3"
@@ -77,12 +80,19 @@ func NewHTTPApp(
 	workspaceSvc := workspace.NewService(wsRepo, memberRepo, inviteRepo, emailSender, mailCfg.InviteBaseURL)
 	workspaceH := workspacehandler.NewHandler(workspaceSvc)
 
+	// Project wiring.
+	projectRepo := projectdbrepo.NewProjectRepo(gormDB, auditRepo)
+	projectMasterRepo := projectdbrepo.NewMasterRepo(gormDB)
+	projectSvc := project.NewService(projectRepo, projectMasterRepo)
+	projectH := projecthandler.NewHandler(projectSvc)
+
 	httptransport.RegisterRoutes(
 		app,
 		healthHandler,
 		corsAllowedOrigins,
 		authSvc, authH,
 		workspaceH, wsRepo, memberRepo,
+		projectH,
 	)
 
 	return app

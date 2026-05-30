@@ -228,6 +228,7 @@ func newTestHTTPApp(checks map[string]healthCheck) *fiber.App {
 		nil, // workspaceH — not needed for health tests
 		nil, // wsRepo — not needed for health tests
 		nil, // memberRepo — not needed for health tests
+		nil, // projectH — not needed for health tests
 	)
 	return app
 }
