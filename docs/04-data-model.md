@@ -616,7 +616,7 @@ Constraints/indexes:
 | `deleted_at` | TIMESTAMPTZ | soft delete |
 | `deleted_by` | UUID → `user_accounts(id)` | |
 
-Constraints/indexes (ครบใน migration step 4, §M2.6):
+Constraints/indexes (ครบใน 6a migration `000010`, §M2.6):
 - `CHECK (slug IS NULL OR slug ~ '^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$')` — pattern เดียวกับ `workspaces.slug`
 - `CHECK (start_date IS NULL OR end_date IS NULL OR start_date <= end_date)` — date sanity
 - `CREATE UNIQUE INDEX uq_projects_workspace_slug_active ON projects (workspace_id, slug) WHERE deleted_at IS NULL AND slug IS NOT NULL` — slug unique per ws ตอน active
@@ -624,7 +624,7 @@ Constraints/indexes (ครบใน migration step 4, §M2.6):
 - `CREATE INDEX ix_projects_workspace_type ON projects (workspace_id, project_type_code) WHERE deleted_at IS NULL`
 - `CREATE INDEX ix_projects_workspace_owner ON projects (workspace_id, owner_project_member_id) WHERE deleted_at IS NULL` — "โปรเจคของฉัน" view
 - `ALTER TABLE projects ADD CONSTRAINT uq_projects_workspace_id_id UNIQUE (workspace_id, id)` — backing สำหรับ composite FK ของ `project_members.(workspace_id, project_id)` (ตั้ง inline ใน create-table step)
-- **Owner composite FK (ใส่หลัง `project_members` exists; migration step 6 §M2.6):**
+- **Owner composite FK (ใส่หลัง `project_members` exists; 6b-1 migration `000013`):**
   ```sql
   ALTER TABLE projects
       ADD CONSTRAINT fk_projects_owner_project_member
@@ -860,18 +860,23 @@ goose, ต่อจาก `000007_create_crosscutting_logs`. ลำดับแ�
 
 ### Slice 6a (committed)
 
-1. **`000008_alter_workspace_memberships_backing_unique`** — `ALTER TABLE workspace_memberships ADD CONSTRAINT uq_workspace_memberships_workspace_id_id UNIQUE (workspace_id, id);`. **Rationale:** prerequisite ของ 6b step 6 (`project_members` composite FK target → workspace_memberships). **Ops note:** บน M1 ws-sized DB เล็ก lock สั้น; production-scale ใช้ `CREATE UNIQUE INDEX CONCURRENTLY` + `ADD CONSTRAINT ... USING INDEX` ภายหลัง
+1. **`000008_alter_workspace_memberships_backing_unique`** — `ALTER TABLE workspace_memberships ADD CONSTRAINT uq_workspace_memberships_workspace_id_id UNIQUE (workspace_id, id);`. **Rationale:** prerequisite ของ 6b-1 (`project_members` composite FK target → workspace_memberships; migration `000012`). **Ops note:** บน M1 ws-sized DB เล็ก lock สั้น; production-scale ใช้ `CREATE UNIQUE INDEX CONCURRENTLY` + `ADD CONSTRAINT ... USING INDEX` ภายหลัง
 2. **`000009_create_project_masters`** — `project_statuses`, `project_types`, `project_roles` (+ seed 8/2/5 rows) — global system master. indexes: `uq_*_code` UNIQUE
-3. **`000010_create_projects`** — `projects` table; FK `workspace_id → workspaces(id)`, `project_status_code → project_statuses(code)`, `project_type_code → project_types(code)`; **indexes ใน file นี้**: `uq_projects_workspace_slug_active` (partial), `ix_projects_workspace_status_created`, `ix_projects_workspace_type`, `ix_projects_workspace_owner`, `uq_projects_workspace_id_id` UNIQUE (FK target backing). **ยังไม่ตั้ง** FK `owner_project_member_id` (project_members ยังไม่มี — ตั้งใน 6b step 7). CHECKs: `project_name`/`slug`/`requesting_unit`/`description`/`start_date<=end_date`
+3. **`000010_create_projects`** — `projects` table; FK `workspace_id → workspaces(id)`, `project_status_code → project_statuses(code)`, `project_type_code → project_types(code)`; **indexes ใน file นี้**: `uq_projects_workspace_slug_active` (partial), `ix_projects_workspace_status_created`, `ix_projects_workspace_type`, `ix_projects_workspace_owner`, `uq_projects_workspace_id_id` UNIQUE (FK target backing). **ยังไม่ตั้ง** FK `owner_project_member_id` (project_members ยังไม่มี — ตั้งใน 6b-1 `000013`). CHECKs: `project_name`/`slug`/`requesting_unit`/`description`/`start_date<=end_date`
 4. **`000011_alter_audit_logs_add_project_id`** — `ALTER audit_logs ADD COLUMN project_id UUID` (nullable, no FK per D43) + `CHECK (project_id IS NULL OR workspace_id IS NOT NULL)` + partial index `ix_audit_workspace_project_created`. ปิด M1 §8 open thread + เปิด audit-by-project read path สำหรับ 6a project mutations
 
-### Slice 6b (planned)
+### Slice 6b-1 (committed 2026-05-31)
 
-5. **`000012_create_position_masters`** — `project_positions`, `company_positions` (workspace-scoped customizable; ไม่ seed). indexes ต่อ table: `uq_*_workspace_code` UNIQUE non-partial (FK target backing), `ix_*_workspace_status`
-6. **`000013_create_project_members`** — `project_members` table; composite FKs ครบ (projects, workspace_memberships); `uq_project_members_workspace_id_id` UNIQUE non-partial (FK target backing สำหรับ project_member_positions + projects.owner). indexes: `uq_project_members_active` (partial WHERE removed_at IS NULL), `ix_project_members_project_role`, `ix_project_members_membership`
-7. **`000014_alter_projects_add_owner_fk`** — `ALTER TABLE projects ADD CONSTRAINT fk_projects_owner_project_member FOREIGN KEY (workspace_id, owner_project_member_id) REFERENCES project_members (workspace_id, id);` **IMMEDIATE** (D40 refined — เลิกใช้ `DEFERRABLE INITIALLY DEFERRED`; ดู §M2.3.3 notes)
-8. **`000015_create_project_member_positions`** — `project_member_positions` junction; composite FKs ไป `project_members` + `project_positions` (FK-by-code §M2.2.4). indexes: `uq_pmp_member_position` UNIQUE, `ix_pmp_position`
-9. **`000016_alter_workspace_memberships_company_position`** — `ALTER workspace_memberships ADD COLUMN company_position_code TEXT` + composite FK ไป `company_positions(workspace_id, code)` + `ix_workspace_memberships_company_position` (partial)
+5. **`000012_create_project_members`** — `project_members` table; composite FKs ครบ (projects, workspace_memberships — iron rule §M2.2.1); `uq_project_members_workspace_id_id` UNIQUE non-partial (FK target backing สำหรับ owner FK + 6b-2 project_member_positions). indexes: `uq_project_members_active` (partial WHERE removed_at IS NULL), `ix_project_members_project_role`, `ix_project_members_membership`
+6. **`000013_alter_projects_add_owner_fk`** — `ALTER TABLE projects ADD CONSTRAINT fk_projects_owner_project_member FOREIGN KEY (workspace_id, owner_project_member_id) REFERENCES project_members (workspace_id, id);` **IMMEDIATE** (D40 refined — เลิกใช้ `DEFERRABLE INITIALLY DEFERRED`; ดู §M2.3.3 notes). depends on 000012
+
+### Slice 6b-2 (planned)
+
+7. **`000014_create_position_masters`** — `project_positions`, `company_positions` (workspace-scoped customizable; ไม่ seed). indexes ต่อ table: `uq_*_workspace_code` UNIQUE non-partial (FK target backing), `ix_*_workspace_status`
+8. **`000015_create_project_member_positions`** — `project_member_positions` junction; composite FKs ไป `project_members` (000012) + `project_positions` (000014, FK-by-code §M2.2.4). indexes: `uq_pmp_member_position` UNIQUE, `ix_pmp_position`
+9. **`000016_alter_workspace_memberships_company_position`** — `ALTER workspace_memberships ADD COLUMN company_position_code TEXT` + composite FK ไป `company_positions(workspace_id, code)` (000014) + `ix_workspace_memberships_company_position` (partial)
+
+> **Renumber note (D45, Pin A):** เดิม §M2.6 (ก่อน split) วาง 6b เป็น 000012 position_masters → 000016. เมื่อ split: **6b-1** เอา 000012 (project_members) + 000013 (owner FK); **6b-2** เลื่อนเป็น 000014 (position_masters) / 000015 (junction) / 000016 (company_position). FK ordering ยังถูก — `project_members` (000012) ไม่ขึ้นกับ position_masters; junction (000015) + company_position (000016) ขึ้นกับ position_masters (000014). **ค้างที่ migration file `000010` (committed):** inline comment ของมัน naming owner FK เป็น `000012_alter_projects_add_owner_fk` — ไม่เคยถูกต้อง (owner FK = `000013`); ไม่แก้ไฟล์ committed, flag ไว้ตรงนี้
 
 > **ทำไมแยก 9 migrations:** (1) traceability ต่อ entity/operation (ตาม M1 pattern 000002–000007); (2) rollback granular (down ทีละขั้นถ้า issue); (3) FK ordering ชัดเจน — แต่ละ migration assume tables ก่อนหน้า exists; (4) seed master ใน file เดียวกับ CREATE TABLE master = atomic ต่อ vocabulary.
 > **No backfill needed:** existing M1 audit_logs rows มี `project_id = NULL` (workspace-level events ก่อน M2 — semantic ถูกต้องโดย default + CHECK ผ่านเพราะ workspace_id อาจ NULL หรือ NOT NULL ก็ได้เมื่อ project_id NULL); membership rows มี `company_position_code = NULL`.

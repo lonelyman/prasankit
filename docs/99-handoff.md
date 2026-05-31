@@ -4,7 +4,9 @@
 > รายละเอียดเต็มอยู่ใน docs ที่ลิงก์. log การตัดสินใจอยู่ใน [DECISIONS.md](DECISIONS.md).
 
 ## อัปเดตล่าสุด
-**2026-05-30** — ปิด session: **M1 ปิดครบทั้ง milestone** (BE + 5a FE auth + 5b FE workspace) · **Workflow อัปเป็น Opus 4.8 hybrid (D37)** · **M2 data-model design folded (D38-D44, amend 02 §4.3 → 4 invariants)** · **M2 6a-BE projects core เสร็จ** (CRUD + status_change + masters + audit_logs.project_id). ก้าวต่อ = **6b-BE-M2-team-positions** ปิด M2 BE ครึ่งหลัง. 6 commit นี้ session อยู่ local `dev` **ยังไม่ push**.
+**2026-05-31** — **M2 6b-1-BE team core เสร็จ + committed** (`project_members` + owner composite FK + create owner-3-step) · **D45** (split 6b → 6b-1/6b-2) · **D46** (owner-read = option 1 inject `project.ProjectRepository`). ผ่าน loop เต็ม: 10-agent spec workflow → external cross-model review (**round 1 blind ไม่แนบไฟล์ → discard; round 2 grounded → validate + 3 fixes**) → Opus implementer dispatch (D37) + 3 adversarial verifier → Kael trust-but-verify (`make test -count=1` integration รันจริงไม่ skip · goose 000013 down/up · live e2e smoke: create→owner auto-set + audit project.create/project_member.add ครบ ws+proj). 1 verifier finding แก้แล้ว (AddMember owner-role 400→422). ก้าวต่อ = **6b-2-BE** (positions) ปิด M2 BE. **2 commit ใหม่ (code + docs) ยัง local `dev` ยังไม่ push.**
+
+> **บทเรียน external review (→ memory):** brief ต้องสั่ง reviewer ยืนยัน/ถามหาไฟล์ก่อนรีวิว + ใส่ fingerprint ให้ self-detect blind review (round 1 ของ 6b-1 รีวิวโดยไม่เห็นไฟล์ → identifier ผิดหมด).
 
 ## สถานะตอนนี้
 - ✅ docs ฐานครบ: [00-workflow](00-workflow.md) · [01-vision](01-vision.md) · [02-architecture](02-architecture.md) · [03-build-plan](03-build-plan.md) · [04-data-model](04-data-model.md) (รวม **§M2 ครบ — projects/team/positions/audit-by-project**) · [DECISIONS](DECISIONS.md) (**D1–D44**)
@@ -29,10 +31,10 @@
 - **trust-but-verify ตอน implementer return:** อ่าน diff เอง + `make test -count=1` (กัน cached) + smoke test e2e (curl ผ่าน live API หลัง `make api-up`) + SQL check audit invariant. ทุกข้อจับได้จริงรอบ session นี้
 
 ## ทำอะไรต่อ (เลือก — ถาม User ก่อน, ระบุข้อแนะนำ; ถามแบบ numbered list ในข้อความ ไม่ใช้ option-picker)
-1. **6b-BE-M2-team-positions — แนะนำ ปิด M2 BE ครึ่งหลัง** — migrations 000012-000016 (position_masters / project_members composite FK / projects.owner FK ALTER / project_member_positions junction / ws_memberships company_position_code ALTER) + project_members domain/service/handler + positions CRUD + owner-set in projects.create flow + invite/role-change/position-assign audit. ตาม workflow pattern เดิม: Phase 2.1 spec design workflow → Phase 2.2 dispatch Opus implementer → Phase 2.3 review+smoke+commit
-2. **M2 FE (project list/detail/create + team mgmt)** — ทำหลัง 6b เสร็จ (D19 BE นำ FE) เพื่อปิด M2 ทั้ง milestone
-3. **flow-doc / permission matrix / Security-rate-limit pass / push** — งาน sideline ที่ defer ไว้
-4. **Push to origin/dev** — 6 commit นี้ session ยัง local อยู่; ถ้าอยาก backup → push
+1. **6b-2-BE-M2-positions — แนะนำ ปิด M2 BE** — migrations 000014-000016 (`000014` position_masters = `project_positions`/`company_positions` [workspace-scoped customizable, FK-by-code §M2.2.4, `code` immutable + no-reuse-after-deprecate, status active/deprecated แทน soft-delete] · `000015` `project_member_positions` junction [append/delete-only, ไม่มี updated_at] · `000016` `ws_memberships.company_position_code` ALTER) + positions CRUD (2 customizable master, D39) + project_member_positions assign/unassign (service ตรวจ `removed_at IS NULL` ก่อน assign) + ws company_position assign + audit (`position.assign`/`unassign`, `*_position.create`/`update`/`deprecate`). pattern เดิม: spec workflow → **external review (แนบไฟล์เสมอ!)** → dispatch Opus → review/smoke/commit
+2. **M2 FE (project list/detail/create + team mgmt + positions)** — ทำหลัง 6b-2 (D19 BE นำ FE) ปิด M2 ทั้ง milestone
+3. **flow-doc / permission matrix / Security-rate-limit pass** — งาน sideline ที่ defer ไว้
+4. **Push to origin/dev** — 2 commit ของ 6b-1 (code + docs) ยัง local; backup → push
 
 ## Open threads (ยังไม่ตัดสิน — อย่าลืม)
 **จาก M2 §M2.8 (open threads ของ data-model — ดูเต็มใน [04 §M2.8](04-data-model.md)):**
@@ -59,7 +61,7 @@
 - Makefile root `GOOSE_DSN` default 15432 vs docker bind 15433 — ใช้ env override ผ่านได้ ไม่ใช่ blocker
 
 ## M2 = Functional Project (build-plan §5) — เหลืออะไร
-**Phase 1 data-model = done** (D38-D44 folded) · **Phase 2 step 6a-BE = done** (project core + masters + audit project_id) · **Phase 2 step 6b-BE = ถัดไป** (team layer: project_members + positions + owner FK + ws company_position) · **Phase 3 FE = หลัง 6b** → ปิด M2 ทั้ง milestone แล้วไป M3 (Deliverable + ตรวจรับ — wedge ครึ่งแรก).
+**Phase 1 data-model = done** (D38-D46 folded) · **6a-BE = done** (project core + masters + audit project_id) · **6b-1-BE = done** (project_members + owner composite FK + create owner-3-step; D45/D46) · **6b-2-BE = ถัดไป** (positions: project_positions/company_positions + project_member_positions junction + ws company_position_code, migrations 000014-000016) · **Phase 3 FE = หลัง 6b-2** → ปิด M2 ทั้ง milestone แล้วไป M3 (Deliverable + ตรวจรับ — wedge ครึ่งแรก).
 
 ## เริ่ม session หน้ายังไง
 อ่านตามลำดับ: **ไฟล์นี้ → 00-workflow (D37 hybrid implementer policy) → 01-vision → 02-architecture (§4.3 4 invariants) → 03-build-plan → 04-data-model (§M2 ทั้งหมด) → DECISIONS** แล้วถาม User ว่าจะไปข้อไหนใน "ทำอะไรต่อ" (แนะนำ **6b-BE-M2-team-positions** ผ่าน workflow design+dispatch pattern เดิม).
