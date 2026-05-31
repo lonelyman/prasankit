@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -13,7 +13,7 @@ import type { WorkspaceWithRole } from "@/lib/types";
 import { Input, Button, Alert } from "@/components/ui";
 
 export default function WorkspacesPage() {
-  const { status } = useAuth();
+  const { status, account } = useAuth();
   const { setActiveSlug } = useWorkspace();
   const { lang } = useLang();
   const router = useRouter();
@@ -32,6 +32,7 @@ export default function WorkspacesPage() {
   const [contactEmailError, setContactEmailError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [showCreate, setShowCreate] = useState(false); // when you already have workspaces, create is a collapsed secondary action
 
   // Redirect anonymous users
   useEffect(() => {
@@ -39,6 +40,17 @@ export default function WorkspacesPage() {
       router.push("/login");
     }
   }, [status, router]);
+
+  // Pre-fill the workspace contact email with the signed-in user's primary email
+  // (a sensible default — editable; the workspace contact email is an org-level field
+  // that may differ from the creator's login email). One-shot: won't clobber edits.
+  const contactPrefilledRef = useRef(false);
+  useEffect(() => {
+    if (!contactPrefilledRef.current && account?.primary_email) {
+      setContactEmail(account.primary_email);
+      contactPrefilledRef.current = true;
+    }
+  }, [account]);
 
   // Load workspace list
   useEffect(() => {
@@ -175,15 +187,33 @@ export default function WorkspacesPage() {
         )}
       </div>
 
-      {/* Create workspace form */}
-      <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-4">
-        <h2 className="text-lg font-semibold text-zinc-800">
-          {t("page.workspaces.create_heading", lang)}
-        </h2>
+      {/* Create workspace: a hero form when you have none, a collapsed secondary
+          action when you already have workspaces (most people keep just one, so the
+          form should not dominate the list every visit). */}
+      {!isEmpty && !showCreate ? (
+        <button
+          type="button"
+          onClick={() => setShowCreate(true)}
+          className="text-sm font-medium text-zinc-500 hover:text-zinc-800 underline self-start"
+        >
+          {t("btn.create_new_workspace", lang)}
+        </button>
+      ) : (
+        <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold text-zinc-800">
+              {t("page.workspaces.create_heading", lang)}
+            </h2>
+            {!isEmpty && (
+              <Button variant="ghost" onClick={() => setShowCreate(false)}>
+                {t("btn.cancel", lang)}
+              </Button>
+            )}
+          </div>
 
-        {formError && <Alert variant="error">{formError}</Alert>}
+          {formError && <Alert variant="error">{formError}</Alert>}
 
-        <form onSubmit={handleCreate} className="flex flex-col gap-4" noValidate>
+          <form onSubmit={handleCreate} className="flex flex-col gap-4" noValidate>
           <Input
             id="workspace-name"
             label={t("label.workspace_name", lang)}
@@ -217,7 +247,8 @@ export default function WorkspacesPage() {
             {t("btn.create_workspace", lang)}
           </Button>
         </form>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

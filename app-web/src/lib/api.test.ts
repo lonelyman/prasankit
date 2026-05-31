@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import { apiGet, apiPost, ApiError } from "./api";
+import { apiGet, apiPost, apiPut, apiDelete, ApiError } from "./api";
 import type { MockInstance } from "vitest";
 
 beforeAll(() => {
@@ -136,6 +136,94 @@ describe("apiPost", () => {
     expect(caught).toBeInstanceOf(ApiError);
     expect((caught as ApiError).code).toBe("validation.invalid_input");
     expect((caught as ApiError).details).toEqual(details);
+  });
+});
+
+describe("apiPut", () => {
+  it("returns data on 200 JSON response", async () => {
+    const mockData = { id: "abc", project_name: "Updated" };
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: mockData }),
+    } as unknown as Response);
+
+    const result = await apiPut<typeof mockData>("/api/v1/workspaces/projects/abc", {
+      project_name: "Updated",
+    });
+
+    expect(result).toEqual(mockData);
+  });
+
+  it("uses the PUT method and sends the body", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: { id: "abc" } }),
+    } as unknown as Response);
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    await apiPut("/api/v1/workspaces/projects/abc", { project_name: "Updated" });
+
+    const callArgs = (mockFetch as MockInstance).mock.calls[0] as [string, RequestInit];
+    expect(callArgs[1].method).toBe("PUT");
+    const body = JSON.parse(callArgs[1].body as string);
+    expect(body.project_name).toBe("Updated");
+  });
+
+  it("throws ApiError on error envelope", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      text: async () =>
+        JSON.stringify({ error: { code: "project.slug_taken", message: "x" } }),
+    } as unknown as Response);
+
+    await expect(
+      apiPut("/api/v1/workspaces/projects/abc", { project_name: "x" })
+    ).rejects.toSatisfy(
+      (err: unknown) => err instanceof ApiError && err.code === "project.slug_taken"
+    );
+  });
+});
+
+describe("apiDelete", () => {
+  it("resolves null/void on 204 No Content", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 204,
+      text: async () => "",
+    } as unknown as Response);
+
+    const result = await apiDelete("/api/v1/workspaces/projects/abc");
+
+    expect(result).toBeUndefined();
+  });
+
+  it("throws ApiError on non-2xx error envelope", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: async () =>
+        JSON.stringify({ error: { code: "project.not_found", message: "x" } }),
+    } as unknown as Response);
+
+    await expect(
+      apiDelete("/api/v1/workspaces/projects/abc")
+    ).rejects.toSatisfy(
+      (err: unknown) => err instanceof ApiError && err.code === "project.not_found"
+    );
+  });
+
+  it("does not throw on empty 200 body", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => "",
+    } as unknown as Response);
+
+    await expect(apiDelete("/api/v1/workspaces/projects/abc")).resolves.toBeUndefined();
   });
 });
 

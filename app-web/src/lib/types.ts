@@ -37,3 +37,32 @@ export interface AcceptResult {
   workspace_id: string;
   org_role_code: string;
 }
+
+export interface Project {
+  id: string;
+  workspace_id: string;
+  project_name: string;
+  slug: string | null; // *string in BE; null when blank
+  project_type_code: string;
+  project_status_code: string;
+  owner_project_member_id?: string | null; // omitempty: ABSENT when unset; non-null for projects created by this BE
+  requesting_unit: string | null;
+  description: string | null;
+  start_date: string | null; // "YYYY-MM-DD"
+  end_date: string | null; // "YYYY-MM-DD"
+  created_at: string; // RFC3339
+  updated_at: string; // RFC3339
+}
+
+export interface ProjectPagination {
+  page: number;
+  limit: number;
+  total: number;
+  total_pages: number;
+  has_more: boolean;
+}
+
+export interface ProjectListPage {
+  items: Project[];
+  pagination: ProjectPagination;
+}

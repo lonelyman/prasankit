@@ -44,7 +44,7 @@ export function Input({ label, error, id, className = "", ...props }: InputProps
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   loading?: boolean;
-  variant?: "primary" | "secondary" | "ghost";
+  variant?: "primary" | "secondary" | "ghost" | "danger";
 }
 
 export function Button({
@@ -61,6 +61,7 @@ export function Button({
     primary: "bg-zinc-900 text-white hover:bg-zinc-700",
     secondary: "bg-zinc-100 text-zinc-900 hover:bg-zinc-200",
     ghost: "text-zinc-600 hover:bg-zinc-100 underline-offset-2 hover:underline",
+    danger: "bg-red-600 text-white hover:bg-red-500",
   };
 
   return (
@@ -148,6 +149,118 @@ export function Select({ label, error, id, options, className = "", ...props }: 
         ))}
       </select>
       {error && <p className="text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pagination
+// ---------------------------------------------------------------------------
+
+export interface PaginationProps {
+  page: number;
+  totalPages: number;
+  hasMore: boolean;
+  onPrev(): void;
+  onNext(): void;
+  labelPrev: string;
+  labelNext: string;
+  labelStatus: string; // ALREADY interpolated by the caller — Pagination does no templating
+  disabled?: boolean;
+}
+
+export function Pagination({
+  page,
+  totalPages,
+  hasMore,
+  onPrev,
+  onNext,
+  labelPrev,
+  labelNext,
+  labelStatus,
+  disabled,
+}: PaginationProps) {
+  return (
+    <div className="flex items-center justify-between">
+      <Button
+        variant="secondary"
+        onClick={onPrev}
+        disabled={disabled || page <= 1}
+      >
+        {labelPrev}
+      </Button>
+      <span className="text-sm text-zinc-500">{labelStatus}</span>
+      <Button
+        variant="secondary"
+        onClick={onNext}
+        disabled={disabled || !hasMore || page >= totalPages}
+      >
+        {labelNext}
+      </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ConfirmDialog
+// ---------------------------------------------------------------------------
+
+export interface ConfirmDialogProps {
+  open: boolean;
+  title: string;
+  body?: React.ReactNode;
+  confirmLabel: string;
+  cancelLabel: string;
+  confirmVariant?: "primary" | "danger";
+  loading?: boolean;
+  onConfirm(): void;
+  onCancel(): void;
+}
+
+export function ConfirmDialog({
+  open,
+  title,
+  body,
+  confirmLabel,
+  cancelLabel,
+  confirmVariant = "primary",
+  loading,
+  onConfirm,
+  onCancel,
+}: ConfirmDialogProps) {
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onCancel]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-lg flex flex-col gap-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-semibold text-zinc-800">{title}</h2>
+        {body && <div className="text-sm text-zinc-600">{body}</div>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel} disabled={loading}>
+            {cancelLabel}
+          </Button>
+          <Button variant={confirmVariant} onClick={onConfirm} loading={loading}>
+            {confirmLabel}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

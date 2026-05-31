@@ -33,6 +33,7 @@ export default function Home() {
   const [inviteFormError, setInviteFormError] = useState<string | null>(null);
   const [inviteSuccess, setInviteSuccess] = useState(false);
   const [inviting, setInviting] = useState(false);
+  const [showInvite, setShowInvite] = useState(false); // invite is secondary — collapsed by default
 
   // Redirect anonymous users
   useEffect(() => {
@@ -193,12 +194,40 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Invite member form — only for owner/admin */}
-      {canInvite && (
+      {/* Primary action: Projects — the actual work in this workspace */}
+      <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-3">
+        <h2 className="text-lg font-semibold text-zinc-800">
+          {t("page.home.projects_heading", lang)}
+        </h2>
+        <p className="text-sm text-zinc-500">{t("page.home.projects_desc", lang)}</p>
+        <div>
+          <Button onClick={() => router.push("/projects")}>
+            {t("btn.go_to_projects", lang)}
+          </Button>
+        </div>
+      </div>
+
+      {/* Secondary: invite members — owner/admin only, collapsed by default so it
+          does not dominate the page or feel mandatory for a single-person workspace. */}
+      {canInvite && !showInvite && (
+        <button
+          type="button"
+          onClick={() => setShowInvite(true)}
+          className="text-sm font-medium text-zinc-500 hover:text-zinc-800 underline self-start"
+        >
+          {t("page.home.invite_heading", lang)}
+        </button>
+      )}
+      {canInvite && showInvite && (
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-4">
-          <h2 className="text-lg font-semibold text-zinc-800">
-            {t("page.home.invite_heading", lang)}
-          </h2>
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold text-zinc-800">
+              {t("page.home.invite_heading", lang)}
+            </h2>
+            <Button variant="ghost" onClick={() => setShowInvite(false)}>
+              {t("btn.cancel", lang)}
+            </Button>
+          </div>
 
           {inviteFormError && <Alert variant="error">{inviteFormError}</Alert>}
           {inviteSuccess && (

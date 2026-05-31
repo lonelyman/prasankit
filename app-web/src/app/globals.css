@@ -1,6 +1,10 @@
 @import "tailwindcss";
 
 :root {
+  /* Light-only app: declare color-scheme so the browser (Chrome auto-dark / OS dark mode)
+     does NOT auto-darken the white pages into a dull/veiled gray. Pairs with removing the
+     prefers-color-scheme:dark block below. */
+  color-scheme: light;
   --background: #ffffff;
   --foreground: #171717;
 }
@@ -12,12 +16,10 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* Prasankit is a light-themed app (all components hardcode bg-white / text-zinc-*).
+   The create-next-app prefers-color-scheme:dark block was REMOVED: it flipped
+   --foreground to near-white while inputs/cards stay bg-white, making typed text
+   invisible ("จม") on OS dark mode. No dark theme is designed; keep foreground dark. */
 
 body {
   background: var(--background);

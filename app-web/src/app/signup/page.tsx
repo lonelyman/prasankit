@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
 import { t, errorMessage } from "@/lib/i18n";
-import { validateEmail, validatePassword, validateDisplayName } from "@/lib/validation";
+import { validateEmail, validatePassword, validateConfirmPassword, validateDisplayName } from "@/lib/validation";
 import { apiPost, ApiError } from "@/lib/api";
 import type { Account } from "@/lib/types";
 import { Input, Button, Alert } from "@/components/ui";
@@ -18,10 +18,12 @@ export default function SignupPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [fieldErrors, setFieldErrors] = useState<{
     email?: string;
     password?: string;
+    confirm_password?: string;
     display_name?: string;
   }>({});
   const [apiErrorCode, setApiErrorCode] = useState<string | null>(null);
@@ -53,11 +55,13 @@ export default function SignupPage() {
   }
 
   function validate(): boolean {
-    const errors: { email?: string; password?: string; display_name?: string } = {};
+    const errors: { email?: string; password?: string; confirm_password?: string; display_name?: string } = {};
     const emailErr = validateEmail(email);
     if (emailErr) errors.email = t(emailErr, lang);
     const pwErr = validatePassword(password);
     if (pwErr) errors.password = t(pwErr, lang);
+    const confirmErr = validateConfirmPassword(password, confirmPassword);
+    if (confirmErr) errors.confirm_password = t(confirmErr, lang);
     const nameErr = validateDisplayName(displayName);
     if (nameErr) errors.display_name = t(nameErr, lang);
     setFieldErrors(errors);
@@ -139,6 +143,16 @@ export default function SignupPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             error={fieldErrors.password}
+            autoComplete="new-password"
+            disabled={loading}
+          />
+          <Input
+            id="confirm_password"
+            type="password"
+            label={t("label.confirm_password", lang)}
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            error={fieldErrors.confirm_password}
             autoComplete="new-password"
             disabled={loading}
           />

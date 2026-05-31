@@ -80,6 +80,7 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
   // --- validation error keys (returned from validation.ts) ---
   "invalid_email": { th: "กรุณากรอกอีเมลที่ถูกต้อง", en: "Please enter a valid email address." },
   "password_too_short": { th: "รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร", en: "Password must be at least 8 characters." },
+  "password_mismatch": { th: "รหัสผ่านยืนยันไม่ตรงกัน", en: "Passwords do not match." },
   "display_name_required": { th: "กรุณากรอกชื่อที่แสดง", en: "Display name is required." },
   "display_name_too_long": { th: "ชื่อที่แสดงต้องไม่เกิน 100 ตัวอักษร", en: "Display name must be 100 characters or fewer." },
   "workspace_name_required": { th: "กรุณากรอกชื่อ workspace", en: "Workspace name is required." },
@@ -106,6 +107,7 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
   // --- workspace actions ---
   "btn.enter_workspace": { th: "เข้าใช้งาน", en: "Enter" },
   "btn.create_workspace": { th: "สร้าง Workspace", en: "Create workspace" },
+  "btn.create_new_workspace": { th: "+ สร้าง Workspace ใหม่", en: "+ Create new workspace" },
   "btn.switch_workspace": { th: "เปลี่ยน Workspace", en: "Switch workspace" },
 
   // --- workspace home ---
@@ -118,6 +120,9 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
   "btn.send_invite": { th: "ส่งคำเชิญ", en: "Send invite" },
   "msg.invitation_sent": { th: "ส่งคำเชิญสำเร็จแล้ว", en: "Invitation sent successfully." },
   "page.home.invite_heading": { th: "เชิญสมาชิก", en: "Invite a member" },
+  "page.home.projects_heading": { th: "โครงการ", en: "Projects" },
+  "page.home.projects_desc": { th: "จัดการและดูโครงการทั้งหมดในเวิร์กสเปซนี้", en: "Manage and view all projects in this workspace." },
+  "btn.go_to_projects": { th: "ไปที่โครงการ", en: "Go to projects" },
 
   // --- role option labels ---
   "role.admin": { th: "Admin", en: "Admin" },
@@ -133,6 +138,74 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
     th: "ไม่พบโทเค็นคำเชิญ กรุณาคลิกลิงก์จากอีเมล",
     en: "No invitation token found. Please click the link in your email.",
   },
+
+  // --- nav / projects page ---
+  "nav.projects": { th: "โครงการ", en: "Projects" },
+  "page.projects.title": { th: "โครงการ", en: "Projects" },
+  "page.projects.empty_heading": { th: "ยังไม่มีโครงการ", en: "No projects yet" },
+  "page.projects.create_heading": { th: "สร้างโครงการใหม่", en: "Create a new project" },
+  "msg.projects_empty_hint": { th: "เริ่มต้นด้วยการสร้างโครงการแรกของคุณ", en: "Get started by creating your first project." },
+
+  // --- project field labels ---
+  "label.project_name": { th: "ชื่อโครงการ", en: "Project name" },
+  "label.project_slug": { th: "Slug (ตัวระบุ URL)", en: "Slug (URL identifier)" },
+  "label.project_type": { th: "ประเภทโครงการ", en: "Project type" },
+  "label.project_status": { th: "สถานะ", en: "Status" },
+  "label.requesting_unit": { th: "หน่วยงานผู้ขอ", en: "Requesting unit" },
+  "label.description": { th: "รายละเอียด", en: "Description" },
+  "label.start_date": { th: "วันที่เริ่ม", en: "Start date" },
+  "label.end_date": { th: "วันที่สิ้นสุด", en: "End date" },
+  "label.owner": { th: "เจ้าของโครงการ", en: "Owner" },
+  "label.created_at": { th: "สร้างเมื่อ", en: "Created" },
+  "label.updated_at": { th: "แก้ไขล่าสุด", en: "Updated" },
+
+  // --- buttons / actions ---
+  "btn.create_project": { th: "สร้างโครงการ", en: "Create project" },
+  "btn.open_project": { th: "เปิด", en: "Open" },
+  "btn.edit": { th: "แก้ไข", en: "Edit" },
+  "btn.save": { th: "บันทึก", en: "Save" },
+  "btn.cancel": { th: "ยกเลิก", en: "Cancel" },
+  "btn.delete": { th: "ลบ", en: "Delete" },
+  "btn.change_status": { th: "เปลี่ยนสถานะ", en: "Change status" },
+  "btn.back_to_projects": { th: "กลับไปหน้าโครงการ", en: "Back to projects" },
+  "btn.prev": { th: "ก่อนหน้า", en: "Previous" },
+  "btn.next": { th: "ถัดไป", en: "Next" },
+
+  // --- filters / pagination ---
+  "filter.all": { th: "ทั้งหมด", en: "All" },
+  "filter.status": { th: "กรองตามสถานะ", en: "Filter by status" },
+  "filter.type": { th: "กรองตามประเภท", en: "Filter by type" },
+  "pagination.page_of": { th: "หน้า {page} จาก {total}", en: "Page {page} of {total}" }, // caller MUST .replace — t() does not interpolate
+
+  // --- detail / dialogs ---
+  "page.project_detail.not_found": { th: "ไม่พบโครงการนี้ หรือคุณไม่มีสิทธิ์เข้าถึง", en: "Project not found or you don't have access." },
+  "dialog.delete.title": { th: "ลบโครงการ?", en: "Delete project?" },
+  "dialog.delete.body": { th: "การลบจะนำโครงการนี้ออกจากรายการ คุณแน่ใจหรือไม่?", en: "This will remove the project from your list. Are you sure?" },
+  "dialog.change_status.title": { th: "เปลี่ยนสถานะโครงการ?", en: "Change project status?" },
+  "msg.status_changed": { th: "เปลี่ยนสถานะเรียบร้อยแล้ว", en: "Status updated." },
+  "hint.internal_requesting_unit": { th: "โครงการภายในควรระบุหน่วยงานผู้ขอ", en: "Internal projects should specify a requesting unit." },
+
+  // --- status labels (8) — pinned to migration 000009 label_th/label_en ---
+  "status.draft": { th: "ฉบับร่าง", en: "Draft" },
+  "status.planning": { th: "วางแผน", en: "Planning" },
+  "status.proposal": { th: "เสนอราคา", en: "Proposal" },
+  "status.active": { th: "กำลังดำเนินการ", en: "Active" },
+  "status.closing": { th: "กำลังปิดงาน", en: "Closing" },
+  "status.maintenance": { th: "ดูแลรักษา", en: "Maintenance" },
+  "status.closed": { th: "ปิดโครงการ", en: "Closed" },
+  "status.archived": { th: "เก็บถาวร", en: "Archived" },
+
+  // --- type labels (2) — pinned to migration 000009 ---
+  "type.internal": { th: "ภายในองค์กร", en: "Internal" },
+  "type.client": { th: "งานลูกค้า", en: "Client" },
+
+  // --- new validation error keys (returned by validators) ---
+  "project_name_required": { th: "กรุณากรอกชื่อโครงการ", en: "Project name is required." },
+  "project_name_too_long": { th: "ชื่อโครงการต้องไม่เกิน 200 ตัวอักษร", en: "Project name must be 200 characters or fewer." },
+  "requesting_unit_too_long": { th: "หน่วยงานผู้ขอต้องไม่เกิน 200 ตัวอักษร", en: "Requesting unit must be 200 characters or fewer." },
+  "description_too_long": { th: "รายละเอียดต้องไม่เกิน 10000 ตัวอักษร", en: "Description must be 10000 characters or fewer." },
+  "invalid_date": { th: "กรุณากรอกวันที่ในรูปแบบ ปปปป-ดด-วว", en: "Please enter a valid date (YYYY-MM-DD)." },
+  "end_before_start": { th: "วันที่สิ้นสุดต้องไม่อยู่ก่อนวันที่เริ่ม", en: "End date must not be before the start date." },
 };
 
 export function t(key: string, lang: Lang): string {
@@ -225,6 +298,24 @@ const ERROR_MESSAGES: Record<string, Record<Lang, string>> = {
   "invitation.email_mismatch": {
     th: "คำเชิญนี้ถูกส่งไปยังอีเมลอื่น กรุณาเข้าสู่ระบบด้วยอีเมลที่ถูกเชิญ",
     en: "This invitation was sent to a different email address. Please log in with the invited email.",
+  },
+
+  // --- project codes (M2 FE-A) ---
+  "project.slug_taken": {
+    th: "Slug นี้ถูกใช้งานแล้วในโครงการอื่น กรุณาเลือก slug อื่น",
+    en: "This slug is already used by another project. Please choose a different one.",
+  },
+  "project.invalid_master_code": {
+    th: "รหัสสถานะหรือประเภทไม่ถูกต้อง",
+    en: "Invalid status or type code.",
+  },
+  "project.not_found": {
+    th: "ไม่พบโครงการนี้",
+    en: "Project not found.",
+  },
+  "internal.unexpected": {
+    th: "เกิดข้อผิดพลาดภายในระบบ กรุณาลองอีกครั้ง",
+    en: "An unexpected server error occurred. Please try again.",
   },
 };
 
