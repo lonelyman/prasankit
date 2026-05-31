@@ -14,7 +14,7 @@ import { Input, Button, Alert } from "@/components/ui";
 
 export default function WorkspacesPage() {
   const { status, account } = useAuth();
-  const { setActiveSlug } = useWorkspace();
+  const { activeSlug, setActiveSlug } = useWorkspace();
   const { lang } = useLang();
   const router = useRouter();
 
@@ -72,6 +72,17 @@ export default function WorkspacesPage() {
 
     void load();
   }, [status, lang]);
+
+  // Auto-enter when there is exactly ONE workspace and none is active yet (login landing):
+  // skip the picker so login → work is one click. Does NOT fire when activeSlug is set
+  // (e.g. arriving via the header workspace link), so switching / creating a 2nd workspace
+  // stays reachable from /workspaces.
+  useEffect(() => {
+    if (!listLoading && !listError && !activeSlug && workspaces.length === 1) {
+      setActiveSlug(workspaces[0].slug);
+      router.replace("/projects");
+    }
+  }, [listLoading, listError, activeSlug, workspaces, setActiveSlug, router]);
 
   if (status === "loading") {
     return (
@@ -191,13 +202,11 @@ export default function WorkspacesPage() {
           action when you already have workspaces (most people keep just one, so the
           form should not dominate the list every visit). */}
       {!isEmpty && !showCreate ? (
-        <button
-          type="button"
-          onClick={() => setShowCreate(true)}
-          className="text-sm font-medium text-zinc-500 hover:text-zinc-800 underline self-start"
-        >
-          {t("btn.create_new_workspace", lang)}
-        </button>
+        <div className="self-start">
+          <Button variant="secondary" onClick={() => setShowCreate(true)}>
+            {t("btn.create_new_workspace", lang)}
+          </Button>
+        </div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-4">
           <div className="flex items-center justify-between gap-4">
