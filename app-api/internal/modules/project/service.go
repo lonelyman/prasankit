@@ -109,7 +109,7 @@ func (s *Service) CreateProject(ctx context.Context, in CreateProjectInput) (*Pr
 	}
 	// slug — optional; if non-empty, must match
 	if slugNorm != "" && !slugPattern.MatchString(slugNorm) {
-		fields = append(fields, FieldError{Field: "slug", Message: "must match ^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$"})
+		fields = append(fields, FieldError{Field: "slug", Message: "must match ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"})
 	}
 	// project_type_code / project_status_code (non-empty)
 	if strings.TrimSpace(in.ProjectTypeCode) == "" {
@@ -329,7 +329,7 @@ func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (*Pr
 		fields = append(fields, FieldError{Field: "project_name", Message: "must be 200 characters or fewer"})
 	}
 	if slugNorm != "" && !slugPattern.MatchString(slugNorm) {
-		fields = append(fields, FieldError{Field: "slug", Message: "must match ^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$"})
+		fields = append(fields, FieldError{Field: "slug", Message: "must match ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"})
 	}
 	if strings.TrimSpace(in.ProjectTypeCode) == "" {
 		fields = append(fields, FieldError{Field: "project_type_code", Message: "must not be empty"})

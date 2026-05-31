@@ -34,7 +34,7 @@ export function validateNewPassword(v: string): string | null {
   return null;
 }
 
-const SLUG_RE = /^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$/;
+const SLUG_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export function validateWorkspaceName(v: string): string | null {
   const trimmed = v.trim();

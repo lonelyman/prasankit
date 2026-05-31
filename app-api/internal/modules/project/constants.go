@@ -59,4 +59,4 @@ func IsRoleAllowedFor(perm, orgRoleCode string) bool {
 
 // slugPattern validates project slugs (same shape as workspace slugs):
 // lowercase alphanumeric + hyphens, min 1 char, max 63 chars, no leading/trailing hyphens.
-var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$`)
+var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)

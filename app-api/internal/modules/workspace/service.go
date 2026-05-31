@@ -19,7 +19,7 @@ import (
 
 // slugPattern validates workspace slugs: lowercase alphanumeric + hyphens,
 // min 2 chars, max 63 chars, no leading/trailing hyphens.
-var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$`)
+var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // Service implements workspace use cases.
 type Service struct {
@@ -341,7 +341,7 @@ func validateCreateWorkspaceInput(in CreateWorkspaceInput) error {
 
 	slug := strings.ToLower(strings.TrimSpace(in.Slug))
 	if !slugPattern.MatchString(slug) {
-		fields = append(fields, FieldError{Field: "slug", Message: "must match ^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$"})
+		fields = append(fields, FieldError{Field: "slug", Message: "must match ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"})
 	}
 
 	if _, err := mail.ParseAddress(in.ContactEmail); err != nil {
