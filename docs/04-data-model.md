@@ -732,9 +732,9 @@ Constraints/indexes:
 
 ### M2.3.5 ALTER M1 tables
 
-**ALTER `workspace_memberships`** — backing UNIQUE (step 1, §M2.6) + company_position (step 8, §M2.6)
+**ALTER `workspace_memberships`** — backing UNIQUE (step 1, §M2.6) + company_position (step 9 / migration 000016, §M2.6)
 
-> **Why 2 ALTERs:** step 1 (backing `UNIQUE (workspace_id, id)`) ต้องลง **ก่อน** step 5 (`project_members` composite FK ใช้ workspace_memberships เป็น parent target). step 8 (`company_position_code`) ต้องลง **หลัง** step 3 (`company_positions` create-table). FK dependency graph บังคับ split — ขนาน M1 §7 migration narrative.
+> **Why 2 ALTERs:** step 1 (backing `UNIQUE (workspace_id, id)`) ต้องลง **ก่อน** step 5 (`project_members` composite FK ใช้ workspace_memberships เป็น parent target). company_position (step 9, migration 000016) ต้องลง **หลัง** step 7 (`company_positions` create-table, migration 000014). FK dependency graph บังคับ split — ขนาน M1 §7 migration narrative. *(หมายเหตุ post-D45 renumber: step 9 = 000016; เลข "step 8 (000015)" ใน comment SQL ด้านล่างเดิม stale, แก้แล้ว.)*
 
 ```sql
 -- step 1 (000008): backing composite UNIQUE (iron rule §M2.2.1 — FK target)
@@ -742,7 +742,7 @@ ALTER TABLE workspace_memberships
     ADD CONSTRAINT uq_workspace_memberships_workspace_id_id
     UNIQUE (workspace_id, id);
 
--- step 8 (000015): company_position_code (nullable; D41)
+-- step 9 (000016): company_position_code (nullable; D41)
 ALTER TABLE workspace_memberships
     ADD COLUMN company_position_code TEXT;
 
@@ -870,7 +870,7 @@ goose, ต่อจาก `000007_create_crosscutting_logs`. ลำดับแ�
 5. **`000012_create_project_members`** — `project_members` table; composite FKs ครบ (projects, workspace_memberships — iron rule §M2.2.1); `uq_project_members_workspace_id_id` UNIQUE non-partial (FK target backing สำหรับ owner FK + 6b-2 project_member_positions). indexes: `uq_project_members_active` (partial WHERE removed_at IS NULL), `ix_project_members_project_role`, `ix_project_members_membership`
 6. **`000013_alter_projects_add_owner_fk`** — `ALTER TABLE projects ADD CONSTRAINT fk_projects_owner_project_member FOREIGN KEY (workspace_id, owner_project_member_id) REFERENCES project_members (workspace_id, id);` **IMMEDIATE** (D40 refined — เลิกใช้ `DEFERRABLE INITIALLY DEFERRED`; ดู §M2.3.3 notes). depends on 000012
 
-### Slice 6b-2 (planned)
+### Slice 6b-2 (committed 2026-05-31)
 
 7. **`000014_create_position_masters`** — `project_positions`, `company_positions` (workspace-scoped customizable; ไม่ seed). indexes ต่อ table: `uq_*_workspace_code` UNIQUE non-partial (FK target backing), `ix_*_workspace_status`
 8. **`000015_create_project_member_positions`** — `project_member_positions` junction; composite FKs ไป `project_members` (000012) + `project_positions` (000014, FK-by-code §M2.2.4). indexes: `uq_pmp_member_position` UNIQUE, `ix_pmp_position`
