@@ -24,8 +24,8 @@ import {
 import type { UpdateProjectInput } from "@/lib/project-api";
 import { ApiError } from "@/lib/api";
 import type { Project } from "@/lib/types";
-import { statusOptions, typeOptions } from "@/lib/project-masters";
-import { Input, Button, Alert, Select, ConfirmDialog } from "@/components/ui";
+import { statusOptions, typeOptions, statusColor } from "@/lib/project-masters";
+import { Input, Button, Alert, Select, ConfirmDialog, Badge, Breadcrumb } from "@/components/ui";
 
 type FieldKey = "name" | "slug" | "requestingUnit" | "description" | "startDate" | "endDate";
 const BE_FIELD_MAP: Record<string, FieldKey> = {
@@ -374,9 +374,12 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="flex-1 p-8 max-w-2xl mx-auto w-full flex flex-col gap-8">
-      <Button variant="ghost" onClick={() => router.push("/projects")} className="self-start">
-        {t("btn.back_to_projects", lang)}
-      </Button>
+      <Breadcrumb
+        items={[
+          { label: t("nav.projects", lang), href: "/projects" },
+          { label: project.project_name },
+        ]}
+      />
 
       {actionError && <Alert variant="error">{actionError}</Alert>}
 
@@ -387,12 +390,10 @@ export default function ProjectDetailPage() {
             <div className="flex flex-col gap-2">
               <h1 className="text-2xl font-semibold text-zinc-800">{project.project_name}</h1>
               <div className="flex gap-2">
-                <span className="inline-flex items-center rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-700">
+                <Badge color={statusColor(project.project_status_code)}>
                   {t(`status.${project.project_status_code}`, lang)}
-                </span>
-                <span className="inline-flex items-center rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-700">
-                  {t(`type.${project.project_type_code}`, lang)}
-                </span>
+                </Badge>
+                <Badge>{t(`type.${project.project_type_code}`, lang)}</Badge>
               </div>
             </div>
           </div>

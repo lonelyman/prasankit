@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useWorkspace } from "@/lib/workspace-context";
 import { useLang } from "@/lib/lang-context";
@@ -24,8 +24,9 @@ import {
   typeOptions,
   statusFilterOptions,
   typeFilterOptions,
+  statusColor,
 } from "@/lib/project-masters";
-import { Input, Button, Alert, Select, Pagination } from "@/components/ui";
+import { Input, Button, Alert, Select, Pagination, Modal, Badge } from "@/components/ui";
 
 // Field-name map: BE field → local validation error key + setter (key design call #7).
 type FieldKey = "name" | "slug" | "requestingUnit" | "description" | "startDate" | "endDate";
@@ -38,11 +39,12 @@ const BE_FIELD_MAP: Record<string, FieldKey> = {
   end_date: "endDate",
 };
 
-export default function ProjectsPage() {
+function ProjectsPageInner() {
   const { status } = useAuth();
   const { activeSlug, clearActiveSlug } = useWorkspace();
   const { lang } = useLang();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   // List state
   const [items, setItems] = useState<Project[]>([]);
@@ -55,6 +57,9 @@ export default function ProjectsPage() {
 
   // Org-role state
   const [canMutate, setCanMutate] = useState(false);
+
+  // Create modal state
+  const [createOpen, setCreateOpen] = useState(false);
 
   // Create form state
   const [name, setName] = useState("");
@@ -152,6 +157,16 @@ export default function ProjectsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, activeSlug, lang, page, statusFilter, typeFilter]);
 
+  // Deep-link: /projects?new=1 opens the create modal (owner/admin only).
+  useEffect(() => {
+    const sync = async () => {
+      if (canMutate && searchParams.get("new") === "1") {
+        setCreateOpen(true);
+      }
+    };
+    void sync();
+  }, [canMutate, searchParams]);
+
   if (status === "loading") {
     return (
       <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
@@ -162,6 +177,14 @@ export default function ProjectsPage() {
 
   if (status === "anonymous" || !activeSlug) {
     return null;
+  }
+
+  function openCreate() {
+    setCreateOpen(true);
+  }
+
+  function closeCreate() {
+    setCreateOpen(false);
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -279,11 +302,15 @@ export default function ProjectsPage() {
     <div className="flex-1 p-8 max-w-2xl mx-auto w-full flex flex-col gap-8">
       {/* List */}
       <div className="flex flex-col gap-4">
-        <h1 className="text-2xl font-semibold text-zinc-800">
-          {isEmpty
-            ? t("page.projects.empty_heading", lang)
-            : t("page.projects.title", lang)}
-        </h1>
+        {/* Header: title + persistent "+ New project" action (owner/admin) */}
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="text-2xl font-semibold text-zinc-800">
+            {t("page.projects.title", lang)}
+          </h1>
+          {canMutate && (
+            <Button onClick={openCreate}>{t("btn.new_project", lang)}</Button>
+          )}
+        </div>
 
         {/* Filter bar */}
         <div className="flex gap-3">
@@ -316,23 +343,30 @@ export default function ProjectsPage() {
         {!listLoading && items.length > 0 && (
           <ul className="flex flex-col gap-2">
             {items.map((p) => (
-              <li
-                key={p.id}
-                className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-4 py-3"
-              >
-                <div>
-                  <p className="font-medium text-zinc-800">{p.project_name}</p>
-                  <p className="text-xs text-zinc-500">
-                    {t(`status.${p.project_status_code}`, lang)} &middot;{" "}
-                    {t(`type.${p.project_type_code}`, lang)} &middot; {p.slug ?? "—"}
-                  </p>
-                </div>
-                <Button
-                  variant="secondary"
+              <li key={p.id}>
+                <button
+                  type="button"
                   onClick={() => router.push(`/projects/${p.id}`)}
+                  className="flex w-full flex-col gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-zinc-300 hover:shadow-sm"
                 >
-                  {t("btn.open_project", lang)}
-                </Button>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-medium text-zinc-800">{p.project_name}</p>
+                    <Badge color={statusColor(p.project_status_code)}>
+                      {t(`status.${p.project_status_code}`, lang)}
+                    </Badge>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500">
+                    <Badge>{t(`type.${p.project_type_code}`, lang)}</Badge>
+                    <span>&middot;</span>
+                    <span>{p.slug ?? "—"}</span>
+                    <span>&middot;</span>
+                    <span>
+                      {(p.start_date ?? "—") + " → " + (p.end_date ?? "—")}
+                    </span>
+                    <span>&middot;</span>
+                    <span className="font-mono">{p.owner_project_member_id ?? "—"}</span>
+                  </div>
+                </button>
               </li>
             ))}
           </ul>
@@ -354,108 +388,140 @@ export default function ProjectsPage() {
           />
         )}
 
+        {/* Empty state — a real CTA, never a dead-end. */}
         {isEmpty && (
-          <p className="text-sm text-zinc-500">{t("msg.projects_empty_hint", lang)}</p>
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-zinc-200 bg-white px-6 py-12 text-center">
+            <h2 className="text-lg font-semibold text-zinc-800">
+              {t("page.projects.empty_heading", lang)}
+            </h2>
+            {canMutate ? (
+              <>
+                <p className="text-sm text-zinc-500">{t("msg.projects_empty_hint", lang)}</p>
+                <Button onClick={openCreate}>{t("btn.create_first_project", lang)}</Button>
+              </>
+            ) : (
+              <p className="text-sm text-zinc-500">{t("msg.projects_member_readonly", lang)}</p>
+            )}
+          </div>
         )}
       </div>
 
-      {/* Create form — only for owner/admin */}
-      {canMutate && (
-        <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-4">
-          <h2 className="text-lg font-semibold text-zinc-800">
-            {t("page.projects.create_heading", lang)}
-          </h2>
+      {/* Create project — modal (owner/admin). Keeps ALL create logic. */}
+      <Modal
+        open={createOpen}
+        title={t("page.projects.create_heading", lang)}
+        onClose={closeCreate}
+        className="w-full max-w-md max-h-[85vh] overflow-y-auto"
+      >
+        {formError && <Alert variant="error">{formError}</Alert>}
 
-          {formError && <Alert variant="error">{formError}</Alert>}
-
-          <form onSubmit={handleCreate} className="flex flex-col gap-4" noValidate>
-            <Input
-              id="project-name"
-              label={t("label.project_name", lang)}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              error={nameError ?? undefined}
+        <form onSubmit={handleCreate} className="flex flex-col gap-4" noValidate>
+          <Input
+            id="project-name"
+            label={t("label.project_name", lang)}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            error={nameError ?? undefined}
+            disabled={creating}
+            autoComplete="off"
+          />
+          <Input
+            id="project-slug"
+            label={t("label.project_slug", lang)}
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            error={slugError ?? undefined}
+            disabled={creating}
+            autoComplete="off"
+            placeholder="my-project"
+          />
+          <Select
+            id="project-type"
+            label={t("label.project_type", lang)}
+            value={projectType}
+            options={typeOptions(lang)}
+            onChange={(e) => setProjectType(e.target.value)}
+            error={typeError ?? undefined}
+            disabled={creating}
+          />
+          <Select
+            id="project-status"
+            label={t("label.project_status", lang)}
+            value={projectStatus}
+            options={statusOptions(lang)}
+            onChange={(e) => setProjectStatus(e.target.value)}
+            error={statusError ?? undefined}
+            disabled={creating}
+          />
+          <Input
+            id="project-requesting-unit"
+            label={t("label.requesting_unit", lang)}
+            value={requestingUnit}
+            onChange={(e) => setRequestingUnit(e.target.value)}
+            error={requestingUnitError ?? undefined}
+            disabled={creating}
+            autoComplete="off"
+          />
+          {showInternalHint && (
+            <p className="text-xs text-blue-600">{t("hint.internal_requesting_unit", lang)}</p>
+          )}
+          <div className="flex flex-col gap-1">
+            <label htmlFor="project-description" className="text-sm font-medium text-zinc-700">
+              {t("label.description", lang)}
+            </label>
+            <textarea
+              id="project-description"
+              className={inputClass}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
               disabled={creating}
-              autoComplete="off"
+              rows={4}
             />
-            <Input
-              id="project-slug"
-              label={t("label.project_slug", lang)}
-              value={slug}
-              onChange={(e) => setSlug(e.target.value)}
-              error={slugError ?? undefined}
-              disabled={creating}
-              autoComplete="off"
-              placeholder="my-project"
-            />
-            <Select
-              id="project-type"
-              label={t("label.project_type", lang)}
-              value={projectType}
-              options={typeOptions(lang)}
-              onChange={(e) => setProjectType(e.target.value)}
-              error={typeError ?? undefined}
-              disabled={creating}
-            />
-            <Select
-              id="project-status"
-              label={t("label.project_status", lang)}
-              value={projectStatus}
-              options={statusOptions(lang)}
-              onChange={(e) => setProjectStatus(e.target.value)}
-              error={statusError ?? undefined}
-              disabled={creating}
-            />
-            <Input
-              id="project-requesting-unit"
-              label={t("label.requesting_unit", lang)}
-              value={requestingUnit}
-              onChange={(e) => setRequestingUnit(e.target.value)}
-              error={requestingUnitError ?? undefined}
-              disabled={creating}
-              autoComplete="off"
-            />
-            {showInternalHint && (
-              <p className="text-xs text-blue-600">{t("hint.internal_requesting_unit", lang)}</p>
-            )}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="project-description" className="text-sm font-medium text-zinc-700">
-                {t("label.description", lang)}
-              </label>
-              <textarea
-                id="project-description"
-                className={inputClass}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                disabled={creating}
-                rows={4}
-              />
-              {descriptionError && <p className="text-xs text-red-600">{descriptionError}</p>}
-            </div>
-            <Input
-              id="project-start-date"
-              type="date"
-              label={t("label.start_date", lang)}
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              error={startDateError ?? undefined}
-              disabled={creating}
-            />
-            <Input
-              id="project-end-date"
-              type="date"
-              label={t("label.end_date", lang)}
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              error={endDateError ?? undefined}
-              disabled={creating}
-            />
+            {descriptionError && <p className="text-xs text-red-600">{descriptionError}</p>}
+          </div>
+          <Input
+            id="project-start-date"
+            type="date"
+            label={t("label.start_date", lang)}
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            error={startDateError ?? undefined}
+            disabled={creating}
+          />
+          <Input
+            id="project-end-date"
+            type="date"
+            label={t("label.end_date", lang)}
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            error={endDateError ?? undefined}
+            disabled={creating}
+          />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={closeCreate} disabled={creating}>
+              {t("btn.cancel", lang)}
+            </Button>
             <Button type="submit" loading={creating}>
               {t("btn.create_project", lang)}
             </Button>
-          </form>
-        </div>
-      )}
+          </div>
+        </form>
+      </Modal>
     </div>
+  );
+}
+
+export default function ProjectsPage() {
+  const { lang } = useLang();
+  return (
+    <Suspense
+      fallback={
+        <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+          {t("msg.loading", lang)}
+        </div>
+      }
+    >
+      <ProjectsPageInner />
+    </Suspense>
   );
 }

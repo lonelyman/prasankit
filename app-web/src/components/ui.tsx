@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 
 // ---------------------------------------------------------------------------
 // Input
@@ -202,6 +203,49 @@ export function Pagination({
 }
 
 // ---------------------------------------------------------------------------
+// Modal — overlay shell factored from ConfirmDialog (same fixed/overlay/Escape
+// technique). ConfirmDialog is now a thin wrapper around this; both coexist.
+// ---------------------------------------------------------------------------
+
+export interface ModalProps {
+  open: boolean;
+  title: string;
+  onClose(): void;
+  children: React.ReactNode;
+  className?: string; // override the card width/shape if needed
+}
+
+export function Modal({ open, title, onClose, children, className = "w-full max-w-sm" }: ModalProps) {
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        className={`rounded-2xl bg-white p-6 shadow-lg flex flex-col gap-4 ${className}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-semibold text-zinc-800">{title}</h2>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ConfirmDialog
 // ---------------------------------------------------------------------------
 
@@ -228,39 +272,135 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  return (
+    <Modal open={open} title={title} onClose={onCancel}>
+      {body && <div className="text-sm text-zinc-600">{body}</div>}
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" onClick={onCancel} disabled={loading}>
+          {cancelLabel}
+        </Button>
+        <Button variant={confirmVariant} onClick={onConfirm} loading={loading}>
+          {confirmLabel}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Badge — a colored rounded pill (status/type chips). Color is a Tailwind
+// class string supplied by the caller (e.g. a FE status→color map).
+// ---------------------------------------------------------------------------
+
+export interface BadgeProps {
+  children: React.ReactNode;
+  /** Tailwind bg+text classes, e.g. "bg-green-100 text-green-700". */
+  color?: string;
+  className?: string;
+}
+
+export function Badge({ children, color = "bg-zinc-100 text-zinc-700", className = "" }: BadgeProps) {
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${color} ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Breadcrumb — "a / b / c" orientation trail; links where href is present.
+// ---------------------------------------------------------------------------
+
+export interface BreadcrumbItem {
+  label: string;
+  href?: string;
+}
+
+export interface BreadcrumbProps {
+  items: BreadcrumbItem[];
+  className?: string;
+}
+
+export function Breadcrumb({ items, className = "" }: BreadcrumbProps) {
+  return (
+    <nav aria-label="Breadcrumb" className={`flex items-center gap-1.5 text-sm ${className}`}>
+      {items.map((item, i) => (
+        <React.Fragment key={`${item.label}-${i}`}>
+          {i > 0 && <span className="text-zinc-300">/</span>}
+          {item.href ? (
+            <Link
+              href={item.href}
+              className="text-zinc-500 hover:text-zinc-900 transition"
+            >
+              {item.label}
+            </Link>
+          ) : (
+            <span className="text-zinc-800 font-medium" aria-current="page">
+              {item.label}
+            </span>
+          )}
+        </React.Fragment>
+      ))}
+    </nav>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Dropdown — a lightweight headless popover: a trigger + an absolutely-
+// positioned panel below it; closes on outside-click + Escape. Reuses the
+// ConfirmDialog keydown technique but is NOT a full-screen modal.
+// ---------------------------------------------------------------------------
+
+export interface DropdownProps {
+  /** Render the trigger; receives the current open state + a toggle. */
+  trigger: (args: { open: boolean; toggle(): void }) => React.ReactNode;
+  /** Panel content; `close` lets a row dismiss the menu after acting. */
+  children: (args: { close(): void }) => React.ReactNode;
+  /** Panel alignment relative to the trigger. */
+  align?: "left" | "right";
+  className?: string;
+}
+
+export function Dropdown({ trigger, children, align = "left", className = "" }: DropdownProps) {
+  const [open, setOpen] = React.useState(false);
+  const rootRef = React.useRef<HTMLDivElement>(null);
+
+  const close = React.useCallback(() => setOpen(false), []);
+  const toggle = React.useCallback(() => setOpen((o) => !o), []);
+
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape") close();
+    };
+    const onClick = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        close();
+      }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
-
-  if (!open) return null;
+    window.addEventListener("mousedown", onClick);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onClick);
+    };
+  }, [open, close]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onCancel}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-lg flex flex-col gap-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="text-lg font-semibold text-zinc-800">{title}</h2>
-        {body && <div className="text-sm text-zinc-600">{body}</div>}
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onCancel} disabled={loading}>
-            {cancelLabel}
-          </Button>
-          <Button variant={confirmVariant} onClick={onConfirm} loading={loading}>
-            {confirmLabel}
-          </Button>
+    <div ref={rootRef} className={`relative inline-block ${className}`}>
+      {trigger({ open, toggle })}
+      {open && (
+        <div
+          role="menu"
+          className={`absolute z-40 mt-1 min-w-[12rem] rounded-md border border-zinc-200 bg-white py-1 shadow-lg ${
+            align === "right" ? "right-0" : "left-0"
+          }`}
+        >
+          {children({ close })}
         </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -6,10 +6,12 @@ import { useLang } from "@/lib/lang-context";
 import { useWorkspace } from "@/lib/workspace-context";
 import { useAuth } from "@/lib/auth-context";
 import { t } from "@/lib/i18n";
+import { Dropdown } from "@/components/ui";
 
 export function SiteHeader() {
   const { lang, toggleLang } = useLang();
-  const { activeSlug, clearActiveSlug } = useWorkspace();
+  const { activeSlug, activeWorkspace, workspaces, setActiveSlug, clearActiveSlug } =
+    useWorkspace();
   const { status, logout } = useAuth();
   const router = useRouter();
 
@@ -19,6 +21,17 @@ export function SiteHeader() {
     } finally {
       clearActiveSlug();
       router.push("/login");
+    }
+  }
+
+  // Display the workspace NAME; fall back to the raw slug until the list loads
+  // (resilient — the switcher still works if listWorkspaces() failed).
+  const activeLabel = activeWorkspace?.workspace_name ?? activeSlug;
+
+  function switchTo(slug: string) {
+    if (slug !== activeSlug) {
+      setActiveSlug(slug);
+      router.push("/projects");
     }
   }
 
@@ -34,15 +47,66 @@ export function SiteHeader() {
         {activeSlug && (
           <>
             <span className="text-zinc-300">/</span>
-            {/* workspace switcher: shows the active workspace; click to switch or create
-                (→ /workspaces keeps activeSlug, so no auto-enter bounce; create lives there) */}
-            <Link
-              href="/workspaces"
-              className="text-sm font-medium text-zinc-600 hover:text-zinc-900 transition"
-              title={t("btn.switch_workspace", lang)}
+            {/* Workspace switcher: a real dropdown listing all workspaces.
+                Click a row = switch in one click; footer = create a new one. */}
+            <Dropdown
+              align="left"
+              trigger={({ toggle, open }) => (
+                <button
+                  type="button"
+                  onClick={toggle}
+                  aria-haspopup="menu"
+                  aria-expanded={open}
+                  aria-label={t("nav.switch_workspace", lang)}
+                  title={t("nav.switch_workspace", lang)}
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 transition"
+                >
+                  <span className="max-w-[12rem] truncate">{activeLabel}</span>
+                  <span className="text-xs text-zinc-400" aria-hidden="true">
+                    ▾
+                  </span>
+                </button>
+              )}
             >
-              {activeSlug}
-            </Link>
+              {({ close }) => (
+                <>
+                  {workspaces.map((ws) => {
+                    const isActive = ws.slug === activeSlug;
+                    return (
+                      <button
+                        key={ws.id}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          close();
+                          switchTo(ws.slug);
+                        }}
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 transition"
+                      >
+                        <span className="truncate">{ws.workspace_name}</span>
+                        {isActive && (
+                          <span className="text-zinc-500" aria-hidden="true">
+                            ✓
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                  <div className="my-1 border-t border-zinc-100" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      close();
+                      router.push("/workspaces");
+                    }}
+                    className="flex w-full items-center px-3 py-2 text-left text-sm font-medium text-zinc-600 hover:bg-zinc-100 transition"
+                  >
+                    {t("btn.new_workspace", lang)}
+                  </button>
+                </>
+              )}
+            </Dropdown>
           </>
         )}
       </div>

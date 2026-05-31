@@ -109,6 +109,9 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
   "btn.create_workspace": { th: "สร้าง Workspace", en: "Create workspace" },
   "btn.create_new_workspace": { th: "+ สร้าง Workspace ใหม่", en: "+ Create new workspace" },
   "btn.switch_workspace": { th: "เปลี่ยน Workspace", en: "Switch workspace" },
+  "btn.new_workspace": { th: "+ Workspace ใหม่", en: "+ New workspace" },
+  "btn.create_first_workspace": { th: "สร้าง Workspace แรกของคุณ", en: "Create your first workspace" },
+  "nav.switch_workspace": { th: "เปลี่ยน Workspace", en: "Switch workspace" },
 
   // --- workspace home ---
   "page.home.title": { th: "หน้าหลัก", en: "Home" },
@@ -145,6 +148,10 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
   "page.projects.empty_heading": { th: "ยังไม่มีโครงการ", en: "No projects yet" },
   "page.projects.create_heading": { th: "สร้างโครงการใหม่", en: "Create a new project" },
   "msg.projects_empty_hint": { th: "เริ่มต้นด้วยการสร้างโครงการแรกของคุณ", en: "Get started by creating your first project." },
+  "msg.projects_member_readonly": {
+    th: "คุณสามารถดูโครงการได้ การสร้างโครงการเป็นสิทธิ์ของเจ้าของหรือผู้ดูแล",
+    en: "You can browse projects; creating is for owners/admins.",
+  },
 
   // --- project field labels ---
   "label.project_name": { th: "ชื่อโครงการ", en: "Project name" },
@@ -161,6 +168,8 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
 
   // --- buttons / actions ---
   "btn.create_project": { th: "สร้างโครงการ", en: "Create project" },
+  "btn.new_project": { th: "+ โครงการใหม่", en: "+ New project" },
+  "btn.create_first_project": { th: "สร้างโครงการแรกของคุณ", en: "Create your first project" },
   "btn.open_project": { th: "เปิด", en: "Open" },
   "btn.edit": { th: "แก้ไข", en: "Edit" },
   "btn.save": { th: "บันทึก", en: "Save" },

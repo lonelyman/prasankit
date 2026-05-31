@@ -14,7 +14,7 @@ import { Input, Button, Alert } from "@/components/ui";
 
 export default function WorkspacesPage() {
   const { status, account } = useAuth();
-  const { activeSlug, setActiveSlug } = useWorkspace();
+  const { activeSlug, setActiveSlug, refreshWorkspaces } = useWorkspace();
   const { lang } = useLang();
   const router = useRouter();
 
@@ -125,6 +125,8 @@ export default function WorkspacesPage() {
         slug,
         contact_email: contactEmail.trim(),
       });
+      // Refresh the cached list so the header switcher shows the new workspace.
+      void refreshWorkspaces();
       setActiveSlug(created.slug);
       router.push("/");
     } catch (err) {
@@ -193,20 +195,28 @@ export default function WorkspacesPage() {
           </ul>
         )}
 
-        {isEmpty && (
-          <p className="text-sm text-zinc-500">{t("msg.invite_hint", lang)}</p>
+        {isEmpty && !showCreate && (
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-zinc-200 bg-white px-6 py-12 text-center">
+            <p className="text-sm text-zinc-500">{t("msg.invite_hint", lang)}</p>
+            <Button onClick={() => setShowCreate(true)}>
+              {t("btn.create_first_workspace", lang)}
+            </Button>
+          </div>
         )}
       </div>
 
-      {/* Create workspace: a hero form when you have none, a collapsed secondary
-          action when you already have workspaces (most people keep just one, so the
-          form should not dominate the list every visit). */}
-      {!isEmpty && !showCreate ? (
-        <div className="self-start">
-          <Button variant="secondary" onClick={() => setShowCreate(true)}>
-            {t("btn.create_new_workspace", lang)}
-          </Button>
-        </div>
+      {/* Create workspace: a hero form when you have none (after the CTA),
+          a collapsed secondary action when you already have workspaces (most
+          people keep just one, so the form should not dominate the list every
+          visit). */}
+      {!showCreate ? (
+        !isEmpty && (
+          <div className="self-start">
+            <Button variant="secondary" onClick={() => setShowCreate(true)}>
+              {t("btn.create_new_workspace", lang)}
+            </Button>
+          </div>
+        )
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-4">
           <div className="flex items-center justify-between gap-4">
