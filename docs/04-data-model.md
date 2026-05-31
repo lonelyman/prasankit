@@ -788,6 +788,8 @@ CREATE INDEX ix_audit_workspace_project_created
 
 ## M2.4 Seed data (M2 system masters)
 
+> **Label source of truth = the deployed migration `000009` (D27 — FE renders the seed's `label_th`/`label_en`).** The `label_th`/`label_en` in the tables below were aligned to `000009` at the FE-A merge (2026-05-31); earlier draft labels (ร่าง/เสนองาน/ดำเนินงาน/…) were superseded. `description` cells remain illustrative design notes (not FE-rendered).
+
 > seed master row: hardcode `id` UUIDv7 + `code` ใน migration (immutable system row, M1 pattern). FK ใช้ `code` (§2.4) → ไม่ต้อง resolve id; partial index ใช้ text literal. cache รอตอน startup เพื่อ label display ได้.
 > `description` = TH only (single-language convention §M2.2.2 §2.9 / M1 §2.2). บรรทัด vision §4.2 ที่มี " / MA" suffix ถูกตัดออกจาก label เพื่อ UI สะอาด; ข้อมูล MA อยู่ใน `description` แทน — flag ที่นี่กัน drift ตรวจสอบกับ vision verbatim.
 
@@ -795,21 +797,21 @@ CREATE INDEX ix_audit_workspace_project_created
 
 | code | label_th | label_en | sort_order | description (TH) |
 | --- | --- | --- | --- | --- |
-| `draft` | ร่าง | Draft | 10 | เก็บข้อมูลไว้ก่อน ยังไม่ครบหรือเป็นแนวคิดเบื้องต้น |
+| `draft` | ฉบับร่าง | Draft | 10 | เก็บข้อมูลไว้ก่อน ยังไม่ครบหรือเป็นแนวคิดเบื้องต้น |
 | `planning` | วางแผน | Planning | 20 | ยังไม่เริ่มจริง แต่เตรียมทีม เอกสาร แผน งบ |
-| `proposal` | เสนองาน | Proposal | 30 | เสนอราคา / ยื่นประมูล / รอลูกค้าตัดสินใจ |
-| `active` | ดำเนินงาน | Active | 40 | เริ่มทำจริง มี task, team, deliverable, ค่าใช้จ่าย |
-| `closing` | ปิดงาน | Closing | 50 | ส่งมอบหลักแล้ว/ใกล้จบ รอตรวจรับ เคลียร์เอกสาร |
-| `maintenance` | ดูแลหลังส่งมอบ | Maintenance | 60 | ส่งมอบแล้ว แต่ยังมี MA / warranty / support (vision §4.2 verbatim) |
-| `closed` | จบงาน | Closed | 70 | จบภาระผูกพันทั้งหมด |
-| `archived` | จัดเก็บ | Archived | 80 | ซ่อนจากงานหลัก แต่ค้นย้อนหลังได้ |
+| `proposal` | เสนอราคา | Proposal | 30 | เสนอราคา / ยื่นประมูล / รอลูกค้าตัดสินใจ |
+| `active` | กำลังดำเนินการ | Active | 40 | เริ่มทำจริง มี task, team, deliverable, ค่าใช้จ่าย |
+| `closing` | กำลังปิดงาน | Closing | 50 | ส่งมอบหลักแล้ว/ใกล้จบ รอตรวจรับ เคลียร์เอกสาร |
+| `maintenance` | ดูแลรักษา | Maintenance | 60 | ส่งมอบแล้ว แต่ยังมี MA / warranty / support (vision §4.2 verbatim) |
+| `closed` | ปิดโครงการ | Closed | 70 | จบภาระผูกพันทั้งหมด |
+| `archived` | เก็บถาวร | Archived | 80 | ซ่อนจากงานหลัก แต่ค้นย้อนหลังได้ |
 
 ### `project_types` (vision §4.3 — 2 rows)
 
 | code | label_th | label_en | sort_order | description (TH) |
 | --- | --- | --- | --- | --- |
-| `internal` | งานภายในองค์กร | Internal Project | 10 | งานภายใน อาจมาจากแผนกตัวเองหรือแผนกอื่น (ระบุ Requesting Unit) |
-| `client` | งานลูกค้า / งานรับจ้าง | Client Project | 20 | งานให้ลูกค้า / ผู้ว่าจ้างภายนอก |
+| `internal` | ภายในองค์กร | Internal | 10 | งานภายใน อาจมาจากแผนกตัวเองหรือแผนกอื่น (ระบุ Requesting Unit) |
+| `client` | งานลูกค้า | Client | 20 | งานให้ลูกค้า / ผู้ว่าจ้างภายนอก |
 
 ### `project_roles` (vision §6.2 — 5 rows)
 
