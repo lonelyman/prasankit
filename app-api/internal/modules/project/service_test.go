@@ -22,6 +22,8 @@ type fakeProjectRepo struct {
 	mu               sync.Mutex
 	projects         map[uuid.UUID]project.Project
 	lastEntry        audit.Entry
+	lastMemberEntry  audit.Entry
+	lastOwnerSeed    project.OwnerMemberSeed
 	createCalls      int
 	updateCalls      int
 	deleteCalls      int
@@ -48,6 +50,21 @@ func (r *fakeProjectRepo) CreateWithAudit(ctx context.Context, p project.Project
 	}
 	r.projects[p.ID] = p
 	r.lastEntry = entry
+	return nil
+}
+
+func (r *fakeProjectRepo) CreateWithOwner(ctx context.Context, p project.Project, owner project.OwnerMemberSeed, projectEntry, memberEntry audit.Entry) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.createCalls++
+	r.lastOwnerSeed = owner
+	r.lastMemberEntry = memberEntry
+	if r.createErr != nil {
+		return r.createErr
+	}
+	p.OwnerProjectMemberID = &owner.ID
+	r.projects[p.ID] = p
+	r.lastEntry = projectEntry
 	return nil
 }
 
@@ -110,8 +127,10 @@ func (r *fakeProjectRepo) ChangeStatusWithAudit(ctx context.Context, workspaceID
 type fakeMasterRepo struct {
 	statusActive bool
 	typeActive   bool
+	roleActive   bool
 	statusErr    error
 	typeErr      error
+	roleErr      error
 }
 
 func (r *fakeMasterRepo) IsActiveProjectStatusCode(ctx context.Context, code string) (bool, error) {
@@ -126,6 +145,13 @@ func (r *fakeMasterRepo) IsActiveProjectTypeCode(ctx context.Context, code strin
 		return false, r.typeErr
 	}
 	return r.typeActive, nil
+}
+
+func (r *fakeMasterRepo) IsActiveProjectRoleCode(ctx context.Context, code string) (bool, error) {
+	if r.roleErr != nil {
+		return false, r.roleErr
+	}
+	return r.roleActive, nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -149,7 +175,7 @@ func newTC(t *testing.T) workspace.TenantContext {
 
 func buildSvc() (*project.Service, *fakeProjectRepo, *fakeMasterRepo) {
 	pr := newFakeProjectRepo()
-	mr := &fakeMasterRepo{statusActive: true, typeActive: true}
+	mr := &fakeMasterRepo{statusActive: true, typeActive: true, roleActive: true}
 	return project.NewService(pr, mr), pr, mr
 }
 
@@ -262,7 +288,7 @@ func TestService_CreateProject_RequestingUnit_NullOK(t *testing.T) {
 
 func TestService_CreateProject_StatusCodeNotActive_Returns_ErrInvalidStatusCode(t *testing.T) {
 	pr := newFakeProjectRepo()
-	mr := &fakeMasterRepo{statusActive: false, typeActive: true}
+	mr := &fakeMasterRepo{statusActive: false, typeActive: true, roleActive: true}
 	svc := project.NewService(pr, mr)
 	tc := newTC(t)
 
@@ -274,7 +300,7 @@ func TestService_CreateProject_StatusCodeNotActive_Returns_ErrInvalidStatusCode(
 
 func TestService_CreateProject_TypeCodeNotActive_Returns_ErrInvalidTypeCode(t *testing.T) {
 	pr := newFakeProjectRepo()
-	mr := &fakeMasterRepo{statusActive: true, typeActive: false}
+	mr := &fakeMasterRepo{statusActive: true, typeActive: false, roleActive: true}
 	svc := project.NewService(pr, mr)
 	tc := newTC(t)
 

@@ -3,11 +3,13 @@ package httptransport
 import (
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/internal/modules/project"
+	"prasankit-api/internal/modules/projectmember"
 	"prasankit-api/internal/modules/workspace"
 	authhandler "prasankit-api/internal/transport/http/auth"
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
 	projecthandler "prasankit-api/internal/transport/http/project"
+	projectmemberhandler "prasankit-api/internal/transport/http/projectmember"
 	workspacehandler "prasankit-api/internal/transport/http/workspace"
 
 	"github.com/gofiber/fiber/v3"
@@ -23,6 +25,7 @@ func RegisterRoutes(
 	wsRepo workspace.WorkspaceRepository,
 	memberRepo workspace.MembershipRepository,
 	projectH *projecthandler.Handler,
+	projectMemberH *projectmemberhandler.Handler,
 ) {
 	app.Use(middlewares.RequestID)
 	app.Use(middlewares.CORS(corsAllowedOrigins))
@@ -78,6 +81,19 @@ func RegisterRoutes(
 			wsGroup.Put("/projects/:id", requireSession, requireTenant, requireUpdateProj, projectH.HandleUpdate)
 			wsGroup.Delete("/projects/:id", requireSession, requireTenant, requireDeleteProj, projectH.HandleDelete)
 			wsGroup.Post("/projects/:id/status", requireSession, requireTenant, requireStatusProj, projectH.HandleChangeStatus)
+
+			// Project member routes — registered when projectMemberH is wired.
+			if projectMemberH != nil {
+				requireAddMember := middlewares.RequireProjectMemberPermission(projectmember.PermissionAddProjectMember)
+				requireReadMember := middlewares.RequireProjectMemberPermission(projectmember.PermissionReadProjectMember)
+				requireChangeMemberRole := middlewares.RequireProjectMemberPermission(projectmember.PermissionChangeProjectMemberRole)
+				requireRemoveMember := middlewares.RequireProjectMemberPermission(projectmember.PermissionRemoveProjectMember)
+
+				wsGroup.Post("/projects/:id/members", requireSession, requireTenant, requireAddMember, projectMemberH.HandleAdd)
+				wsGroup.Get("/projects/:id/members", requireSession, requireTenant, requireReadMember, projectMemberH.HandleList)
+				wsGroup.Put("/projects/:id/members/:memberId/role", requireSession, requireTenant, requireChangeMemberRole, projectMemberH.HandleChangeRole)
+				wsGroup.Delete("/projects/:id/members/:memberId", requireSession, requireTenant, requireRemoveMember, projectMemberH.HandleRemove)
+			}
 		}
 
 		// Accept invitation — requireSession only (accepter is not yet a member).

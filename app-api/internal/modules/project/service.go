@@ -155,10 +155,31 @@ func (s *Service) CreateProject(ctx context.Context, in CreateProjectInput) (*Pr
 	if !ok {
 		return nil, ErrInvalidTypeCode
 	}
+	// Defense-in-depth (D40): the owner seed's project_role_code MUST be an active
+	// project_owner. The seed below is minted with the project_owner literal by
+	// construction, so this is a clean 422 if the master seed is ever wrong.
+	// projectOwnerRoleCode == projectmember.ProjectRoleOwnerCode; the contract is
+	// owned there, inlined here to avoid a project → projectmember import cycle
+	// (projectmember imports project, so the reverse edge would not compile).
+	const projectOwnerRoleCode = "project_owner"
+	ok, err = s.masters.IsActiveProjectRoleCode(ctx, projectOwnerRoleCode)
+	if err != nil {
+		return nil, fmt.Errorf("check project_role_code: %w", err)
+	}
+	if !ok {
+		// project_owner is seeded active in 000009, so this only fires on a
+		// misconfigured master. Reuse the existing 422-mapped sentinel rather than
+		// widen project/errors.go (out of 6b-1 scope); the message stays generic.
+		return nil, ErrInvalidStatusCode
+	}
 
 	id, err := ids.New()
 	if err != nil {
 		return nil, fmt.Errorf("generate project id: %w", err)
+	}
+	ownerMemberID, err := ids.New()
+	if err != nil {
+		return nil, fmt.Errorf("generate owner project_member id: %w", err)
 	}
 	now := time.Now().UTC()
 
@@ -205,9 +226,46 @@ func (s *Service) CreateProject(ctx context.Context, in CreateProjectInput) (*Pr
 		RequestID:      in.RequestID,
 	}
 
-	if err := s.projects.CreateWithAudit(ctx, p, entry); err != nil {
+	// Owner project_member seed (D40 step 2). The creator's workspace_membership_id is
+	// already on TenantContext (the tenant middleware proved it is active + in this
+	// workspace), so no extra DB lookup is needed.
+	owner := OwnerMemberSeed{
+		ID:                    ownerMemberID,
+		WorkspaceID:           wsID,
+		ProjectID:             id,
+		WorkspaceMembershipID: in.TenantCtx.MembershipID,
+		ProjectRoleCode:       projectOwnerRoleCode,
+		JoinedAt:              now,
+		CreatedBy:             in.TenantCtx.AccountID,
+	}
+
+	// project_member.add audit. NewValue is a map[string]any built from the seed —
+	// the SAME snapshot shape projectmember.Service uses for its own project_member.add
+	// audit, so the trail is uniform whether the owner-add comes from create or add-member.
+	memberResourceID := owner.ID
+	memberEntry := audit.Entry{
+		WorkspaceID:    &wsID,
+		ProjectID:      &projectID,
+		ActorAccountID: &actorID,
+		Action:         "project_member.add", // == projectmember.AuditActionProjectMemberAdd (inlined to avoid import cycle)
+		ResourceType:   "project_member",     // == projectmember.AuditResourceTypeProjectMember
+		ResourceID:     &memberResourceID,
+		OldValue:       nil,
+		NewValue: map[string]any{
+			"workspace_membership_id": owner.WorkspaceMembershipID,
+			"project_role_code":       owner.ProjectRoleCode,
+			"joined_at":               owner.JoinedAt,
+		},
+		Result:    AuditResultSuccess,
+		IP:        in.IP,
+		UserAgent: in.UserAgent,
+		RequestID: in.RequestID,
+	}
+
+	if err := s.projects.CreateWithOwner(ctx, p, owner, entry, memberEntry); err != nil {
 		return nil, err
 	}
+	p.OwnerProjectMemberID = &owner.ID
 	return &p, nil
 }
 

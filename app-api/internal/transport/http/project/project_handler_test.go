@@ -48,6 +48,14 @@ func (r *fakeProjectRepo) CreateWithAudit(ctx context.Context, p project.Project
 	}
 	return r.createErr
 }
+func (r *fakeProjectRepo) CreateWithOwner(ctx context.Context, p project.Project, owner project.OwnerMemberSeed, projectEntry, memberEntry audit.Entry) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.createReturn != nil {
+		return r.createReturn
+	}
+	return r.createErr
+}
 func (r *fakeProjectRepo) FindByIDForWorkspace(ctx context.Context, workspaceID, projectID uuid.UUID) (*project.Project, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -88,6 +96,7 @@ func (r *fakeProjectRepo) ChangeStatusWithAudit(ctx context.Context, workspaceID
 type fakeMasterRepo struct {
 	statusActive bool
 	typeActive   bool
+	roleActive   bool
 }
 
 func (r *fakeMasterRepo) IsActiveProjectStatusCode(ctx context.Context, code string) (bool, error) {
@@ -95,6 +104,9 @@ func (r *fakeMasterRepo) IsActiveProjectStatusCode(ctx context.Context, code str
 }
 func (r *fakeMasterRepo) IsActiveProjectTypeCode(ctx context.Context, code string) (bool, error) {
 	return r.typeActive, nil
+}
+func (r *fakeMasterRepo) IsActiveProjectRoleCode(ctx context.Context, code string) (bool, error) {
+	return r.roleActive, nil
 }
 
 // ── test app builder ──────────────────────────────────────────────────────────
@@ -105,7 +117,7 @@ func buildTestApp(t *testing.T, tc *workspace.TenantContext, fr *fakeProjectRepo
 		fr = &fakeProjectRepo{listRows: []project.Project{}, listTotal: 0}
 	}
 	if fm == nil {
-		fm = &fakeMasterRepo{statusActive: true, typeActive: true}
+		fm = &fakeMasterRepo{statusActive: true, typeActive: true, roleActive: true}
 	}
 	svc := project.NewService(fr, fm)
 	h := projecthandler.NewHandler(svc)
@@ -429,7 +441,7 @@ func TestProjectHandler_ServiceErrorMapping(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fr := &fakeProjectRepo{}
-			fm := &fakeMasterRepo{statusActive: true, typeActive: true}
+			fm := &fakeMasterRepo{statusActive: true, typeActive: true, roleActive: true}
 			if c.setup != nil {
 				c.setup(fr, fm)
 			}

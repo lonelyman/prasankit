@@ -29,3 +29,19 @@ type Project struct {
 	DeletedAt            *time.Time
 	DeletedBy            *uuid.UUID
 }
+
+// OwnerMemberSeed is the fully-resolved owner project_member that CreateWithOwner
+// inserts in step 2 of the D40 3-step. It lives in `project` (NOT `projectmember`)
+// so package `project` does not import package `projectmember` — that import + the
+// projectmember→project owner-read edge would be a compile cycle. PK is pre-generated
+// by the service. By construction ProjectRoleCode == project_owner literal and the
+// row is active (no removed_at field here — the seed cannot represent a removed owner).
+type OwnerMemberSeed struct {
+	ID                    uuid.UUID
+	WorkspaceID           uuid.UUID
+	ProjectID             uuid.UUID
+	WorkspaceMembershipID uuid.UUID
+	ProjectRoleCode       string
+	JoinedAt              time.Time
+	CreatedBy             uuid.UUID
+}

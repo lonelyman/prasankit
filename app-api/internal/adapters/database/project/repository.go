@@ -50,6 +50,81 @@ func (r *ProjectRepo) CreateWithAudit(ctx context.Context, p project.Project, en
 	return nil
 }
 
+// ownerMemberRow is the file-private GORM model used by CreateWithOwner to INSERT
+// the owner project_members row in step 2 of the D40 3-step. It lives here (NOT in
+// the projectmember adapter) so this adapter does not import another adapter package
+// (hexagonal, 02 §3) — a few duplicated columns are preferred over an adapter→adapter
+// dependency. TableName() is REQUIRED: without it GORM infers "owner_member_rows" from
+// the struct name and the step-2 INSERT fails at runtime.
+type ownerMemberRow struct {
+	ID                    uuid.UUID `gorm:"column:id;primaryKey"`
+	WorkspaceID           uuid.UUID `gorm:"column:workspace_id"`
+	ProjectID             uuid.UUID `gorm:"column:project_id"`
+	WorkspaceMembershipID uuid.UUID `gorm:"column:workspace_membership_id"`
+	ProjectRoleCode       string    `gorm:"column:project_role_code"`
+	JoinedAt              time.Time `gorm:"column:joined_at"`
+	CreatedAt             time.Time `gorm:"column:created_at"`
+	CreatedBy             uuid.UUID `gorm:"column:created_by"`
+	UpdatedAt             time.Time `gorm:"column:updated_at"`
+}
+
+func (ownerMemberRow) TableName() string { return "project_members" }
+
+// CreateWithOwner atomically runs the D40 3-step owner sequence + both audit writes in
+// ONE transaction (D31): INSERT projects (owner=NULL) → INSERT owner project_members →
+// UPDATE projects SET owner_project_member_id → LogTx(projectEntry) → LogTx(memberEntry).
+// Returns project.ErrSlugTaken on the projects unique violation. Other FK/CHECK violations
+// propagate as the raw wrapped error (DB backstop).
+func (r *ProjectRepo) CreateWithOwner(ctx context.Context, p project.Project, owner project.OwnerMemberSeed, projectEntry, memberEntry audit.Entry) error {
+	model := projectToModel(p)
+	model.OwnerProjectMemberID = nil // step 1: owner NULL (no FK check)
+	now := time.Now().UTC()
+	memberRow := ownerMemberRow{
+		ID:                    owner.ID,
+		WorkspaceID:           owner.WorkspaceID,
+		ProjectID:             owner.ProjectID,
+		WorkspaceMembershipID: owner.WorkspaceMembershipID,
+		ProjectRoleCode:       owner.ProjectRoleCode,
+		JoinedAt:              owner.JoinedAt,
+		CreatedAt:             now,
+		CreatedBy:             owner.CreatedBy,
+		UpdatedAt:             now,
+	}
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Step 1: INSERT projects with owner_project_member_id = NULL.
+		if err := tx.Create(&model).Error; err != nil {
+			if isUniqueViolation(err) {
+				return project.ErrSlugTaken
+			}
+			return err
+		}
+		// Step 2: INSERT the owner project_members row (target for step 3's FK).
+		if err := tx.Create(&memberRow).Error; err != nil {
+			return err
+		}
+		// Step 3: UPDATE projects SET owner_project_member_id = owner.ID (target exists).
+		result := tx.Model(&projectModel{}).
+			Where("workspace_id = ? AND id = ?", p.WorkspaceID, p.ID).
+			Update("owner_project_member_id", owner.ID)
+		if result.Error != nil {
+			return result.Error
+		}
+		// Steps 4 + 5: both audit rows in the same tx (D31).
+		if err := r.auditRepo.LogTx(tx, projectEntry); err != nil {
+			return err
+		}
+		return r.auditRepo.LogTx(tx, memberEntry)
+	})
+	if err != nil {
+		if errors.Is(err, project.ErrSlugTaken) {
+			return err
+		}
+		return fmt.Errorf("create project with owner: %w", err)
+	}
+	return nil
+}
+
 // FindByIDForWorkspace returns the project with WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL.
 // gorm.ErrRecordNotFound → (nil, nil). Other errors propagate.
 func (r *ProjectRepo) FindByIDForWorkspace(ctx context.Context, workspaceID, projectID uuid.UUID) (*project.Project, error) {
@@ -240,6 +315,20 @@ func (r *MasterRepo) IsActiveProjectTypeCode(ctx context.Context, code string) (
 		Count(&n).Error
 	if err != nil {
 		return false, fmt.Errorf("check project_type_code: %w", err)
+	}
+	return n > 0, nil
+}
+
+// IsActiveProjectRoleCode returns true when the code exists in project_roles with status='active'.
+func (r *MasterRepo) IsActiveProjectRoleCode(ctx context.Context, code string) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).
+		Table("project_roles").
+		Where("code = ? AND status = 'active'", code).
+		Limit(1).
+		Count(&n).Error
+	if err != nil {
+		return false, fmt.Errorf("check project_role_code: %w", err)
 	}
 	return n > 0, nil
 }

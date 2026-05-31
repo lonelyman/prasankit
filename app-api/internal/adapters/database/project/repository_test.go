@@ -63,6 +63,7 @@ func truncateTestTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	tables := []string{
 		"audit_logs",
+		"project_members",
 		"projects",
 		"workspace_memberships",
 		"workspaces",
@@ -160,6 +161,25 @@ func createTestWorkspace(t *testing.T, db *gorm.DB, ownerID uuid.UUID) workspace
 		t.Fatalf("createTestWorkspace: %v", err)
 	}
 	return workspaceLite{ID: wsID, Slug: slug}
+}
+
+// createTestMembership inserts a workspace_membership for (wsID, accountID) with the given
+// org role + status and returns its id. Used by the owner-FK cases to mint a known
+// membership id (incl. a second-workspace member for the cross-ws owner-update reject).
+func createTestMembership(t *testing.T, db *gorm.DB, wsID, accountID uuid.UUID, orgRole, statusCode string) uuid.UUID {
+	t.Helper()
+	mID, _ := ids.New()
+	now := time.Now().UTC()
+	err := db.Exec(
+		`INSERT INTO workspace_memberships
+		 (id, workspace_id, user_account_id, org_role_code, membership_status_code, joined_at, created_at, created_by, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		mID, wsID, accountID, orgRole, statusCode, now, now, accountID, now,
+	).Error
+	if err != nil {
+		t.Fatalf("createTestMembership: %v", err)
+	}
+	return mID
 }
 
 func buildTestProject(t *testing.T, wsID, ownerID uuid.UUID, slug *string, statusCode string) project.Project {
@@ -736,4 +756,162 @@ func TestProjectRepo_SoftDelete_ExcludedFromList(t *testing.T) {
 	if len(rows) != 0 {
 		t.Errorf("rows = %d, want 0", len(rows))
 	}
+}
+
+// ── Owner 3-step (D40) ──────────────────────────────────────────────────────────
+
+func TestProjectRepo_CreateWithOwner_StandardSequence(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	auditRepo := auditdbrepo.NewAuditRepo(db)
+	repo := projectdbrepo.NewProjectRepo(db, auditRepo)
+
+	accountID := createTestAccount(t, db)
+	ws := createTestWorkspace(t, db, accountID)
+	// The creator's membership (== TenantCtx.MembershipID by construction in the service).
+	// Use a fresh account so this membership does not collide with the owner membership
+	// createTestWorkspace already minted for accountID (uq_membership_active_user).
+	creatorAcct := createTestAccount(t, db)
+	membershipID := createTestMembership(t, db, ws.ID, creatorAcct, "admin", "active")
+
+	p := buildTestProject(t, ws.ID, accountID, strPtr("owner-seq"), "planning")
+	ownerID, _ := ids.New()
+	now := time.Now().UTC()
+	owner := project.OwnerMemberSeed{
+		ID:                    ownerID,
+		WorkspaceID:           ws.ID,
+		ProjectID:             p.ID,
+		WorkspaceMembershipID: membershipID,
+		ProjectRoleCode:       "project_owner",
+		JoinedAt:              now,
+		CreatedBy:             accountID,
+	}
+	projectEntry := buildProjectAuditEntry(ws.ID, accountID, p.ID, project.AuditActionProjectCreate)
+	memberEntry := audit.Entry{
+		WorkspaceID:    &ws.ID,
+		ProjectID:      &p.ID,
+		ActorAccountID: &accountID,
+		Action:         "project_member.add",
+		ResourceType:   "project_member",
+		ResourceID:     &ownerID,
+		NewValue: map[string]any{
+			"workspace_membership_id": owner.WorkspaceMembershipID,
+			"project_role_code":       owner.ProjectRoleCode,
+			"joined_at":               owner.JoinedAt,
+		},
+		Result:    project.AuditResultSuccess,
+		IP:        "127.0.0.1",
+		UserAgent: "test",
+		RequestID: "req-test",
+	}
+
+	if err := repo.CreateWithOwner(context.Background(), p, owner, projectEntry, memberEntry); err != nil {
+		t.Fatalf("CreateWithOwner: %v", err)
+	}
+
+	// projects.owner_project_member_id == the owner member id.
+	got, err := repo.FindByIDForWorkspace(context.Background(), ws.ID, p.ID)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if got == nil || got.OwnerProjectMemberID == nil || *got.OwnerProjectMemberID != ownerID {
+		t.Fatalf("owner_project_member_id = %v, want %v", got, ownerID)
+	}
+
+	// The owner member row exists with role=project_owner AND the creator's membership id.
+	var role string
+	var gotMembership uuid.UUID
+	if err := db.Table("project_members").
+		Select("project_role_code, workspace_membership_id").
+		Where("workspace_id = ? AND id = ?", ws.ID, ownerID).
+		Row().Scan(&role, &gotMembership); err != nil {
+		t.Fatalf("scan owner member: %v", err)
+	}
+	if role != "project_owner" {
+		t.Errorf("owner role = %q, want project_owner", role)
+	}
+	if gotMembership != membershipID {
+		t.Errorf("owner workspace_membership_id = %v, want %v", gotMembership, membershipID)
+	}
+
+	// EXACTLY two audit rows for this project — project.create + project_member.add, no third.
+	var auditCount int64
+	if err := db.Table("audit_logs").
+		Where("workspace_id = ? AND project_id = ?", ws.ID, p.ID).
+		Count(&auditCount).Error; err != nil {
+		t.Fatalf("count audit: %v", err)
+	}
+	if auditCount != 2 {
+		t.Errorf("audit rows = %d, want 2 (project.create + project_member.add)", auditCount)
+	}
+	var createCount, memberCount int64
+	db.Table("audit_logs").Where("workspace_id = ? AND project_id = ? AND action = ?", ws.ID, p.ID, project.AuditActionProjectCreate).Count(&createCount)
+	db.Table("audit_logs").Where("workspace_id = ? AND project_id = ? AND action = ?", ws.ID, p.ID, "project_member.add").Count(&memberCount)
+	if createCount != 1 {
+		t.Errorf("project.create audit rows = %d, want 1", createCount)
+	}
+	if memberCount != 1 {
+		t.Errorf("project_member.add audit rows = %d, want 1", memberCount)
+	}
+}
+
+func TestProjectRepo_UpdateOwner_CrossWorkspaceMember_ImmediateFKReject(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	auditRepo := auditdbrepo.NewAuditRepo(db)
+	repo := projectdbrepo.NewProjectRepo(db, auditRepo)
+
+	accountID := createTestAccount(t, db)
+	wsA := createTestWorkspace(t, db, accountID)
+	wsB := createTestWorkspace(t, db, accountID)
+	// Fresh account so this ws-B membership does not collide with wsB's owner membership
+	// (uq_membership_active_user: one active membership per user per workspace).
+	memberAcct := createTestAccount(t, db)
+	membershipB := createTestMembership(t, db, wsB.ID, memberAcct, "admin", "active")
+
+	// Project in ws B with a valid project_member (a valid FK target only within ws B).
+	pB := buildTestProject(t, wsB.ID, accountID, strPtr("owner-b"), "planning")
+	if err := repo.CreateWithAudit(context.Background(), pB, buildProjectAuditEntry(wsB.ID, accountID, pB.ID, project.AuditActionProjectCreate)); err != nil {
+		t.Fatalf("create ws-B project: %v", err)
+	}
+	memberB := createProjectMemberRow(t, db, wsB.ID, pB.ID, membershipB, accountID)
+
+	// Fresh ws-A project to UPDATE.
+	pA := buildTestProject(t, wsA.ID, accountID, strPtr("owner-a"), "planning")
+	if err := repo.CreateWithAudit(context.Background(), pA, buildProjectAuditEntry(wsA.ID, accountID, pA.ID, project.AuditActionProjectCreate)); err != nil {
+		t.Fatalf("create ws-A project: %v", err)
+	}
+
+	// Raw UPDATE: set ws-A project's owner to a ws-B member id → IMMEDIATE composite FK reject.
+	err := db.Exec(
+		`UPDATE projects SET owner_project_member_id = ? WHERE workspace_id = ? AND id = ?`,
+		memberB, wsA.ID, pA.ID,
+	).Error
+	if err == nil {
+		t.Fatal("expected IMMEDIATE composite FK violation, got nil")
+	}
+	if !strings.Contains(err.Error(), "23503") {
+		t.Errorf("err = %v, want SQLSTATE 23503", err)
+	}
+}
+
+// createProjectMemberRow inserts a raw active project_members row and returns its id.
+func createProjectMemberRow(t *testing.T, db *gorm.DB, wsID, projectID, membershipID, accountID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id, _ := ids.New()
+	now := time.Now().UTC()
+	err := db.Exec(
+		`INSERT INTO project_members
+		 (id, workspace_id, project_id, workspace_membership_id, project_role_code, joined_at, created_at, created_by, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, wsID, projectID, membershipID, "member", now, now, accountID, now,
+	).Error
+	if err != nil {
+		t.Fatalf("createProjectMemberRow: %v", err)
+	}
+	return id
 }

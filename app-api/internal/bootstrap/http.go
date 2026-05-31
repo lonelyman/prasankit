@@ -8,17 +8,20 @@ import (
 	auditdbrepo "prasankit-api/internal/adapters/database/audit"
 	authdbrepo "prasankit-api/internal/adapters/database/auth"
 	projectdbrepo "prasankit-api/internal/adapters/database/project"
+	projectmemberdbrepo "prasankit-api/internal/adapters/database/projectmember"
 	workspacedbrepo "prasankit-api/internal/adapters/database/workspace"
 	smtpadapter "prasankit-api/internal/adapters/email/smtp"
 	"prasankit-api/internal/config"
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/internal/modules/project"
+	"prasankit-api/internal/modules/projectmember"
 	"prasankit-api/internal/modules/workspace"
 	httptransport "prasankit-api/internal/transport/http"
 	authhandler "prasankit-api/internal/transport/http/auth"
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
 	projecthandler "prasankit-api/internal/transport/http/project"
+	projectmemberhandler "prasankit-api/internal/transport/http/projectmember"
 	workspacehandler "prasankit-api/internal/transport/http/workspace"
 
 	"github.com/gofiber/fiber/v3"
@@ -86,6 +89,13 @@ func NewHTTPApp(
 	projectSvc := project.NewService(projectRepo, projectMasterRepo)
 	projectH := projecthandler.NewHandler(projectSvc)
 
+	// Project member wiring. projectmember.NewService takes (members, masters, projects)
+	// — 3 params (OPEN QUESTION option 1): the owner-read for the role-drift / owner-removal
+	// guard reads OwnerProjectMemberID via the injected project.ProjectRepository.
+	projectMemberRepo := projectmemberdbrepo.NewProjectMemberRepo(gormDB, auditRepo)
+	projectMemberSvc := projectmember.NewService(projectMemberRepo, projectMasterRepo, projectRepo)
+	projectMemberH := projectmemberhandler.NewHandler(projectMemberSvc)
+
 	httptransport.RegisterRoutes(
 		app,
 		healthHandler,
@@ -93,6 +103,7 @@ func NewHTTPApp(
 		authSvc, authH,
 		workspaceH, wsRepo, memberRepo,
 		projectH,
+		projectMemberH,
 	)
 
 	return app
