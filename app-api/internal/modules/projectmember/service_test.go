@@ -88,6 +88,17 @@ func (r *fakeProjectMemberRepo) FindActiveByID(ctx context.Context, workspaceID,
 	return nil, nil
 }
 
+func (r *fakeProjectMemberRepo) FindByID(ctx context.Context, workspaceID, projectID, memberID uuid.UUID) (*projectmember.ProjectMember, error) {
+	if r.findActiveErr != nil {
+		return nil, r.findActiveErr
+	}
+	if r.findActive != nil {
+		cp := *r.findActive
+		return &cp, nil
+	}
+	return nil, nil
+}
+
 func (r *fakeProjectMemberRepo) IsActiveWorkspaceMember(ctx context.Context, workspaceID, membershipID uuid.UUID) (bool, error) {
 	return r.activeWsMember, r.activeWsMemberErr
 }

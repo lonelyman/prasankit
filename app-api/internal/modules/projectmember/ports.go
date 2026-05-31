@@ -33,6 +33,13 @@ type ProjectMemberRepository interface {
 	// pre-checks. Returns nil,nil when not found. Scoped to workspace_id.
 	FindActiveByID(ctx context.Context, workspaceID, projectID, memberID uuid.UUID) (*ProjectMember, error)
 
+	// FindByID returns the project_member INCLUDING removed rows (RemovedAt populated when
+	// removed_at IS NOT NULL); returns nil,nil ONLY when the member truly does not exist in
+	// this (ws, project). Read-only, additive (6b-2): the junction uses it to branch
+	// nil->404 / RemovedAt!=nil->422 (the composite FK cannot catch a removed member, §M2.3.4).
+	// = FindActiveByID minus the removed_at IS NULL predicate. Scoped to workspace_id.
+	FindByID(ctx context.Context, workspaceID, projectID, memberID uuid.UUID) (*ProjectMember, error)
+
 	// IsActiveWorkspaceMember verifies the target workspace_membership_id is an ACTIVE membership
 	// of this workspace (membership_status_code='active'), used by AddMember before insert.
 	// Composite FK is the backstop for cross-ws; this is the friendly 422 path + the active-status check

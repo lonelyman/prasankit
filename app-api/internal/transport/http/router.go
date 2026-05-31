@@ -2,14 +2,20 @@ package httptransport
 
 import (
 	"prasankit-api/internal/modules/auth"
+	"prasankit-api/internal/modules/companyposition"
 	"prasankit-api/internal/modules/project"
 	"prasankit-api/internal/modules/projectmember"
+	"prasankit-api/internal/modules/projectmemberposition"
+	"prasankit-api/internal/modules/projectposition"
 	"prasankit-api/internal/modules/workspace"
 	authhandler "prasankit-api/internal/transport/http/auth"
+	companypositionhandler "prasankit-api/internal/transport/http/companyposition"
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
 	projecthandler "prasankit-api/internal/transport/http/project"
 	projectmemberhandler "prasankit-api/internal/transport/http/projectmember"
+	projectmemberpositionhandler "prasankit-api/internal/transport/http/projectmemberposition"
+	projectpositionhandler "prasankit-api/internal/transport/http/projectposition"
 	workspacehandler "prasankit-api/internal/transport/http/workspace"
 
 	"github.com/gofiber/fiber/v3"
@@ -26,6 +32,10 @@ func RegisterRoutes(
 	memberRepo workspace.MembershipRepository,
 	projectH *projecthandler.Handler,
 	projectMemberH *projectmemberhandler.Handler,
+	projectPositionH *projectpositionhandler.Handler,
+	companyPositionH *companypositionhandler.Handler,
+	projectMemberPositionH *projectmemberpositionhandler.Handler,
+	companyPositionAttachH *companypositionhandler.Handler, // same companyposition handler exposes set/clear
 ) {
 	app.Use(middlewares.RequestID)
 	app.Use(middlewares.CORS(corsAllowedOrigins))
@@ -67,6 +77,38 @@ func RegisterRoutes(
 		// requireSession + requireTenantContext + requireWorkspacePermission(invite).
 		wsGroup.Post("/invitations", requireSession, requireTenant, requireInvite, workspaceH.HandleInvite)
 
+		// project_positions (ws-scoped master) — own guard (NOT under projectH).
+		if projectPositionH != nil {
+			requireCreateProjPos := middlewares.RequireProjectPositionPermission(projectposition.PermissionCreateProjectPosition)
+			requireReadProjPos := middlewares.RequireProjectPositionPermission(projectposition.PermissionReadProjectPosition)
+			requireUpdateProjPos := middlewares.RequireProjectPositionPermission(projectposition.PermissionUpdateProjectPosition)
+			requireDeprecateProjPos := middlewares.RequireProjectPositionPermission(projectposition.PermissionDeprecateProjectPosition)
+
+			wsGroup.Post("/project-positions", requireSession, requireTenant, requireCreateProjPos, projectPositionH.HandleCreate)
+			wsGroup.Get("/project-positions", requireSession, requireTenant, requireReadProjPos, projectPositionH.HandleList)
+			wsGroup.Put("/project-positions/:code", requireSession, requireTenant, requireUpdateProjPos, projectPositionH.HandleUpdate)
+			wsGroup.Post("/project-positions/:code/deprecate", requireSession, requireTenant, requireDeprecateProjPos, projectPositionH.HandleDeprecate)
+		}
+
+		// company_positions (ws-scoped master) — own guard.
+		if companyPositionH != nil {
+			requireCreateCompPos := middlewares.RequireCompanyPositionPermission(companyposition.PermissionCreateCompanyPosition)
+			requireReadCompPos := middlewares.RequireCompanyPositionPermission(companyposition.PermissionReadCompanyPosition)
+			requireUpdateCompPos := middlewares.RequireCompanyPositionPermission(companyposition.PermissionUpdateCompanyPosition)
+			requireDeprecateCompPos := middlewares.RequireCompanyPositionPermission(companyposition.PermissionDeprecateCompanyPosition)
+
+			wsGroup.Post("/company-positions", requireSession, requireTenant, requireCreateCompPos, companyPositionH.HandleCreate)
+			wsGroup.Get("/company-positions", requireSession, requireTenant, requireReadCompPos, companyPositionH.HandleList)
+			wsGroup.Put("/company-positions/:code", requireSession, requireTenant, requireUpdateCompPos, companyPositionH.HandleUpdate)
+			wsGroup.Post("/company-positions/:code/deprecate", requireSession, requireTenant, requireDeprecateCompPos, companyPositionH.HandleDeprecate)
+		}
+
+		// ws company_position attach (ws-scoped) — reuses RequireCompanyPositionPermission(assign).
+		if companyPositionAttachH != nil {
+			requireAssignCompPos := middlewares.RequireCompanyPositionPermission(companyposition.PermissionAssignCompanyPosition)
+			wsGroup.Put("/memberships/:membershipId/company-position", requireSession, requireTenant, requireAssignCompPos, companyPositionAttachH.HandleSetCompanyPosition)
+		}
+
 		// Project routes — registered when projectH is wired.
 		if projectH != nil {
 			requireCreateProj := middlewares.RequireProjectPermission(project.PermissionCreateProject)
@@ -93,6 +135,17 @@ func RegisterRoutes(
 				wsGroup.Get("/projects/:id/members", requireSession, requireTenant, requireReadMember, projectMemberH.HandleList)
 				wsGroup.Put("/projects/:id/members/:memberId/role", requireSession, requireTenant, requireChangeMemberRole, projectMemberH.HandleChangeRole)
 				wsGroup.Delete("/projects/:id/members/:memberId", requireSession, requireTenant, requireRemoveMember, projectMemberH.HandleRemove)
+			}
+
+			// Project member position (junction) routes — sibling to projectMemberH.
+			if projectMemberPositionH != nil {
+				requireAssignPos := middlewares.RequireProjectMemberPositionPermission(projectmemberposition.PermissionAssignPosition)
+				requireReadPos := middlewares.RequireProjectMemberPositionPermission(projectmemberposition.PermissionReadPosition)
+				requireUnassignPos := middlewares.RequireProjectMemberPositionPermission(projectmemberposition.PermissionUnassignPosition)
+
+				wsGroup.Post("/projects/:id/members/:memberId/positions", requireSession, requireTenant, requireAssignPos, projectMemberPositionH.HandleAssign)
+				wsGroup.Get("/projects/:id/members/:memberId/positions", requireSession, requireTenant, requireReadPos, projectMemberPositionH.HandleList)
+				wsGroup.Delete("/projects/:id/members/:memberId/positions/:code", requireSession, requireTenant, requireUnassignPos, projectMemberPositionH.HandleUnassign)
 			}
 		}
 

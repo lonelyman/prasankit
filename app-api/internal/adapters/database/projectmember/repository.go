@@ -158,6 +158,24 @@ func (r *ProjectMemberRepo) FindActiveByID(ctx context.Context, workspaceID, pro
 	return &pm, nil
 }
 
+// FindByID returns the project_member INCLUDING removed rows (RemovedAt populated when set),
+// scoped to workspace_id. This is FindActiveByID minus the removed_at IS NULL predicate (6b-2).
+// gorm.ErrRecordNotFound → (nil, nil). Other errors propagate.
+func (r *ProjectMemberRepo) FindByID(ctx context.Context, workspaceID, projectID, memberID uuid.UUID) (*projectmember.ProjectMember, error) {
+	var m projectMemberModel
+	err := r.db.WithContext(ctx).
+		Where("workspace_id = ? AND project_id = ? AND id = ?", workspaceID, projectID, memberID).
+		First(&m).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find project_member: %w", err)
+	}
+	pm := modelToProjectMember(m)
+	return &pm, nil
+}
+
 // IsActiveWorkspaceMember returns true when the membership is an ACTIVE membership of this workspace.
 func (r *ProjectMemberRepo) IsActiveWorkspaceMember(ctx context.Context, workspaceID, membershipID uuid.UUID) (bool, error) {
 	var count int64

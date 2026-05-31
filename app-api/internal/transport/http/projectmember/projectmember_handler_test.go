@@ -43,6 +43,9 @@ func (r *fakeMemberRepo) ListByProject(ctx context.Context, workspaceID, project
 func (r *fakeMemberRepo) FindActiveByID(ctx context.Context, workspaceID, projectID, memberID uuid.UUID) (*projectmember.ProjectMember, error) {
 	return &projectmember.ProjectMember{ID: memberID, WorkspaceID: workspaceID, ProjectID: projectID, ProjectRoleCode: "member"}, nil
 }
+func (r *fakeMemberRepo) FindByID(ctx context.Context, workspaceID, projectID, memberID uuid.UUID) (*projectmember.ProjectMember, error) {
+	return &projectmember.ProjectMember{ID: memberID, WorkspaceID: workspaceID, ProjectID: projectID, ProjectRoleCode: "member"}, nil
+}
 func (r *fakeMemberRepo) IsActiveWorkspaceMember(ctx context.Context, workspaceID, membershipID uuid.UUID) (bool, error) {
 	return true, nil
 }

@@ -533,3 +533,56 @@ func TestProjectMemberRepo_RemoveWithAudit_NotFound_RowsAffectedZero(t *testing.
 		t.Errorf("err = %v, want ErrProjectMemberNotFound", err)
 	}
 }
+
+// ── FindByID returns a REMOVED member (6b-2 additive read) ──────────────────────
+
+// TestRepo_FindByID_ReturnsRemovedMember proves FindByID = FindActiveByID minus the
+// removed_at IS NULL predicate: a removed member is returned with RemovedAt != nil, while
+// FindActiveByID returns nil for the same row. This is what lets the junction service
+// distinguish 404 (absent) from 422 (removed) — the composite FK cannot.
+func TestRepo_FindByID_ReturnsRemovedMember(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	auditRepo := auditdbrepo.NewAuditRepo(db)
+	repo := projectmemberdbrepo.NewProjectMemberRepo(db, auditRepo)
+
+	owner := createTestAccount(t, db, "Owner")
+	member := createTestAccount(t, db, "Member")
+	wsA := createTestWorkspace(t, db, owner)
+	projectA := createTestProject(t, db, wsA.ID, owner)
+	membershipID := createTestMembership(t, db, wsA.ID, member, workspace.OrgRoleUser, workspace.MembershipStatusActive)
+
+	m := buildMember(wsA.ID, projectA, membershipID, owner, "member")
+	if err := repo.AddWithAudit(context.Background(), m, buildMemberAuditEntry(wsA.ID, projectA, owner, m.ID, projectmember.AuditActionProjectMemberAdd)); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := repo.RemoveWithAudit(context.Background(), wsA.ID, projectA, m.ID, owner, buildMemberAuditEntry(wsA.ID, projectA, owner, m.ID, projectmember.AuditActionProjectMemberRemove)); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	// FindActiveByID collapses the removed row to nil.
+	active, err := repo.FindActiveByID(context.Background(), wsA.ID, projectA, m.ID)
+	if err != nil {
+		t.Fatalf("FindActiveByID: %v", err)
+	}
+	if active != nil {
+		t.Errorf("FindActiveByID = %+v, want nil for a removed member", active)
+	}
+
+	// FindByID returns the removed row with RemovedAt populated.
+	got, err := repo.FindByID(context.Background(), wsA.ID, projectA, m.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("FindByID = nil, want the removed member row")
+	}
+	if got.RemovedAt == nil {
+		t.Errorf("FindByID.RemovedAt = nil, want non-nil (removed_at IS NOT NULL)")
+	}
+	if got.ID != m.ID {
+		t.Errorf("FindByID.ID = %v, want %v", got.ID, m.ID)
+	}
+}
