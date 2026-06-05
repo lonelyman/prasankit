@@ -9,7 +9,7 @@ import { t, errorMessage } from "@/lib/i18n";
 import { validateEmail, validatePassword } from "@/lib/validation";
 import { apiPost } from "@/lib/api";
 import { ApiError } from "@/lib/api";
-import { Input, Button, Alert } from "@/components/ui";
+import { Input, PasswordInput, Button, Alert } from "@/components/ui";
 
 export default function LoginPage() {
   const { status, login } = useAuth();
@@ -100,15 +100,16 @@ export default function LoginPage() {
             autoComplete="email"
             disabled={loading}
           />
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
             label={t("label.password", lang)}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             error={fieldErrors.password}
             autoComplete="current-password"
             disabled={loading}
+            showPasswordLabel={t("a11y.show_password", lang)}
+            hidePasswordLabel={t("a11y.hide_password", lang)}
           />
 
           {apiErrorCode && !showEmailNotVerified && (

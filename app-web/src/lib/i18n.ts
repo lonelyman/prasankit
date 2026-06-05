@@ -315,6 +315,10 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
     th: "ตำแหน่งนี้จะถูกนำออกจากสมาชิก คุณแน่ใจหรือไม่?",
     en: "This position will be removed from the member. Are you sure?",
   },
+
+  // --- accessibility labels ---
+  "a11y.show_password": { th: "แสดงรหัสผ่าน", en: "Show password" },
+  "a11y.hide_password": { th: "ซ่อนรหัสผ่าน", en: "Hide password" },
 };
 
 export function t(key: string, lang: Lang): string {
