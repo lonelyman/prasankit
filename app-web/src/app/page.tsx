@@ -35,7 +35,7 @@ export default function Home() {
 
   return (
     <div className="flex-1 flex items-center justify-center p-8">
-      <p className="text-sm text-zinc-500">{t("msg.loading", lang)}</p>
+      <p className="text-sm text-slate-500">{t("msg.loading", lang)}</p>
     </div>
   );
 }

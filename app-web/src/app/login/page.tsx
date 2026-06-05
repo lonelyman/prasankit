@@ -84,8 +84,8 @@ export default function LoginPage() {
 
   return (
     <div className="flex-1 flex items-center justify-center p-8">
-      <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 w-full max-w-sm p-8 flex flex-col gap-6">
-        <h1 className="text-xl font-semibold text-zinc-800">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 w-full max-w-sm p-8 flex flex-col gap-6">
+        <h1 className="text-xl font-semibold text-slate-800">
           {t("page.login.title", lang)}
         </h1>
 
@@ -139,11 +139,11 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        <div className="flex flex-col gap-2 text-sm text-zinc-500">
-          <Link href="/signup" className="hover:text-zinc-800 underline">
+        <div className="flex flex-col gap-2 text-sm text-slate-500">
+          <Link href="/signup" className="hover:text-slate-800 underline">
             {t("link.to_signup", lang)}
           </Link>
-          <Link href="/reset-password" className="hover:text-zinc-800 underline">
+          <Link href="/reset-password" className="hover:text-slate-800 underline">
             {t("link.forgot_password", lang)}
           </Link>
         </div>

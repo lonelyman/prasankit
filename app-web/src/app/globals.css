@@ -2,27 +2,34 @@
 
 :root {
   /* Light-only app: declare color-scheme so the browser (Chrome auto-dark / OS dark mode)
-     does NOT auto-darken the white pages into a dull/veiled gray. Pairs with removing the
-     prefers-color-scheme:dark block below. */
+     does NOT auto-darken the pages into a dull/veiled gray. */
   color-scheme: light;
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafc; /* slate-50 — tinted canvas so white cards read as raised surfaces */
+  --foreground: #1e293b; /* slate-800 */
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  /* Bilingual font stack: Latin (Jakarta) first, Thai (Noto Sans Thai) fallback. */
+  --font-sans: var(--font-jakarta), var(--font-noto-thai), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* Brand accent — teal. The app's ONE accent: primary buttons, focus rings,
+     links, active nav. Re-theme the whole app by editing these five values. */
+  --color-brand-50: #f0fdfa;
+  --color-brand-100: #ccfbf1;
+  --color-brand-500: #14b8a6;
+  --color-brand-600: #0d9488;
+  --color-brand-700: #0f766e;
 }
 
-/* Prasankit is a light-themed app (all components hardcode bg-white / text-zinc-*).
-   The create-next-app prefers-color-scheme:dark block was REMOVED: it flipped
-   --foreground to near-white while inputs/cards stay bg-white, making typed text
-   invisible ("จม") on OS dark mode. No dark theme is designed; keep foreground dark. */
+/* Prasankit is a light-themed app. No dark theme is designed; keep foreground dark
+   (a prefers-color-scheme:dark block would flip text near-white on white cards). */
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
 }

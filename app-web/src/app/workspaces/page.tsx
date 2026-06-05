@@ -86,7 +86,7 @@ export default function WorkspacesPage() {
 
   if (status === "loading") {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+      <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
         {t("msg.loading", lang)}
       </div>
     );
@@ -159,14 +159,14 @@ export default function WorkspacesPage() {
     <div className="flex-1 p-8 max-w-2xl mx-auto w-full flex flex-col gap-8">
       {/* Workspace list or empty state heading */}
       <div>
-        <h1 className="text-2xl font-semibold text-zinc-800 mb-4">
+        <h1 className="text-2xl font-semibold text-slate-800 mb-4">
           {isEmpty
             ? t("page.workspaces.empty_heading", lang)
             : t("page.workspaces.title", lang)}
         </h1>
 
         {listLoading && (
-          <p className="text-sm text-zinc-500">{t("msg.loading", lang)}</p>
+          <p className="text-sm text-slate-500">{t("msg.loading", lang)}</p>
         )}
 
         {listError && <Alert variant="error">{listError}</Alert>}
@@ -176,11 +176,11 @@ export default function WorkspacesPage() {
             {workspaces.map((ws) => (
               <li
                 key={ws.id}
-                className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-4 py-3"
+                className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3"
               >
                 <div>
-                  <p className="font-medium text-zinc-800">{ws.workspace_name}</p>
-                  <p className="text-xs text-zinc-500">
+                  <p className="font-medium text-slate-800">{ws.workspace_name}</p>
+                  <p className="text-xs text-slate-500">
                     {ws.slug} &middot; {ws.org_role_code}
                   </p>
                 </div>
@@ -196,8 +196,8 @@ export default function WorkspacesPage() {
         )}
 
         {isEmpty && !showCreate && (
-          <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-zinc-200 bg-white px-6 py-12 text-center">
-            <p className="text-sm text-zinc-500">{t("msg.invite_hint", lang)}</p>
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-12 text-center">
+            <p className="text-sm text-slate-500">{t("msg.invite_hint", lang)}</p>
             <Button onClick={() => setShowCreate(true)}>
               {t("btn.create_first_workspace", lang)}
             </Button>
@@ -218,9 +218,9 @@ export default function WorkspacesPage() {
           </div>
         )
       ) : (
-        <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-4">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col gap-4">
           <div className="flex items-center justify-between gap-4">
-            <h2 className="text-lg font-semibold text-zinc-800">
+            <h2 className="text-lg font-semibold text-slate-800">
               {t("page.workspaces.create_heading", lang)}
             </h2>
             {!isEmpty && (

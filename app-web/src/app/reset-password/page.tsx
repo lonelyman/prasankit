@@ -103,8 +103,8 @@ function ResetPasswordInner() {
 
   return (
     <div className="flex-1 flex items-center justify-center p-8">
-      <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 w-full max-w-sm p-8 flex flex-col gap-6">
-        <h1 className="text-xl font-semibold text-zinc-800">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 w-full max-w-sm p-8 flex flex-col gap-6">
+        <h1 className="text-xl font-semibold text-slate-800">
           {t("page.reset_password.title", lang)}
         </h1>
 
@@ -114,13 +114,13 @@ function ResetPasswordInner() {
             {reqDone ? (
               <>
                 <Alert variant="info">{t("msg.reset_request_sent", lang)}</Alert>
-                <Link href="/login" className="text-sm text-zinc-500 hover:text-zinc-800 underline">
+                <Link href="/login" className="text-sm text-slate-500 hover:text-slate-800 underline">
                   {t("link.to_login", lang)}
                 </Link>
               </>
             ) : (
               <form onSubmit={handleRequest} className="flex flex-col gap-4" noValidate>
-                <p className="text-sm text-zinc-600">{t("msg.reset_request_label", lang)}</p>
+                <p className="text-sm text-slate-600">{t("msg.reset_request_label", lang)}</p>
                 <Input
                   id="reset-email"
                   type="email"
@@ -145,7 +145,7 @@ function ResetPasswordInner() {
             {confirmDone ? (
               <>
                 <Alert variant="success">{t("msg.reset_success", lang)}</Alert>
-                <Link href="/login" className="text-sm text-zinc-500 hover:text-zinc-800 underline">
+                <Link href="/login" className="text-sm text-slate-500 hover:text-slate-800 underline">
                   {t("link.to_login", lang)}
                 </Link>
               </>
@@ -186,7 +186,7 @@ function ResetPasswordInner() {
           </>
         )}
 
-        <Link href="/login" className="text-sm text-zinc-500 hover:text-zinc-800 underline">
+        <Link href="/login" className="text-sm text-slate-500 hover:text-slate-800 underline">
           {t("link.to_login", lang)}
         </Link>
       </div>
@@ -203,7 +203,7 @@ export default function ResetPasswordPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+        <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
           {t("msg.loading", lang)}
         </div>
       }

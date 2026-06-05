@@ -44,9 +44,9 @@ export default function SignupPage() {
   if (done) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
-        <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 w-full max-w-sm p-8 flex flex-col gap-4">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 w-full max-w-sm p-8 flex flex-col gap-4">
           <Alert variant="success">{t("msg.signup_success", lang)}</Alert>
-          <Link href="/login" className="text-sm text-zinc-500 hover:text-zinc-800 underline">
+          <Link href="/login" className="text-sm text-slate-500 hover:text-slate-800 underline">
             {t("link.to_login", lang)}
           </Link>
         </div>
@@ -110,8 +110,8 @@ export default function SignupPage() {
 
   return (
     <div className="flex-1 flex items-center justify-center p-8">
-      <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 w-full max-w-sm p-8 flex flex-col gap-6">
-        <h1 className="text-xl font-semibold text-zinc-800">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 w-full max-w-sm p-8 flex flex-col gap-6">
+        <h1 className="text-xl font-semibold text-slate-800">
           {t("page.signup.title", lang)}
         </h1>
 
@@ -166,8 +166,8 @@ export default function SignupPage() {
           </Button>
         </form>
 
-        <div className="text-sm text-zinc-500">
-          <Link href="/login" className="hover:text-zinc-800 underline">
+        <div className="text-sm text-slate-500">
+          <Link href="/login" className="hover:text-slate-800 underline">
             {t("link.to_login", lang)}
           </Link>
         </div>

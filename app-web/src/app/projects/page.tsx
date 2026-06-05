@@ -169,7 +169,7 @@ function ProjectsPageInner() {
 
   if (status === "loading") {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+      <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
         {t("msg.loading", lang)}
       </div>
     );
@@ -296,7 +296,7 @@ function ProjectsPageInner() {
   const showInternalHint = projectType === "internal" && !requestingUnit.trim();
 
   const inputClass =
-    "rounded-md border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-zinc-400 border-zinc-300 bg-white";
+    "rounded-md border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-brand-500/40 border-slate-300 bg-white focus:border-brand-500";
 
   return (
     <div className="flex-1 p-8 max-w-2xl mx-auto w-full flex flex-col gap-8">
@@ -304,7 +304,7 @@ function ProjectsPageInner() {
       <div className="flex flex-col gap-4">
         {/* Header: title + persistent "+ New project" action (owner/admin) */}
         <div className="flex items-center justify-between gap-4">
-          <h1 className="text-2xl font-semibold text-zinc-800">
+          <h1 className="text-2xl font-semibold text-slate-800">
             {t("page.projects.title", lang)}
           </h1>
           {canMutate && (
@@ -336,7 +336,7 @@ function ProjectsPageInner() {
           />
         </div>
 
-        {listLoading && <p className="text-sm text-zinc-500">{t("msg.loading", lang)}</p>}
+        {listLoading && <p className="text-sm text-slate-500">{t("msg.loading", lang)}</p>}
 
         {listError && <Alert variant="error">{listError}</Alert>}
 
@@ -347,15 +347,15 @@ function ProjectsPageInner() {
                 <button
                   type="button"
                   onClick={() => router.push(`/projects/${p.id}`)}
-                  className="flex w-full flex-col gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-zinc-300 hover:shadow-sm"
+                  className="flex w-full flex-col gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-slate-300 hover:shadow-sm"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium text-zinc-800">{p.project_name}</p>
+                    <p className="font-medium text-slate-800">{p.project_name}</p>
                     <Badge color={statusColor(p.project_status_code)}>
                       {t(`status.${p.project_status_code}`, lang)}
                     </Badge>
                   </div>
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
                     <Badge>{t(`type.${p.project_type_code}`, lang)}</Badge>
                     <span>&middot;</span>
                     <span>{p.slug ?? "—"}</span>
@@ -390,17 +390,17 @@ function ProjectsPageInner() {
 
         {/* Empty state — a real CTA, never a dead-end. */}
         {isEmpty && (
-          <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-zinc-200 bg-white px-6 py-12 text-center">
-            <h2 className="text-lg font-semibold text-zinc-800">
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-12 text-center">
+            <h2 className="text-lg font-semibold text-slate-800">
               {t("page.projects.empty_heading", lang)}
             </h2>
             {canMutate ? (
               <>
-                <p className="text-sm text-zinc-500">{t("msg.projects_empty_hint", lang)}</p>
+                <p className="text-sm text-slate-500">{t("msg.projects_empty_hint", lang)}</p>
                 <Button onClick={openCreate}>{t("btn.create_first_project", lang)}</Button>
               </>
             ) : (
-              <p className="text-sm text-zinc-500">{t("msg.projects_member_readonly", lang)}</p>
+              <p className="text-sm text-slate-500">{t("msg.projects_member_readonly", lang)}</p>
             )}
           </div>
         )}
@@ -466,7 +466,7 @@ function ProjectsPageInner() {
             <p className="text-xs text-blue-600">{t("hint.internal_requesting_unit", lang)}</p>
           )}
           <div className="flex flex-col gap-1">
-            <label htmlFor="project-description" className="text-sm font-medium text-zinc-700">
+            <label htmlFor="project-description" className="text-sm font-medium text-slate-700">
               {t("label.description", lang)}
             </label>
             <textarea
@@ -516,7 +516,7 @@ export default function ProjectsPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+        <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
           {t("msg.loading", lang)}
         </div>
       }

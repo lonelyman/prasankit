@@ -19,17 +19,17 @@ export function Input({ label, error, id, className = "", ...props }: InputProps
       {label && (
         <label
           htmlFor={id}
-          className="text-sm font-medium text-zinc-700"
+          className="text-sm font-medium text-slate-700"
         >
           {label}
         </label>
       )}
       <input
         id={id}
-        className={`rounded-md border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-zinc-400 ${
+        className={`rounded-md border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-brand-500/40 ${
           error
             ? "border-red-400 bg-red-50 focus:ring-red-300"
-            : "border-zinc-300 bg-white"
+            : "border-slate-300 bg-white focus:border-brand-500"
         } ${className}`}
         {...props}
       />
@@ -57,11 +57,11 @@ export function Button({
   ...props
 }: ButtonProps) {
   const base =
-    "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed";
+    "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 focus-visible:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed";
   const variants: Record<string, string> = {
-    primary: "bg-zinc-900 text-white hover:bg-zinc-700",
-    secondary: "bg-zinc-100 text-zinc-900 hover:bg-zinc-200",
-    ghost: "text-zinc-600 hover:bg-zinc-100 underline-offset-2 hover:underline",
+    primary: "bg-brand-600 text-white hover:bg-brand-700",
+    secondary: "bg-slate-100 text-slate-900 hover:bg-slate-200",
+    ghost: "text-slate-600 hover:bg-slate-100 underline-offset-2 hover:underline",
     danger: "bg-red-600 text-white hover:bg-red-500",
   };
 
@@ -130,16 +130,16 @@ export function Select({ label, error, id, options, className = "", ...props }: 
   return (
     <div className="flex flex-col gap-1">
       {label && (
-        <label htmlFor={id} className="text-sm font-medium text-zinc-700">
+        <label htmlFor={id} className="text-sm font-medium text-slate-700">
           {label}
         </label>
       )}
       <select
         id={id}
-        className={`rounded-md border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-zinc-400 bg-white ${
+        className={`rounded-md border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-brand-500/40 bg-white ${
           error
             ? "border-red-400 bg-red-50 focus:ring-red-300"
-            : "border-zinc-300"
+            : "border-slate-300 focus:border-brand-500"
         } ${className}`}
         {...props}
       >
@@ -190,7 +190,7 @@ export function Pagination({
       >
         {labelPrev}
       </Button>
-      <span className="text-sm text-zinc-500">{labelStatus}</span>
+      <span className="text-sm text-slate-500">{labelStatus}</span>
       <Button
         variant="secondary"
         onClick={onNext}
@@ -238,7 +238,7 @@ export function Modal({ open, title, onClose, children, className = "w-full max-
         className={`rounded-2xl bg-white p-6 shadow-lg flex flex-col gap-4 ${className}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="text-lg font-semibold text-zinc-800">{title}</h2>
+        <h2 className="text-lg font-semibold text-slate-800">{title}</h2>
         {children}
       </div>
     </div>
@@ -274,7 +274,7 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   return (
     <Modal open={open} title={title} onClose={onCancel}>
-      {body && <div className="text-sm text-zinc-600">{body}</div>}
+      {body && <div className="text-sm text-slate-600">{body}</div>}
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onCancel} disabled={loading}>
           {cancelLabel}
@@ -299,7 +299,7 @@ export interface BadgeProps {
   className?: string;
 }
 
-export function Badge({ children, color = "bg-zinc-100 text-zinc-700", className = "" }: BadgeProps) {
+export function Badge({ children, color = "bg-slate-100 text-slate-700", className = "" }: BadgeProps) {
   return (
     <span
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${color} ${className}`}
@@ -328,16 +328,16 @@ export function Breadcrumb({ items, className = "" }: BreadcrumbProps) {
     <nav aria-label="Breadcrumb" className={`flex items-center gap-1.5 text-sm ${className}`}>
       {items.map((item, i) => (
         <React.Fragment key={`${item.label}-${i}`}>
-          {i > 0 && <span className="text-zinc-300">/</span>}
+          {i > 0 && <span className="text-slate-300">/</span>}
           {item.href ? (
             <Link
               href={item.href}
-              className="text-zinc-500 hover:text-zinc-900 transition"
+              className="text-slate-500 hover:text-slate-900 transition"
             >
               {item.label}
             </Link>
           ) : (
-            <span className="text-zinc-800 font-medium" aria-current="page">
+            <span className="text-slate-800 font-medium" aria-current="page">
               {item.label}
             </span>
           )}
@@ -394,7 +394,7 @@ export function Dropdown({ trigger, children, align = "left", className = "" }: 
       {open && (
         <div
           role="menu"
-          className={`absolute z-40 mt-1 min-w-[12rem] rounded-md border border-zinc-200 bg-white py-1 shadow-lg ${
+          className={`absolute z-40 mt-1 min-w-[12rem] rounded-md border border-slate-200 bg-white py-1 shadow-lg ${
             align === "right" ? "right-0" : "left-0"
           }`}
         >

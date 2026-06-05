@@ -625,11 +625,11 @@ export default function ProjectDetailPage() {
   }
 
   const inputClass =
-    "rounded-md border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-zinc-400 border-zinc-300 bg-white";
+    "rounded-md border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-slate-400 border-slate-300 bg-white";
 
   if (status === "loading" || loading) {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+      <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
         {t("msg.loading", lang)}
       </div>
     );
@@ -643,7 +643,7 @@ export default function ProjectDetailPage() {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="flex flex-col gap-4 max-w-sm w-full text-center">
-          <p className="text-sm text-zinc-600">{t("page.project_detail.not_found", lang)}</p>
+          <p className="text-sm text-slate-600">{t("page.project_detail.not_found", lang)}</p>
           <Button variant="secondary" onClick={() => router.push("/projects")}>
             {t("btn.back_to_projects", lang)}
           </Button>
@@ -682,10 +682,10 @@ export default function ProjectDetailPage() {
 
       {!isEditing ? (
         /* READ mode */
-        <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-4">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col gap-4">
           <div className="flex items-start justify-between gap-4">
             <div className="flex flex-col gap-2">
-              <h1 className="text-2xl font-semibold text-zinc-800">{project.project_name}</h1>
+              <h1 className="text-2xl font-semibold text-slate-800">{project.project_name}</h1>
               <div className="flex gap-2">
                 <Badge color={statusColor(project.project_status_code)}>
                   {t(`status.${project.project_status_code}`, lang)}
@@ -719,7 +719,7 @@ export default function ProjectDetailPage() {
           </dl>
 
           {canMutate && (
-            <div className="flex flex-wrap items-end gap-3 pt-2 border-t border-zinc-100">
+            <div className="flex flex-wrap items-end gap-3 pt-2 border-t border-slate-100">
               <Button variant="secondary" onClick={startEdit}>
                 {t("btn.edit", lang)}
               </Button>
@@ -739,8 +739,8 @@ export default function ProjectDetailPage() {
         </div>
       ) : (
         /* EDIT mode — NO status select (status is PUT-excluded) */
-        <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-4">
-          <h2 className="text-lg font-semibold text-zinc-800">{t("btn.edit", lang)}</h2>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col gap-4">
+          <h2 className="text-lg font-semibold text-slate-800">{t("btn.edit", lang)}</h2>
 
           {formError && <Alert variant="error">{formError}</Alert>}
 
@@ -784,7 +784,7 @@ export default function ProjectDetailPage() {
               autoComplete="off"
             />
             <div className="flex flex-col gap-1">
-              <label htmlFor="edit-description" className="text-sm font-medium text-zinc-700">
+              <label htmlFor="edit-description" className="text-sm font-medium text-slate-700">
                 {t("label.description", lang)}
               </label>
               <textarea
@@ -828,9 +828,9 @@ export default function ProjectDetailPage() {
       )}
 
       {/* Team section — visible to all org roles; write controls gated on canMutate. */}
-      <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-4">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col gap-4">
         <div className="flex items-center justify-between gap-4">
-          <h2 className="text-lg font-semibold text-zinc-800">{t("team.heading", lang)}</h2>
+          <h2 className="text-lg font-semibold text-slate-800">{t("team.heading", lang)}</h2>
           {canMutate && (
             <div className="flex items-center gap-2">
               <Button variant="ghost" onClick={openInviteModal}>
@@ -846,12 +846,12 @@ export default function ProjectDetailPage() {
         {membersError && <Alert variant="error">{membersError}</Alert>}
 
         {membersLoading ? (
-          <p className="text-sm text-zinc-500">{t("msg.loading", lang)}</p>
+          <p className="text-sm text-slate-500">{t("msg.loading", lang)}</p>
         ) : members.length === 0 ? (
           // count===0 is the legacy / owner-less fallback (not the normal path).
-          <p className="text-sm text-zinc-500">{t("team.empty", lang)}</p>
+          <p className="text-sm text-slate-500">{t("team.empty", lang)}</p>
         ) : (
-          <ul className="flex flex-col divide-y divide-zinc-100">
+          <ul className="flex flex-col divide-y divide-slate-100">
             {members.map((m) => {
               const isOwner = m.id === ownerMemberId;
               const rowSaving = roleSavingId === m.id;
@@ -861,7 +861,7 @@ export default function ProjectDetailPage() {
                   className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm text-zinc-800 truncate">{m.display_name ?? "—"}</span>
+                    <span className="text-sm text-slate-800 truncate">{m.display_name ?? "—"}</span>
                     <Badge color={projectRoleColor(m.project_role_code)}>
                       {projectRoleLabel(m.project_role_code, lang)}
                     </Badge>
@@ -874,7 +874,7 @@ export default function ProjectDetailPage() {
 
                   {canMutate &&
                     (isOwner ? (
-                      <span className="text-xs text-zinc-400 max-w-xs text-right">
+                      <span className="text-xs text-slate-400 max-w-xs text-right">
                         {t("team.owner_locked_hint", lang)}
                       </span>
                     ) : (
@@ -907,7 +907,7 @@ export default function ProjectDetailPage() {
           !canMutate &&
           members.length === 1 &&
           members[0].id === ownerMemberId && (
-            <p className="text-sm text-zinc-500">{t("team.empty", lang)}</p>
+            <p className="text-sm text-slate-500">{t("team.empty", lang)}</p>
           )}
       </div>
 
@@ -915,9 +915,9 @@ export default function ProjectDetailPage() {
       <Modal open={addOpen} title={t("dialog.add_member.title", lang)} onClose={() => setAddOpen(false)}>
         {addError && <Alert variant="error">{addError}</Alert>}
         {wsMembersLoading ? (
-          <p className="text-sm text-zinc-500">{t("msg.loading", lang)}</p>
+          <p className="text-sm text-slate-500">{t("msg.loading", lang)}</p>
         ) : eligibleMembers.length === 0 ? (
-          <div className="flex flex-col gap-3 text-sm text-zinc-600">
+          <div className="flex flex-col gap-3 text-sm text-slate-600">
             <p>{t("team.no_eligible_members", lang)}</p>
             <Button
               variant="ghost"
@@ -1056,8 +1056,8 @@ export default function ProjectDetailPage() {
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <dt className="text-xs font-medium text-zinc-500">{label}</dt>
-      <dd className="text-zinc-800 whitespace-pre-wrap break-words">{value}</dd>
+      <dt className="text-xs font-medium text-slate-500">{label}</dt>
+      <dd className="text-slate-800 whitespace-pre-wrap break-words">{value}</dd>
     </div>
   );
 }

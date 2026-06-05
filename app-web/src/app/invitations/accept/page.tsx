@@ -82,7 +82,7 @@ function AcceptInviteInner() {
 
   if (status === "loading") {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+      <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
         {t("msg.loading", lang)}
       </div>
     );
@@ -94,14 +94,14 @@ function AcceptInviteInner() {
 
   return (
     <div className="flex-1 flex items-center justify-center p-8">
-      <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 w-full max-w-sm p-8 flex flex-col gap-6">
-        <h1 className="text-xl font-semibold text-zinc-800">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 w-full max-w-sm p-8 flex flex-col gap-6">
+        <h1 className="text-xl font-semibold text-slate-800">
           {t("page.accept_invite.title", lang)}
         </h1>
 
         {phase === "accepting" && (
-          <div className="flex items-center gap-3 text-zinc-500 text-sm">
-            <span className="h-4 w-4 rounded-full border-2 border-zinc-400 border-t-transparent animate-spin" />
+          <div className="flex items-center gap-3 text-slate-500 text-sm">
+            <span className="h-4 w-4 rounded-full border-2 border-slate-400 border-t-transparent animate-spin" />
             {t("msg.accepting_invite", lang)}
           </div>
         )}
@@ -119,7 +119,7 @@ function AcceptInviteInner() {
         )}
 
         {phase !== "accepting" && phase !== "success" && (
-          <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-800 underline">
+          <Link href="/" className="text-sm text-slate-500 hover:text-slate-800 underline">
             {t("page.home.title", lang)}
           </Link>
         )}
@@ -137,7 +137,7 @@ export default function AcceptInvitePage() {
   return (
     <Suspense
       fallback={
-        <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+        <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
           {t("msg.loading", lang)}
         </div>
       }
