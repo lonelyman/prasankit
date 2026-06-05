@@ -28,6 +28,11 @@ export function SiteHeader() {
   // (resilient — the switcher still works if listWorkspaces() failed).
   const activeLabel = activeWorkspace?.workspace_name ?? activeSlug;
 
+  // Workspace nav (switcher + page links) is for signed-in users only. activeSlug
+  // persists in localStorage for resume, so it can be set while anonymous (e.g. on
+  // /login after a prior session) — gate on auth too, or the nav leaks onto auth pages.
+  const showWorkspaceNav = status === "authenticated" && Boolean(activeSlug);
+
   function switchTo(slug: string) {
     if (slug !== activeSlug) {
       setActiveSlug(slug);
@@ -39,12 +44,12 @@ export function SiteHeader() {
     <header className="flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white">
       <div className="flex items-center gap-3">
         <Link
-          href={activeSlug ? "/projects" : "/"}
+          href={showWorkspaceNav ? "/projects" : "/"}
           className="text-sm font-semibold text-brand-700 tracking-tight"
         >
           Prasankit
         </Link>
-        {activeSlug && (
+        {showWorkspaceNav && (
           <>
             <span className="text-slate-300">/</span>
             {/* Workspace switcher: a real dropdown listing all workspaces.
@@ -111,7 +116,7 @@ export function SiteHeader() {
         )}
       </div>
       <div className="flex items-center gap-4">
-        {activeSlug && (
+        {showWorkspaceNav && (
           <Link
             href="/projects"
             className="text-sm font-medium text-slate-600 hover:text-slate-900 transition"
@@ -119,7 +124,7 @@ export function SiteHeader() {
             {t("nav.projects", lang)}
           </Link>
         )}
-        {activeSlug && (
+        {showWorkspaceNav && (
           <Link
             href="/settings/positions"
             className="text-sm font-medium text-slate-600 hover:text-slate-900 transition"
