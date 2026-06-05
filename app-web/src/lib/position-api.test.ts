@@ -5,6 +5,10 @@ import {
   createPosition,
   updatePosition,
   deprecatePosition,
+  listMemberPositions,
+  assignMemberPosition,
+  unassignMemberPosition,
+  setCompanyPosition,
 } from "./position-api";
 import { ApiError } from "./api";
 
@@ -270,5 +274,149 @@ describe("deprecatePosition", () => {
     expect(url).toContain("/api/v1/workspaces/project-positions/lead_dev/deprecate");
     expect(init.method).toBe("POST");
     expect(result.status).toBe("deprecated");
+  });
+});
+
+const PROJECT_ID = "33333333-3333-3333-3333-333333333333";
+const MEMBER_ID = "44444444-4444-4444-4444-444444444444";
+const MEMBERSHIP_ID = "55555555-5555-5555-5555-555555555555";
+
+describe("listMemberPositions", () => {
+  it("unwraps {data:{items,count}} and hits the member-positions path with the slug header", async () => {
+    const items = [
+      {
+        id: "p1",
+        workspace_id: "w",
+        project_member_id: MEMBER_ID,
+        project_position_code: "lead_dev",
+        label_th: "หัวหน้า",
+        label_en: "Lead",
+        status: "active",
+        created_at: "2026-06-05T00:00:00Z",
+      },
+    ];
+    const mockFetch = vi.fn().mockResolvedValueOnce(okJson({ data: { items, count: 1 } }));
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const result = await listMemberPositions("my-ws", PROJECT_ID, MEMBER_ID);
+
+    expect(result.items).toEqual(items);
+    expect(result.count).toBe(1);
+    const [url, init] = lastCall(mockFetch);
+    expect(url).toContain(`/api/v1/workspaces/projects/${PROJECT_ID}/members/${MEMBER_ID}/positions`);
+    expect((init.headers as Record<string, string>)["X-Workspace-Slug"]).toBe("my-ws");
+  });
+});
+
+describe("assignMemberPosition", () => {
+  it("POSTs {project_position_code} and returns the 201 assignment", async () => {
+    const assignment = {
+      id: "a1",
+      workspace_id: "w",
+      project_member_id: MEMBER_ID,
+      project_position_code: "lead_dev",
+      created_at: "2026-06-05T00:00:00Z",
+    };
+    const mockFetch = vi.fn().mockResolvedValueOnce(okJson({ data: assignment }, 201));
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const result = await assignMemberPosition("my-ws", PROJECT_ID, MEMBER_ID, "lead_dev");
+
+    const [url, init] = lastCall(mockFetch);
+    expect(url).toContain(`/projects/${PROJECT_ID}/members/${MEMBER_ID}/positions`);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string).project_position_code).toBe("lead_dev");
+    expect(result).toEqual(assignment);
+  });
+
+  it("throws ApiError already_assigned on 409", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      errJson(409, { error: { code: "project_member_position.already_assigned", message: "x" } })
+    );
+    await expect(assignMemberPosition("my-ws", PROJECT_ID, MEMBER_ID, "lead_dev")).rejects.toSatisfy(
+      (err: unknown) => err instanceof ApiError && err.code === "project_member_position.already_assigned"
+    );
+  });
+
+  it("throws ApiError member_removed on 422", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      errJson(422, { error: { code: "project_member_position.member_removed", message: "x" } })
+    );
+    await expect(assignMemberPosition("my-ws", PROJECT_ID, MEMBER_ID, "lead_dev")).rejects.toSatisfy(
+      (err: unknown) => err instanceof ApiError && err.code === "project_member_position.member_removed"
+    );
+  });
+
+  it("throws ApiError invalid_position_code on 422", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      errJson(422, { error: { code: "project_member_position.invalid_position_code", message: "x" } })
+    );
+    await expect(assignMemberPosition("my-ws", PROJECT_ID, MEMBER_ID, "gone")).rejects.toSatisfy(
+      (err: unknown) => err instanceof ApiError && err.code === "project_member_position.invalid_position_code"
+    );
+  });
+});
+
+describe("unassignMemberPosition", () => {
+  it("DELETEs the member-position path and resolves void on 204", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 204,
+      text: async () => "",
+    } as unknown as Response);
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    await expect(unassignMemberPosition("my-ws", PROJECT_ID, MEMBER_ID, "lead_dev")).resolves.toBeUndefined();
+
+    const [url, init] = lastCall(mockFetch);
+    expect(url).toContain(`/projects/${PROJECT_ID}/members/${MEMBER_ID}/positions/lead_dev`);
+    expect(init.method).toBe("DELETE");
+  });
+});
+
+describe("setCompanyPosition", () => {
+  it("PUTs the code to the membership company-position path and returns the result", async () => {
+    const body = { membership_id: MEMBERSHIP_ID, company_position_code: "senior_engineer" };
+    const mockFetch = vi.fn().mockResolvedValueOnce(okJson({ data: body }));
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const result = await setCompanyPosition("my-ws", MEMBERSHIP_ID, "senior_engineer");
+
+    const [url, init] = lastCall(mockFetch);
+    expect(url).toContain(`/api/v1/workspaces/memberships/${MEMBERSHIP_ID}/company-position`);
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body as string).company_position_code).toBe("senior_engineer");
+    expect(result).toEqual(body);
+  });
+
+  it("serializes a null code to clear the company position", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(okJson({ data: { membership_id: MEMBERSHIP_ID, company_position_code: null } }));
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    await setCompanyPosition("my-ws", MEMBERSHIP_ID, null);
+
+    const parsed = JSON.parse(lastCall(mockFetch)[1].body as string);
+    expect("company_position_code" in parsed).toBe(true);
+    expect(parsed.company_position_code).toBeNull();
+  });
+
+  it("throws ApiError invalid_position_code on 422", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      errJson(422, { error: { code: "company_position.invalid_position_code", message: "x" } })
+    );
+    await expect(setCompanyPosition("my-ws", MEMBERSHIP_ID, "gone")).rejects.toSatisfy(
+      (err: unknown) => err instanceof ApiError && err.code === "company_position.invalid_position_code"
+    );
+  });
+
+  it("throws ApiError membership_not_found on 404", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      errJson(404, { error: { code: "company_position.membership_not_found", message: "x" } })
+    );
+    await expect(setCompanyPosition("my-ws", MEMBERSHIP_ID, "x")).rejects.toSatisfy(
+      (err: unknown) => err instanceof ApiError && err.code === "company_position.membership_not_found"
+    );
   });
 });

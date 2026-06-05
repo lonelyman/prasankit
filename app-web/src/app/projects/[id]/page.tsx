@@ -38,6 +38,7 @@ import {
   projectRoleColor,
 } from "@/lib/project-roles";
 import { Input, Button, Alert, Select, Modal, ConfirmDialog, Badge, Breadcrumb } from "@/components/ui";
+import { PositionsSection } from "./positions-section";
 
 // Org roles invitable to a workspace (mirror of the recovered home invite form).
 const INVITE_ROLES = ["admin", "executive", "user"] as const;
@@ -910,6 +911,20 @@ export default function ProjectDetailPage() {
             <p className="text-sm text-slate-500">{t("team.empty", lang)}</p>
           )}
       </div>
+
+      {/* Positions section (FE-C2) — assign project positions + set company position per member. */}
+      <PositionsSection
+        slug={activeSlug}
+        projectId={project.id}
+        members={members}
+        membersLoading={membersLoading}
+        canMutate={canMutate}
+        onReconcile={loadMembers}
+        onTenantError={() => {
+          clearActiveSlug();
+          router.push("/workspaces");
+        }}
+      />
 
       {/* Add-member modal */}
       <Modal open={addOpen} title={t("dialog.add_member.title", lang)} onClose={() => setAddOpen(false)}>

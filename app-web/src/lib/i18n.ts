@@ -293,6 +293,28 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
   "position_label_required": { th: "กรุณากรอกชื่อตำแหน่ง", en: "Label is required." },
   "position_label_too_long": { th: "ชื่อตำแหน่งต้องไม่เกิน 200 ตัวอักษร", en: "Label must be 200 characters or fewer." },
   "position_sort_order_invalid": { th: "ลำดับต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป", en: "Sort order must be an integer of 0 or greater." },
+
+  // --- positions on project detail (M2 FE-C2) ---
+  "positions.member_heading": { th: "ตำแหน่งของสมาชิก", en: "Member positions" },
+  "positions.company_position_label": { th: "ตำแหน่งในบริษัท", en: "Company position" },
+  "positions.company_position_hint": {
+    th: "ระดับเวิร์กสเปซ — เปลี่ยนแล้วมีผลกับสมาชิกในทุกโครงการ",
+    en: "Workspace-level — changing this affects the member across all projects.",
+  },
+  "positions.company_position_none": { th: "— ไม่ระบุ —", en: "— None —" },
+  "positions.member_none": { th: "ยังไม่มีตำแหน่ง", en: "No positions" },
+  "positions.no_active_masters": {
+    th: "ยังไม่มีตำแหน่งโครงการให้เลือก สร้างก่อนที่หน้าตั้งค่า",
+    en: "No project positions available yet — create them in Settings first.",
+  },
+  "positions.go_to_settings": { th: "ไปที่หน้าตั้งค่า", en: "Go to Settings" },
+  "label.select_position": { th: "เลือกตำแหน่ง", en: "Select position" },
+  "dialog.assign_position.title": { th: "เพิ่มตำแหน่งในโครงการ", en: "Add project position" },
+  "dialog.unassign_position.title": { th: "นำตำแหน่งออก?", en: "Remove this position?" },
+  "dialog.unassign_position.body": {
+    th: "ตำแหน่งนี้จะถูกนำออกจากสมาชิก คุณแน่ใจหรือไม่?",
+    en: "This position will be removed from the member. Are you sure?",
+  },
 };
 
 export function t(key: string, lang: Lang): string {
@@ -463,6 +485,36 @@ const ERROR_MESSAGES: Record<string, Record<Lang, string>> = {
   "company_position.not_found": {
     th: "ไม่พบตำแหน่งนี้",
     en: "Position not found.",
+  },
+
+  // --- member position assignment codes (M2 FE-C2) ---
+  "project_member_position.already_assigned": {
+    th: "สมาชิกมีตำแหน่งนี้อยู่แล้ว",
+    en: "This position is already assigned to the member.",
+  },
+  "project_member_position.invalid_position_code": {
+    th: "รหัสตำแหน่งไม่ถูกต้องหรือถูกเลิกใช้แล้ว",
+    en: "Invalid or deprecated position code.",
+  },
+  "project_member_position.member_removed": {
+    th: "สมาชิกถูกนำออกจากโครงการแล้ว",
+    en: "This member has been removed from the project.",
+  },
+  "project_member_position.member_not_found": {
+    th: "ไม่พบสมาชิกในโครงการ",
+    en: "Project member not found.",
+  },
+  "project_member_position.not_found": {
+    th: "ไม่พบตำแหน่งที่กำหนดให้",
+    en: "Assignment not found.",
+  },
+  "company_position.invalid_position_code": {
+    th: "รหัสตำแหน่งบริษัทไม่ถูกต้องหรือถูกเลิกใช้แล้ว",
+    en: "Invalid or deprecated company position code.",
+  },
+  "company_position.membership_not_found": {
+    th: "ไม่พบสมาชิกในเวิร์กสเปซ",
+    en: "Workspace membership not found.",
   },
   "internal.unexpected": {
     th: "เกิดข้อผิดพลาดภายในระบบ กรุณาลองอีกครั้ง",

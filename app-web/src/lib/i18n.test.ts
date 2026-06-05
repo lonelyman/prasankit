@@ -46,6 +46,14 @@ describe("errorMessage — known codes", () => {
     "company_position.invalid_status",
     "project_position.not_found",
     "company_position.not_found",
+    // Member position assignment codes (M2 FE-C2)
+    "project_member_position.already_assigned",
+    "project_member_position.invalid_position_code",
+    "project_member_position.member_removed",
+    "project_member_position.member_not_found",
+    "project_member_position.not_found",
+    "company_position.invalid_position_code",
+    "company_position.membership_not_found",
     "internal.unexpected",
   ] as const;
 

@@ -63,6 +63,7 @@ export interface ProjectMember {
   joined_at: string; // RFC3339
   removed_at: string | null; // key ALWAYS present (null when active); list returns active-only
   display_name?: string; // PRESENT on list items; ABSENT on add/change responses (omitempty)
+  company_position_code?: string | null; // PRESENT on list items (Decision-A); workspace-level 1:1, absent/null = unset
 }
 
 // Add-member picker source. GET /api/v1/workspaces/members returns active
@@ -107,4 +108,33 @@ export interface Position {
 export interface PositionListPage {
   items: Position[];
   pagination: ProjectPagination; // reuse the shared pagination envelope
+}
+
+// A project position assigned to a project member (M:N junction), JOINed to the
+// master for label + status. A deprecated master still appears here on an existing
+// assignment (status="deprecated") — only the picker filters it out.
+export interface ProjectMemberPosition {
+  id: string;
+  workspace_id: string;
+  project_member_id: string;
+  project_position_code: string;
+  label_th: string;
+  label_en: string;
+  status: string; // master status: "active" | "deprecated"
+  created_at: string;
+}
+
+// The 201 response from assigning a position — no label (refetch the list for it).
+export interface ProjectMemberPositionAssignment {
+  id: string;
+  workspace_id: string;
+  project_member_id: string;
+  project_position_code: string;
+  created_at: string;
+}
+
+// The 200 response from setting/clearing a membership's company position.
+export interface SetCompanyPositionResult {
+  membership_id: string;
+  company_position_code: string | null;
 }

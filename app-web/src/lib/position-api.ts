@@ -1,5 +1,11 @@
-import { apiGet, apiPost, apiPut } from "./api";
-import type { Position, PositionListPage } from "./types";
+import { apiGet, apiPost, apiPut, apiDelete } from "./api";
+import type {
+  Position,
+  PositionListPage,
+  ProjectMemberPosition,
+  ProjectMemberPositionAssignment,
+  SetCompanyPositionResult,
+} from "./types";
 
 // The two workspace-scoped master lists share one client; "kind" picks the URL
 // segment. project_positions = hats a member wears in a project (M:N);
@@ -96,4 +102,62 @@ function toBody(input: CreatePositionInput | UpdatePositionInput): Record<string
   const desc = input.description?.trim();
   if (desc) body.description = desc;
   return body;
+}
+
+// ── FE-C2: assign project positions to a member (M:N) + set company position ────
+
+const PROJECTS_BASE = "/api/v1/workspaces/projects";
+const MEMBERSHIPS_BASE = "/api/v1/workspaces/memberships";
+
+export async function listMemberPositions(
+  slug: string,
+  projectId: string,
+  memberId: string
+): Promise<{ items: ProjectMemberPosition[]; count: number }> {
+  // apiGet strips outer .data → {items, count}. Deprecated masters still appear here.
+  return apiGet<{ items: ProjectMemberPosition[]; count: number }>(
+    `${PROJECTS_BASE}/${projectId}/members/${memberId}/positions`,
+    { workspaceSlug: slug }
+  );
+}
+
+export async function assignMemberPosition(
+  slug: string,
+  projectId: string,
+  memberId: string,
+  projectPositionCode: string
+): Promise<ProjectMemberPositionAssignment> {
+  const result = await apiPost<ProjectMemberPositionAssignment>(
+    `${PROJECTS_BASE}/${projectId}/members/${memberId}/positions`,
+    { project_position_code: projectPositionCode },
+    { workspaceSlug: slug }
+  );
+  return result!; // 201 → data present (no label — caller refetches the list)
+}
+
+export async function unassignMemberPosition(
+  slug: string,
+  projectId: string,
+  memberId: string,
+  code: string
+): Promise<void> {
+  await apiDelete(`${PROJECTS_BASE}/${projectId}/members/${memberId}/positions/${code}`, {
+    workspaceSlug: slug,
+  });
+  // 204 empty — apiDelete handles.
+}
+
+// Company position lives on the workspace membership (NOT under /projects). A null
+// code clears it (BE treats null/absent/"" as clear).
+export async function setCompanyPosition(
+  slug: string,
+  membershipId: string,
+  code: string | null
+): Promise<SetCompanyPositionResult> {
+  const result = await apiPut<SetCompanyPositionResult>(
+    `${MEMBERSHIPS_BASE}/${membershipId}/company-position`,
+    { company_position_code: code },
+    { workspaceSlug: slug }
+  );
+  return result!;
 }
