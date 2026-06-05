@@ -247,6 +247,52 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
   "description_too_long": { th: "รายละเอียดต้องไม่เกิน 10000 ตัวอักษร", en: "Description must be 10000 characters or fewer." },
   "invalid_date": { th: "กรุณากรอกวันที่ในรูปแบบ ปปปป-ดด-วว", en: "Please enter a valid date (YYYY-MM-DD)." },
   "end_before_start": { th: "วันที่สิ้นสุดต้องไม่อยู่ก่อนวันที่เริ่ม", en: "End date must not be before the start date." },
+
+  // --- settings / positions (M2 FE-C) ---
+  "nav.settings": { th: "ตั้งค่า", en: "Settings" },
+  "page.positions.title": { th: "ตำแหน่ง", en: "Positions" },
+  "positions.project_heading": { th: "ตำแหน่งในโครงการ", en: "Project positions" },
+  "positions.company_heading": { th: "ตำแหน่งในบริษัท", en: "Company positions" },
+  "positions.project_desc": {
+    th: "หมวกที่สมาชิกสวมในโครงการ (มอบหมายได้หลายตำแหน่งต่อคน)",
+    en: "Hats a member wears within a project (a member can hold several).",
+  },
+  "positions.company_desc": {
+    th: "ตำแหน่งงานระดับบริษัทของสมาชิก (หนึ่งตำแหน่งต่อคน)",
+    en: "A member's company-wide job title (one per member).",
+  },
+  "positions.empty": { th: "ยังไม่มีตำแหน่ง — สร้างรายการแรก", en: "No positions yet — create the first one." },
+  "positions.add": { th: "เพิ่มตำแหน่ง", en: "Add position" },
+  "positions.deprecated_badge": { th: "เลิกใช้แล้ว", en: "Deprecated" },
+  "positions.system_badge": { th: "ระบบ", en: "System" },
+  "label.position_code": { th: "รหัส (code)", en: "Code" },
+  "label.position_label_th": { th: "ชื่อ (ไทย)", en: "Label (TH)" },
+  "label.position_label_en": { th: "ชื่อ (อังกฤษ)", en: "Label (EN)" },
+  "label.position_description": { th: "คำอธิบาย", en: "Description" },
+  "label.position_sort_order": { th: "ลำดับการแสดง", en: "Sort order" },
+  "label.position_status": { th: "สถานะ", en: "Status" },
+  "status.position.active": { th: "ใช้งาน", en: "Active" },
+  "status.position.deprecated": { th: "เลิกใช้", en: "Deprecated" },
+  "dialog.create_position.title": { th: "เพิ่มตำแหน่ง", en: "Add position" },
+  "dialog.edit_position.title": { th: "แก้ไขตำแหน่ง", en: "Edit position" },
+  "dialog.deprecate_position.title": { th: "เลิกใช้ตำแหน่งนี้?", en: "Deprecate this position?" },
+  "dialog.deprecate_position.body": {
+    th: "ตำแหน่งจะถูกซ่อนจากตัวเลือก แต่ยังคงอยู่กับการมอบหมายเดิม คุณแน่ใจหรือไม่?",
+    en: "It will be hidden from pickers but kept on existing assignments. Are you sure?",
+  },
+  "btn.deprecate": { th: "เลิกใช้", en: "Deprecate" },
+  "msg.positions_readonly": {
+    th: "คุณมีสิทธิ์ดูอย่างเดียว การจัดการตำแหน่งเป็นสิทธิ์ของเจ้าของหรือผู้ดูแล",
+    en: "You have read-only access; managing positions is for owners/admins.",
+  },
+  "position_code_required": { th: "กรุณากรอกรหัสตำแหน่ง", en: "Position code is required." },
+  "position_code_invalid": {
+    th: "รหัสต้องเป็นตัวพิมพ์เล็ก ตัวเลข หรือ _ ขึ้นต้นด้วยตัวอักษร ความยาว 2–63 ตัว",
+    en: "Code must be lowercase letters, digits, or underscores, start with a letter, 2–63 chars.",
+  },
+  "position_label_required": { th: "กรุณากรอกชื่อตำแหน่ง", en: "Label is required." },
+  "position_label_too_long": { th: "ชื่อตำแหน่งต้องไม่เกิน 200 ตัวอักษร", en: "Label must be 200 characters or fewer." },
+  "position_sort_order_invalid": { th: "ลำดับต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป", en: "Sort order must be an integer of 0 or greater." },
 };
 
 export function t(key: string, lang: Lang): string {
@@ -375,6 +421,48 @@ const ERROR_MESSAGES: Record<string, Record<Lang, string>> = {
   "project_member.not_found": {
     th: "ไม่พบสมาชิกนี้",
     en: "Member not found.",
+  },
+
+  // --- positions codes (M2 FE-C) — same message for both project_/company_ families ---
+  "project_position.code_taken": {
+    th: "รหัสนี้ถูกใช้แล้วในเวิร์กสเปซ",
+    en: "This code already exists in this workspace.",
+  },
+  "company_position.code_taken": {
+    th: "รหัสนี้ถูกใช้แล้วในเวิร์กสเปซ",
+    en: "This code already exists in this workspace.",
+  },
+  "project_position.code_immutable": {
+    th: "ไม่สามารถเปลี่ยนรหัสตำแหน่งได้",
+    en: "The position code cannot be changed.",
+  },
+  "company_position.code_immutable": {
+    th: "ไม่สามารถเปลี่ยนรหัสตำแหน่งได้",
+    en: "The position code cannot be changed.",
+  },
+  "project_position.system_immutable": {
+    th: "ไม่สามารถแก้ไขตำแหน่งของระบบได้",
+    en: "System positions cannot be modified.",
+  },
+  "company_position.system_immutable": {
+    th: "ไม่สามารถแก้ไขตำแหน่งของระบบได้",
+    en: "System positions cannot be modified.",
+  },
+  "project_position.invalid_status": {
+    th: "สถานะไม่ถูกต้อง",
+    en: "Invalid status.",
+  },
+  "company_position.invalid_status": {
+    th: "สถานะไม่ถูกต้อง",
+    en: "Invalid status.",
+  },
+  "project_position.not_found": {
+    th: "ไม่พบตำแหน่งนี้",
+    en: "Position not found.",
+  },
+  "company_position.not_found": {
+    th: "ไม่พบตำแหน่งนี้",
+    en: "Position not found.",
   },
   "internal.unexpected": {
     th: "เกิดข้อผิดพลาดภายในระบบ กรุณาลองอีกครั้ง",

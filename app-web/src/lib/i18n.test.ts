@@ -35,6 +35,17 @@ describe("errorMessage — known codes", () => {
     "project.slug_taken",
     "project.invalid_master_code",
     "project.not_found",
+    // Positions codes (M2 FE-C)
+    "project_position.code_taken",
+    "company_position.code_taken",
+    "project_position.code_immutable",
+    "company_position.code_immutable",
+    "project_position.system_immutable",
+    "company_position.system_immutable",
+    "project_position.invalid_status",
+    "company_position.invalid_status",
+    "project_position.not_found",
+    "company_position.not_found",
     "internal.unexpected",
   ] as const;
 

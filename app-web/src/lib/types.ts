@@ -86,3 +86,25 @@ export interface ProjectListPage {
   items: Project[];
   pagination: ProjectPagination;
 }
+
+// Workspace-scoped customizable master (project_positions / company_positions).
+// Same shape for both lists; the kind only selects the endpoint. Masters start
+// EMPTY (no seed) and are managed via /settings/positions — never hardcode codes.
+export interface Position {
+  id: string;
+  workspace_id: string;
+  code: string; // immutable, ^[a-z][a-z0-9_]{1,62}$
+  label_th: string;
+  label_en: string;
+  description: string | null; // *string in BE; null when unset
+  sort_order: number;
+  is_system: boolean;
+  status: string; // "active" | "deprecated"
+  created_at: string; // RFC3339
+  updated_at: string;
+}
+
+export interface PositionListPage {
+  items: Position[];
+  pagination: ProjectPagination; // reuse the shared pagination envelope
+}
