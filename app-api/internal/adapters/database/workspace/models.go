@@ -49,3 +49,11 @@ type workspaceWithRoleRow struct {
 	OrgRoleCode  string    `gorm:"column:org_role_code"`
 	MembershipID uuid.UUID `gorm:"column:membership_id"`
 }
+
+// membershipWithDisplayNameRow is the flat JOIN projection for ListActiveWithDisplayName
+// (workspace_memberships → user_accounts). Maps to workspace.MembershipWithDisplayName.
+type membershipWithDisplayNameRow struct {
+	ID          uuid.UUID `gorm:"column:id"`
+	DisplayName string    `gorm:"column:display_name"`
+	OrgRoleCode string    `gorm:"column:org_role_code"`
+}

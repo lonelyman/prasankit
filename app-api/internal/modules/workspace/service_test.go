@@ -208,6 +208,21 @@ func (r *fakeMembershipRepo) ListByWorkspace(ctx context.Context, workspaceID uu
 	return result, nil
 }
 
+func (r *fakeMembershipRepo) ListActiveWithDisplayName(ctx context.Context, workspaceID uuid.UUID) ([]workspace.MembershipWithDisplayName, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var result []workspace.MembershipWithDisplayName
+	for _, m := range r.memberships {
+		if m.WorkspaceID == workspaceID && m.MembershipStatusCode == workspace.MembershipStatusActive {
+			result = append(result, workspace.MembershipWithDisplayName{
+				ID:          m.ID,
+				OrgRoleCode: m.OrgRoleCode,
+			})
+		}
+	}
+	return result, nil
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 func buildSvc() (*workspace.Service, *fakeWorkspaceRepo, *fakeMembershipRepo) {

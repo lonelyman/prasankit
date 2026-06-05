@@ -76,6 +76,9 @@ func RegisterRoutes(
 		wsGroup.Get("/current", requireSession, requireTenant, workspaceH.HandleGetCurrent)
 		// requireSession + requireTenantContext + requireWorkspacePermission(invite).
 		wsGroup.Post("/invitations", requireSession, requireTenant, requireInvite, workspaceH.HandleInvite)
+		// Add-member picker: list active workspace members with display_name.
+		// Same gating as invite (owner/admin) — read-only.
+		wsGroup.Get("/members", requireSession, requireTenant, requireInvite, workspaceH.HandleListMembers)
 
 		// project_positions (ws-scoped master) — own guard (NOT under projectH).
 		if projectPositionH != nil {

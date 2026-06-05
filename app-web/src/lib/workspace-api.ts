@@ -5,6 +5,7 @@ import type {
   CurrentWorkspace,
   Invitation,
   AcceptResult,
+  WorkspaceMember,
 } from "./types";
 
 export async function listWorkspaces(): Promise<WorkspaceWithRole[]> {
@@ -38,6 +39,17 @@ export async function inviteMember(
     { workspaceSlug: slug }
   );
   return result!;
+}
+
+// Add-member picker source: active workspace memberships with display_name.
+// GET /api/v1/workspaces/members → {data:{items,count}}; apiGet strips .data.
+// Gated owner/admin at the BE (same permission as invite).
+export async function listWorkspaceMembers(
+  slug: string
+): Promise<{ items: WorkspaceMember[]; count: number }> {
+  return apiGet<{ items: WorkspaceMember[]; count: number }>("/api/v1/workspaces/members", {
+    workspaceSlug: slug,
+  });
 }
 
 export async function acceptInvitation(token: string): Promise<AcceptResult> {

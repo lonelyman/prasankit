@@ -374,3 +374,189 @@ func TestIsolation_FindActiveByWorkspaceAndAccount_NonMember(t *testing.T) {
 		t.Error("isolation violated: non-member account found active membership in wsA")
 	}
 }
+
+// ── ListActiveWithDisplayName (add-member picker) ───────────────────────────────
+
+// createTestAccountNamed inserts a user_account with a known display_name (used by the
+// display_name JOIN tests). Mirrors createTestAccount but parameterizes the display name.
+func createTestAccountNamed(t *testing.T, db *gorm.DB, displayName string) uuid.UUID {
+	t.Helper()
+	accountRepo := authdbrepo.NewAccountRepo(db)
+
+	email := fmt.Sprintf("wsmember+%d@example.com", time.Now().UnixNano())
+	id, _ := ids.New()
+	iid, _ := ids.New()
+	now := time.Now().UTC()
+	account := auth.Account{
+		ID:                id,
+		PrimaryEmail:      email,
+		DisplayName:       displayName,
+		AccountStatusCode: auth.AccountStatusPendingVerification,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	identity := auth.Identity{
+		ID:               iid,
+		UserAccountID:    id,
+		IdentityTypeCode: auth.IdentityTypeEmailPassword,
+		Email:            email,
+		PasswordHash:     "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := accountRepo.CreateWithIdentity(context.Background(), account, identity); err != nil {
+		t.Fatalf("createTestAccountNamed: %v", err)
+	}
+	return id
+}
+
+// insertMembership inserts a workspace_membership with the given org role + status.
+func insertMembership(t *testing.T, db *gorm.DB, wsID, accountID uuid.UUID, orgRole, statusCode string) uuid.UUID {
+	t.Helper()
+	mID, _ := ids.New()
+	now := time.Now().UTC()
+	err := db.Exec(
+		`INSERT INTO workspace_memberships
+		 (id, workspace_id, user_account_id, org_role_code, membership_status_code, joined_at, created_at, created_by, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		mID, wsID, accountID, orgRole, statusCode, now, now, accountID, now,
+	).Error
+	if err != nil {
+		t.Fatalf("insertMembership: %v", err)
+	}
+	return mID
+}
+
+// TestMembershipRepo_ListActiveWithDisplayName_ReturnsDisplayName verifies the JOIN to
+// user_accounts surfaces display_name + org_role_code for active memberships.
+func TestMembershipRepo_ListActiveWithDisplayName_ReturnsDisplayName(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	auditRepo := auditdbrepo.NewAuditRepo(db)
+	wsRepo := workspacedbrepo.NewWorkspaceRepo(db, auditRepo)
+	memberRepo := workspacedbrepo.NewMembershipRepo(db)
+
+	ownerID := createTestAccountNamed(t, db, "Owner Person")
+	slug := fmt.Sprintf("picker-ws-%d", time.Now().UnixNano())
+	ws := buildTestWorkspace(ownerID, slug)
+	ownerMembership := buildTestMembership(ws.ID, ownerID)
+	entry := buildTestAuditEntry(ws.ID, ownerID, ws.ID)
+	if err := wsRepo.CreateWorkspaceWithOwner(context.Background(), ws, ownerMembership, entry); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	// Add a second active member (admin role).
+	adminID := createTestAccountNamed(t, db, "Admin Person")
+	adminMembershipID := insertMembership(t, db, ws.ID, adminID, workspace.OrgRoleAdmin, workspace.MembershipStatusActive)
+
+	rows, err := memberRepo.ListActiveWithDisplayName(context.Background(), ws.ID)
+	if err != nil {
+		t.Fatalf("ListActiveWithDisplayName: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+
+	byID := map[uuid.UUID]workspace.MembershipWithDisplayName{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	owner, ok := byID[ownerMembership.ID]
+	if !ok {
+		t.Fatalf("owner membership %v missing from rows", ownerMembership.ID)
+	}
+	if owner.DisplayName != "Owner Person" {
+		t.Errorf("owner display_name = %q, want %q", owner.DisplayName, "Owner Person")
+	}
+	if owner.OrgRoleCode != workspace.OrgRoleOwner {
+		t.Errorf("owner org_role_code = %q, want owner", owner.OrgRoleCode)
+	}
+	admin, ok := byID[adminMembershipID]
+	if !ok {
+		t.Fatalf("admin membership %v missing from rows", adminMembershipID)
+	}
+	if admin.DisplayName != "Admin Person" {
+		t.Errorf("admin display_name = %q, want %q", admin.DisplayName, "Admin Person")
+	}
+	if admin.OrgRoleCode != workspace.OrgRoleAdmin {
+		t.Errorf("admin org_role_code = %q, want admin", admin.OrgRoleCode)
+	}
+}
+
+// TestMembershipRepo_ListActiveWithDisplayName_WorkspaceIsolation verifies wsB's list
+// does NOT include wsA's members (isolation invariant 02 §4.3).
+func TestMembershipRepo_ListActiveWithDisplayName_WorkspaceIsolation(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	auditRepo := auditdbrepo.NewAuditRepo(db)
+	wsRepo := workspacedbrepo.NewWorkspaceRepo(db, auditRepo)
+	memberRepo := workspacedbrepo.NewMembershipRepo(db)
+
+	ownerA := createTestAccountNamed(t, db, "Owner A")
+	ownerB := createTestAccountNamed(t, db, "Owner B")
+
+	wsA := buildTestWorkspace(ownerA, fmt.Sprintf("picker-iso-a-%d", time.Now().UnixNano()))
+	mA := buildTestMembership(wsA.ID, ownerA)
+	if err := wsRepo.CreateWorkspaceWithOwner(context.Background(), wsA, mA, buildTestAuditEntry(wsA.ID, ownerA, wsA.ID)); err != nil {
+		t.Fatalf("create wsA: %v", err)
+	}
+	wsB := buildTestWorkspace(ownerB, fmt.Sprintf("picker-iso-b-%d", time.Now().UnixNano()))
+	mB := buildTestMembership(wsB.ID, ownerB)
+	if err := wsRepo.CreateWorkspaceWithOwner(context.Background(), wsB, mB, buildTestAuditEntry(wsB.ID, ownerB, wsB.ID)); err != nil {
+		t.Fatalf("create wsB: %v", err)
+	}
+
+	rowsB, err := memberRepo.ListActiveWithDisplayName(context.Background(), wsB.ID)
+	if err != nil {
+		t.Fatalf("ListActiveWithDisplayName(wsB): %v", err)
+	}
+	if len(rowsB) != 1 {
+		t.Fatalf("wsB list got %d rows, want 1 (own owner only)", len(rowsB))
+	}
+	if rowsB[0].ID == mA.ID {
+		t.Error("isolation violated: wsA's owner membership appeared in wsB's list")
+	}
+	if rowsB[0].DisplayName != "Owner B" {
+		t.Errorf("wsB row display_name = %q, want %q", rowsB[0].DisplayName, "Owner B")
+	}
+}
+
+// TestMembershipRepo_ListActiveWithDisplayName_ExcludesNonActive verifies suspended and
+// removed memberships are excluded (active-only filter).
+func TestMembershipRepo_ListActiveWithDisplayName_ExcludesNonActive(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	auditRepo := auditdbrepo.NewAuditRepo(db)
+	wsRepo := workspacedbrepo.NewWorkspaceRepo(db, auditRepo)
+	memberRepo := workspacedbrepo.NewMembershipRepo(db)
+
+	ownerID := createTestAccountNamed(t, db, "Active Owner")
+	ws := buildTestWorkspace(ownerID, fmt.Sprintf("picker-active-%d", time.Now().UnixNano()))
+	ownerMembership := buildTestMembership(ws.ID, ownerID)
+	if err := wsRepo.CreateWorkspaceWithOwner(context.Background(), ws, ownerMembership, buildTestAuditEntry(ws.ID, ownerID, ws.ID)); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	// Suspended + removed members must NOT appear.
+	suspendedID := createTestAccountNamed(t, db, "Suspended Person")
+	insertMembership(t, db, ws.ID, suspendedID, workspace.OrgRoleUser, workspace.MembershipStatusSuspended)
+	removedID := createTestAccountNamed(t, db, "Removed Person")
+	insertMembership(t, db, ws.ID, removedID, workspace.OrgRoleUser, workspace.MembershipStatusRemoved)
+
+	rows, err := memberRepo.ListActiveWithDisplayName(context.Background(), ws.ID)
+	if err != nil {
+		t.Fatalf("ListActiveWithDisplayName: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 (only the active owner)", len(rows))
+	}
+	if rows[0].ID != ownerMembership.ID {
+		t.Errorf("row id = %v, want owner %v", rows[0].ID, ownerMembership.ID)
+	}
+}

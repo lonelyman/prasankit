@@ -14,7 +14,7 @@ import {
   validateProjectDate,
   validateDateRange,
 } from "@/lib/validation";
-import { getCurrentWorkspace } from "@/lib/workspace-api";
+import { getCurrentWorkspace, inviteMember, listWorkspaceMembers } from "@/lib/workspace-api";
 import {
   getProject,
   updateProject,
@@ -22,10 +22,26 @@ import {
   changeProjectStatus,
 } from "@/lib/project-api";
 import type { UpdateProjectInput } from "@/lib/project-api";
+import {
+  listMembers,
+  addMember,
+  changeMemberRole,
+  removeMember,
+} from "@/lib/member-api";
+import { validateEmail } from "@/lib/validation";
 import { ApiError } from "@/lib/api";
-import type { Project } from "@/lib/types";
+import type { Project, ProjectMember, WorkspaceMember } from "@/lib/types";
 import { statusOptions, typeOptions, statusColor } from "@/lib/project-masters";
-import { Input, Button, Alert, Select, ConfirmDialog, Badge, Breadcrumb } from "@/components/ui";
+import {
+  projectRoleOptions,
+  projectRoleLabel,
+  projectRoleColor,
+} from "@/lib/project-roles";
+import { Input, Button, Alert, Select, Modal, ConfirmDialog, Badge, Breadcrumb } from "@/components/ui";
+
+// Org roles invitable to a workspace (mirror of the recovered home invite form).
+const INVITE_ROLES = ["admin", "executive", "user"] as const;
+type InviteRole = (typeof INVITE_ROLES)[number];
 
 type FieldKey = "name" | "slug" | "requestingUnit" | "description" | "startDate" | "endDate";
 const BE_FIELD_MAP: Record<string, FieldKey> = {
@@ -80,6 +96,35 @@ export default function ProjectDetailPage() {
   // Delete state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Team / members state
+  const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(true);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const [roleSavingId, setRoleSavingId] = useState<string | null>(null);
+  const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
+  const [pendingMember, setPendingMember] = useState<ProjectMember | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  // Add-member modal state
+  const [addOpen, setAddOpen] = useState(false);
+  const [wsMembers, setWsMembers] = useState<WorkspaceMember[]>([]);
+  const [wsMembersLoading, setWsMembersLoading] = useState(false);
+  const [addMembershipId, setAddMembershipId] = useState("");
+  const [addRole, setAddRole] = useState("member");
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addMembershipError, setAddMembershipError] = useState<string | null>(null);
+  const [addRoleError, setAddRoleError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  // Invite modal state (workspace-level invite, reinstated in the team area)
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<InviteRole>("user");
+  const [inviteEmailError, setInviteEmailError] = useState<string | null>(null);
+  const [inviteFormError, setInviteFormError] = useState<string | null>(null);
+  const [inviteSuccess, setInviteSuccess] = useState(false);
+  const [inviting, setInviting] = useState(false);
 
   // Redirect anonymous users
   useEffect(() => {
@@ -137,6 +182,258 @@ export default function ProjectDetailPage() {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, activeSlug, id, lang]);
+
+  // Load members once the project itself has loaded. Shared by the post-mutate
+  // refetch (add/change/remove) so the list shows the loading row, never a stale
+  // list. tenant.* → kick to /workspaces (mirrors the project-load branch); a
+  // 403 here would be tenant.permission_denied and is surfaced inline, not here.
+  async function loadMembers() {
+    if (!activeSlug || !id) return;
+    setMembersLoading(true);
+    setMembersError(null);
+    try {
+      const result = await listMembers(activeSlug, id);
+      setMembers(result.items);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.code === "project.not_found") {
+          setNotFound(true);
+        } else if (
+          err.code === "tenant.workspace_not_found" ||
+          err.code === "tenant.forbidden"
+        ) {
+          clearActiveSlug();
+          router.push("/workspaces");
+        } else {
+          setMembersError(errorMessage(err.code, lang));
+        }
+      } else {
+        setMembersError(errorMessage("UNKNOWN_ERROR", lang));
+      }
+    } finally {
+      setMembersLoading(false);
+    }
+  }
+
+  // Fetch members after the project loads (project drives notFound/loadError).
+  // loadMembers is reused by post-mutate refetches; its synchronous setLoading is
+  // the intended "show the loading row" behavior, so the cascading-render lint is
+  // suppressed here exactly as exhaustive-deps is for the sibling load effect.
+  useEffect(() => {
+    if (status !== "authenticated" || !activeSlug || !id || !project) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadMembers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, activeSlug, id, project, lang]);
+
+  const ownerMemberId = project?.owner_project_member_id ?? null;
+  const ownerName = ownerMemberId
+    ? members.find((m) => m.id === ownerMemberId)?.display_name ?? null
+    : null;
+
+  function openAddModal() {
+    setAddMembershipId("");
+    setAddRole("member");
+    setAddError(null);
+    setAddMembershipError(null);
+    setAddRoleError(null);
+    setAddOpen(true);
+    void loadWorkspaceMembers();
+  }
+
+  async function loadWorkspaceMembers() {
+    if (!activeSlug) return;
+    setWsMembersLoading(true);
+    try {
+      const result = await listWorkspaceMembers(activeSlug);
+      setWsMembers(result.items);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setAddError(errorMessage(err.code, lang));
+      } else {
+        setAddError(errorMessage("UNKNOWN_ERROR", lang));
+      }
+    } finally {
+      setWsMembersLoading(false);
+    }
+  }
+
+  // Eligible = active ws members not already on the project. The project list is
+  // active-only (BE filters removed_at IS NULL), so no removed-at clause needed;
+  // a re-added person reappears once they leave the active list.
+  const eligibleMembers = wsMembers.filter(
+    (ws) => !members.some((m) => m.workspace_membership_id === ws.workspace_membership_id)
+  );
+
+  async function handleAddMember(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeSlug || !project) return;
+    setAddError(null);
+    setAddMembershipError(null);
+    setAddRoleError(null);
+
+    if (!addMembershipId) {
+      setAddMembershipError(t("label.select_member", lang));
+      return;
+    }
+
+    setAdding(true);
+    try {
+      await addMember(activeSlug, project.id, {
+        workspace_membership_id: addMembershipId,
+        project_role_code: addRole,
+      });
+      setAddOpen(false);
+      await loadMembers();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.code === "project_member.membership_not_eligible") {
+          setAddMembershipError(errorMessage(err.code, lang));
+        } else if (err.code === "project_member.invalid_role_code") {
+          setAddRoleError(errorMessage(err.code, lang));
+        } else if (err.code === "project_member.already_member") {
+          setAddError(errorMessage(err.code, lang));
+        } else if (err.code === "project.not_found") {
+          setAddOpen(false);
+          setNotFound(true);
+        } else if (
+          err.code === "tenant.workspace_not_found" ||
+          err.code === "tenant.forbidden"
+        ) {
+          clearActiveSlug();
+          router.push("/workspaces");
+        } else {
+          setAddError(errorMessage(err.code ?? "UNKNOWN_ERROR", lang));
+        }
+      } else {
+        setAddError(errorMessage("UNKNOWN_ERROR", lang));
+      }
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function onRoleSelect(member: ProjectMember, newCode: string) {
+    if (!activeSlug || !project) return;
+    if (newCode === member.project_role_code) return; // no-op: don't call
+    setActionError(null);
+    setRoleSavingId(member.id);
+    try {
+      await changeMemberRole(activeSlug, project.id, member.id, newCode);
+      await loadMembers();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.code === "project_member.owner_immutable") {
+          // Stale-client reconcile: surface + refetch to re-sync the owner row.
+          setActionError(errorMessage(err.code, lang));
+          await loadMembers();
+        } else if (
+          err.code === "project_member.not_found" ||
+          err.code === "project.not_found"
+        ) {
+          await loadMembers();
+        } else if (
+          err.code === "tenant.workspace_not_found" ||
+          err.code === "tenant.forbidden"
+        ) {
+          clearActiveSlug();
+          router.push("/workspaces");
+        } else {
+          // incl. project_member.invalid_role_code, tenant.permission_denied (inline, no redirect)
+          setActionError(errorMessage(err.code, lang));
+        }
+      } else {
+        setActionError(errorMessage("UNKNOWN_ERROR", lang));
+      }
+    } finally {
+      setRoleSavingId(null);
+    }
+  }
+
+  function openRemoveDialog(member: ProjectMember) {
+    setPendingMember(member);
+    setRemoveDialogOpen(true);
+  }
+
+  async function confirmRemoveMember() {
+    if (!activeSlug || !project || !pendingMember) return;
+    setActionError(null);
+    setRemoving(true);
+    try {
+      await removeMember(activeSlug, project.id, pendingMember.id);
+      setRemoveDialogOpen(false);
+      setPendingMember(null);
+      await loadMembers();
+    } catch (err) {
+      setRemoveDialogOpen(false);
+      setPendingMember(null);
+      if (err instanceof ApiError) {
+        if (err.code === "project_member.owner_immutable") {
+          setActionError(errorMessage(err.code, lang));
+          await loadMembers();
+        } else if (
+          err.code === "project_member.not_found" ||
+          err.code === "project.not_found"
+        ) {
+          await loadMembers();
+        } else if (
+          err.code === "tenant.workspace_not_found" ||
+          err.code === "tenant.forbidden"
+        ) {
+          clearActiveSlug();
+          router.push("/workspaces");
+        } else {
+          setActionError(errorMessage(err.code, lang));
+        }
+      } else {
+        setActionError(errorMessage("UNKNOWN_ERROR", lang));
+      }
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  function openInviteModal() {
+    setInviteEmail("");
+    setInviteRole("user");
+    setInviteEmailError(null);
+    setInviteFormError(null);
+    setInviteSuccess(false);
+    setInviteOpen(true);
+  }
+
+  async function handleInvite(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeSlug) return;
+    setInviteEmailError(null);
+    setInviteFormError(null);
+    setInviteSuccess(false);
+
+    const emailErr = validateEmail(inviteEmail);
+    if (emailErr) {
+      setInviteEmailError(t(emailErr, lang));
+      return;
+    }
+
+    setInviting(true);
+    try {
+      await inviteMember(activeSlug, {
+        email: inviteEmail.trim(),
+        org_role_code: inviteRole,
+      });
+      setInviteSuccess(true);
+      setInviteEmail("");
+      setInviteRole("user");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setInviteFormError(errorMessage(err.code, lang));
+      } else {
+        setInviteFormError(errorMessage("UNKNOWN_ERROR", lang));
+      }
+    } finally {
+      setInviting(false);
+    }
+  }
 
   function startEdit() {
     if (!project) return;
@@ -404,12 +701,19 @@ export default function ProjectDetailPage() {
             <Field label={t("label.description", lang)} value={project.description ?? "—"} />
             <Field label={t("label.start_date", lang)} value={project.start_date ?? "—"} />
             <Field label={t("label.end_date", lang)} value={project.end_date ?? "—"} />
-            <div className="flex flex-col gap-0.5">
-              <dt className="text-xs font-medium text-zinc-500">{t("label.owner", lang)}</dt>
-              <dd className="text-xs font-mono text-zinc-500">
-                {project.owner_project_member_id ?? "—"}
-              </dd>
-            </div>
+            {/* Owner resolved to display_name from the members list (loading-guarded
+                so it never flashes the raw UUID). The Team section below surfaces
+                the full owner row; this keeps the Owner field on the project card. */}
+            <Field
+              label={t("label.owner", lang)}
+              value={
+                ownerMemberId
+                  ? membersLoading
+                    ? t("msg.loading", lang)
+                    : ownerName ?? "—"
+                  : "—"
+              }
+            />
             <Field label={t("label.created_at", lang)} value={new Date(project.created_at).toLocaleString()} />
             <Field label={t("label.updated_at", lang)} value={new Date(project.updated_at).toLocaleString()} />
           </dl>
@@ -522,6 +826,206 @@ export default function ProjectDetailPage() {
           </form>
         </div>
       )}
+
+      {/* Team section — visible to all org roles; write controls gated on canMutate. */}
+      <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold text-zinc-800">{t("team.heading", lang)}</h2>
+          {canMutate && (
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" onClick={openInviteModal}>
+                {t("team.invite_member", lang)}
+              </Button>
+              <Button variant="secondary" onClick={openAddModal}>
+                {t("team.add_member", lang)}
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {membersError && <Alert variant="error">{membersError}</Alert>}
+
+        {membersLoading ? (
+          <p className="text-sm text-zinc-500">{t("msg.loading", lang)}</p>
+        ) : members.length === 0 ? (
+          // count===0 is the legacy / owner-less fallback (not the normal path).
+          <p className="text-sm text-zinc-500">{t("team.empty", lang)}</p>
+        ) : (
+          <ul className="flex flex-col divide-y divide-zinc-100">
+            {members.map((m) => {
+              const isOwner = m.id === ownerMemberId;
+              const rowSaving = roleSavingId === m.id;
+              return (
+                <li
+                  key={m.id}
+                  className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm text-zinc-800 truncate">{m.display_name ?? "—"}</span>
+                    <Badge color={projectRoleColor(m.project_role_code)}>
+                      {projectRoleLabel(m.project_role_code, lang)}
+                    </Badge>
+                    {isOwner && (
+                      <Badge color={projectRoleColor("project_owner")}>
+                        {t("team.owner_badge", lang)}
+                      </Badge>
+                    )}
+                  </div>
+
+                  {canMutate &&
+                    (isOwner ? (
+                      <span className="text-xs text-zinc-400 max-w-xs text-right">
+                        {t("team.owner_locked_hint", lang)}
+                      </span>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Select
+                          id={`role-${m.id}`}
+                          options={projectRoleOptions(lang)}
+                          value={m.project_role_code}
+                          onChange={(e) => onRoleSelect(m, e.target.value)}
+                          disabled={rowSaving}
+                        />
+                        <Button
+                          variant="danger"
+                          onClick={() => openRemoveDialog(m)}
+                          disabled={rowSaving}
+                        >
+                          {t("btn.remove", lang)}
+                        </Button>
+                      </div>
+                    ))}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {/* Owner-only sparse state: a viewer/executive sees "no other members yet". */}
+        {!membersLoading &&
+          !membersError &&
+          !canMutate &&
+          members.length === 1 &&
+          members[0].id === ownerMemberId && (
+            <p className="text-sm text-zinc-500">{t("team.empty", lang)}</p>
+          )}
+      </div>
+
+      {/* Add-member modal */}
+      <Modal open={addOpen} title={t("dialog.add_member.title", lang)} onClose={() => setAddOpen(false)}>
+        {addError && <Alert variant="error">{addError}</Alert>}
+        {wsMembersLoading ? (
+          <p className="text-sm text-zinc-500">{t("msg.loading", lang)}</p>
+        ) : eligibleMembers.length === 0 ? (
+          <div className="flex flex-col gap-3 text-sm text-zinc-600">
+            <p>{t("team.no_eligible_members", lang)}</p>
+            <Button
+              variant="ghost"
+              className="self-start"
+              onClick={() => {
+                setAddOpen(false);
+                openInviteModal();
+              }}
+            >
+              {t("team.invite_member", lang)}
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={handleAddMember} className="flex flex-col gap-4" noValidate>
+            <Select
+              id="add-member-select"
+              label={t("label.select_member", lang)}
+              value={addMembershipId}
+              options={[
+                { value: "", label: t("label.select_member", lang) },
+                ...eligibleMembers.map((ws) => ({
+                  value: ws.workspace_membership_id,
+                  label: ws.display_name,
+                })),
+              ]}
+              onChange={(e) => setAddMembershipId(e.target.value)}
+              error={addMembershipError ?? undefined}
+              disabled={adding}
+            />
+            <Select
+              id="add-member-role"
+              label={t("label.member_role", lang)}
+              value={addRole}
+              options={projectRoleOptions(lang)}
+              onChange={(e) => setAddRole(e.target.value)}
+              error={addRoleError ?? undefined}
+              disabled={adding}
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setAddOpen(false)}
+                disabled={adding}
+              >
+                {t("btn.cancel", lang)}
+              </Button>
+              <Button type="submit" loading={adding}>
+                {t("btn.add", lang)}
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* Invite modal — workspace-level invite (owner/admin), reinstated in team area. */}
+      <Modal open={inviteOpen} title={t("team.invite_member", lang)} onClose={() => setInviteOpen(false)}>
+        {inviteFormError && <Alert variant="error">{inviteFormError}</Alert>}
+        {inviteSuccess && <Alert variant="success">{t("msg.invitation_sent", lang)}</Alert>}
+        <form onSubmit={handleInvite} className="flex flex-col gap-4" noValidate>
+          <Input
+            id="invite-email"
+            type="email"
+            label={t("label.invite_email", lang)}
+            value={inviteEmail}
+            onChange={(e) => setInviteEmail(e.target.value)}
+            error={inviteEmailError ?? undefined}
+            disabled={inviting}
+            autoComplete="email"
+          />
+          <Select
+            id="invite-role"
+            label={t("label.role", lang)}
+            value={inviteRole}
+            options={INVITE_ROLES.map((r) => ({ value: r, label: t(`role.${r}`, lang) }))}
+            onChange={(e) => setInviteRole(e.target.value as InviteRole)}
+            disabled={inviting}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setInviteOpen(false)}
+              disabled={inviting}
+            >
+              {t("btn.cancel", lang)}
+            </Button>
+            <Button type="submit" loading={inviting}>
+              {t("btn.send_invite", lang)}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        open={removeDialogOpen}
+        title={t("dialog.remove_member.title", lang)}
+        body={t("dialog.remove_member.body", lang)}
+        confirmLabel={t("btn.remove", lang)}
+        cancelLabel={t("btn.cancel", lang)}
+        confirmVariant="danger"
+        loading={removing}
+        onConfirm={confirmRemoveMember}
+        onCancel={() => {
+          setRemoveDialogOpen(false);
+          setPendingMember(null);
+        }}
+      />
 
       <ConfirmDialog
         open={statusDialogOpen}

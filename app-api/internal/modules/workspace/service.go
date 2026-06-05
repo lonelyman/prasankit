@@ -147,6 +147,13 @@ func (s *Service) GetCurrentWorkspace(ctx context.Context, tc TenantContext) (*W
 	return nil, ErrWorkspaceNotFound
 }
 
+// ListWorkspaceMembers returns the active memberships of the workspace identified by the
+// TenantContext, with each member's display_name. workspace_id comes from the TenantContext
+// (never from client input) — isolation invariant.
+func (s *Service) ListWorkspaceMembers(ctx context.Context, tc TenantContext) ([]MembershipWithDisplayName, error) {
+	return s.memberships.ListActiveWithDisplayName(ctx, tc.WorkspaceID)
+}
+
 // InviteMemberInput carries validated parameters for member invitation.
 type InviteMemberInput struct {
 	TenantCtx   TenantContext

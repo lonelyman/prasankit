@@ -32,6 +32,11 @@ type MembershipRepository interface {
 	// ListByWorkspace returns all memberships for the given workspace_id.
 	// Used for admin listing and isolation tests.
 	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]Membership, error)
+
+	// ListActiveWithDisplayName returns the ACTIVE memberships of the given workspace,
+	// JOINed to user_accounts for the display_name. Scoped by workspace_id (isolation).
+	// Used by the add-member picker.
+	ListActiveWithDisplayName(ctx context.Context, workspaceID uuid.UUID) ([]MembershipWithDisplayName, error)
 }
 
 // InvitationRepository defines storage operations on workspace_invitations.

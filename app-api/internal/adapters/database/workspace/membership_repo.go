@@ -108,6 +108,37 @@ func (r *MembershipRepo) ListActiveWorkspacesByAccount(
 	return result, nil
 }
 
+// ListActiveWithDisplayName returns the ACTIVE memberships of the given workspace,
+// JOINed to user_accounts for display_name. The wm.workspace_id = ? predicate is the
+// isolation invariant (a ws B caller never sees ws A members). The active-only filter
+// (membership_status_code = 'active') excludes suspended/removed memberships.
+func (r *MembershipRepo) ListActiveWithDisplayName(
+	ctx context.Context,
+	workspaceID uuid.UUID,
+) ([]workspace.MembershipWithDisplayName, error) {
+	var rows []membershipWithDisplayNameRow
+	err := r.db.WithContext(ctx).
+		Table("workspace_memberships AS wm").
+		Select("wm.id, ua.display_name AS display_name, wm.org_role_code").
+		Joins("INNER JOIN user_accounts ua ON ua.id = wm.user_account_id").
+		Where("wm.workspace_id = ? AND wm.membership_status_code = ?",
+			workspaceID, workspace.MembershipStatusActive).
+		Order("wm.created_at ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("list active memberships with display_name: %w", err)
+	}
+	out := make([]workspace.MembershipWithDisplayName, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, workspace.MembershipWithDisplayName{
+			ID:          row.ID,
+			DisplayName: row.DisplayName,
+			OrgRoleCode: row.OrgRoleCode,
+		})
+	}
+	return out, nil
+}
+
 // ListByWorkspace returns all memberships for the given workspace_id.
 // Isolation invariant: workspace_id is always in WHERE.
 func (r *MembershipRepo) ListByWorkspace(

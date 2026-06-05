@@ -489,6 +489,146 @@ func TestInviteFlow_UnauthenticatedInvite(t *testing.T) {
 	}
 }
 
+// ── /workspaces/members (add-member picker) tests ───────────────────────────────
+
+// buildMembersTestApp wires a fiber app exposing GET /workspaces/members with the same
+// gating as the invite route (requireSession + requireTenant + requireInvite).
+func buildMembersTestApp(t *testing.T) (*fiber.App, func()) {
+	t.Helper()
+	db := openTestDB(t)
+	rc := openTestRedis(t)
+
+	truncateDataTables(t, db)
+	cleanup := func() {
+		truncateDataTables(t, db)
+		rc.Close()
+	}
+
+	accountRepo := authdbrepo.NewAccountRepo(db)
+	identityRepo := authdbrepo.NewIdentityRepo(db)
+	eventRepo := authdbrepo.NewSecurityEventRepo(db)
+	verifyRepo := authdbrepo.NewVerificationTokenRepo(db)
+	store := sessstore.NewStore(rc)
+	authSvc := auth.NewService(accountRepo, identityRepo, eventRepo, store, verifyRepo, noopEmailSender{}, "http://localhost:13000/verify-email", authdbrepo.NewPasswordResetTokenRepo(db), "http://localhost:13000/reset-password")
+	authH := authhandler.NewHandler(authSvc, "development")
+
+	auditRepo := auditdbrepo.NewAuditRepo(db)
+	wsRepo := workspacedbrepo.NewWorkspaceRepo(db, auditRepo)
+	memberRepo := workspacedbrepo.NewMembershipRepo(db)
+	inviteRepo := workspacedbrepo.NewInvitationRepo(db, auditRepo)
+	emailSender := smtpadapter.New(smtpadapter.Config{
+		Host:        envOr("MAIL_SMTP_HOST", "localhost"),
+		Port:        envOr("MAIL_SMTP_EXTERNAL_PORT", "11025"),
+		FromAddress: "test@prasankit.local",
+	})
+	workspaceSvc := workspace.NewService(wsRepo, memberRepo, inviteRepo, emailSender, "http://localhost:13000/invitations/accept")
+	workspaceH := workspacehandler.NewHandler(workspaceSvc)
+
+	requireSession := middlewares.RequireSession(authSvc)
+	requireTenant := middlewares.RequireTenantContext(wsRepo, memberRepo)
+	requireInvite := middlewares.RequireWorkspacePermission(workspace.PermissionInviteMember)
+
+	app := fiber.New(fiber.Config{ErrorHandler: middlewares.ErrorHandler})
+	app.Post("/api/v1/auth/signup", authH.HandleSignup)
+	app.Post("/api/v1/auth/login", authH.HandleLogin)
+	app.Post("/api/v1/workspaces", requireSession, workspaceH.HandleCreate)
+	app.Post("/api/v1/workspaces/invitations", requireSession, requireTenant, requireInvite, workspaceH.HandleInvite)
+	app.Post("/api/v1/invitations/accept", requireSession, workspaceH.HandleAcceptInvite)
+	app.Get("/api/v1/workspaces/members", requireSession, requireTenant, requireInvite, workspaceH.HandleListMembers)
+
+	return app, cleanup
+}
+
+// TestListMembers_OwnerSees200 verifies an owner gets 200 and sees themselves with display_name.
+func TestListMembers_OwnerSees200(t *testing.T) {
+	app, cleanup := buildMembersTestApp(t)
+	t.Cleanup(cleanup)
+
+	ownerEmail := uniqueEmail("members-owner")
+	ownerCookie := signupAndLogin(t, app, ownerEmail)
+	slug := uniqueSlug("members-ws")
+
+	resp := doRequest(t, app, "POST", "/api/v1/workspaces", map[string]any{
+		"name":          "Members WS",
+		"slug":          slug,
+		"contact_email": ownerEmail,
+	}, []*http.Cookie{ownerCookie}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create workspace: status=%d body=%v", resp.StatusCode, resp.Body)
+	}
+
+	resp = doRequest(t, app, "GET", "/api/v1/workspaces/members", nil, []*http.Cookie{ownerCookie},
+		map[string]string{"X-Workspace-Slug": slug})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list members: status=%d, want 200; body=%v", resp.StatusCode, resp.Body)
+	}
+	data := resp.Body["data"].(map[string]any)
+	if int(data["count"].(float64)) != 1 {
+		t.Errorf("count = %v, want 1", data["count"])
+	}
+	items := data["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	item := items[0].(map[string]any)
+	if item["org_role_code"] != "owner" {
+		t.Errorf("org_role_code = %v, want owner", item["org_role_code"])
+	}
+	if item["display_name"] != "Test User" {
+		t.Errorf("display_name = %v, want %q", item["display_name"], "Test User")
+	}
+	if _, ok := item["workspace_membership_id"].(string); !ok || item["workspace_membership_id"] == "" {
+		t.Errorf("workspace_membership_id missing/empty: %v", item["workspace_membership_id"])
+	}
+}
+
+// TestListMembers_NonAdminGets403 verifies a user-role member is denied (gating mirrors invite).
+func TestListMembers_NonAdminGets403(t *testing.T) {
+	uiPort := envOr("MAILPIT_UI_EXTERNAL_PORT", "18025")
+	clearMailpitInHandler(uiPort)
+
+	app, cleanup := buildMembersTestApp(t)
+	t.Cleanup(func() {
+		cleanup()
+		clearMailpitInHandler(uiPort)
+	})
+
+	ownerEmail := uniqueEmail("members-nonadmin-owner")
+	ownerCookie := signupAndLogin(t, app, ownerEmail)
+	slug := uniqueSlug("members-nonadmin-ws")
+
+	doRequest(t, app, "POST", "/api/v1/workspaces", map[string]any{
+		"name":          "Members NonAdmin WS",
+		"slug":          slug,
+		"contact_email": ownerEmail,
+	}, []*http.Cookie{ownerCookie}, nil)
+
+	// Invite + accept a user-role member.
+	userEmail := uniqueEmail("members-user")
+	doRequest(t, app, "POST", "/api/v1/workspaces/invitations", map[string]any{
+		"email":         userEmail,
+		"org_role_code": "user",
+	}, []*http.Cookie{ownerCookie}, map[string]string{"X-Workspace-Slug": slug})
+
+	time.Sleep(300 * time.Millisecond)
+	rawToken := extractTokenFromMailpit(t, uiPort, userEmail)
+	userCookie := signupAndLogin(t, app, userEmail)
+	doRequest(t, app, "POST", "/api/v1/invitations/accept", map[string]any{
+		"token": rawToken,
+	}, []*http.Cookie{userCookie}, nil)
+
+	// User-role member tries to list members → 403.
+	resp := doRequest(t, app, "GET", "/api/v1/workspaces/members", nil, []*http.Cookie{userCookie},
+		map[string]string{"X-Workspace-Slug": slug})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("user list members: status=%d, want 403; body=%v", resp.StatusCode, resp.Body)
+	}
+	errBody := resp.Body["error"].(map[string]any)
+	if errBody["code"] != "tenant.permission_denied" {
+		t.Errorf("code=%v, want tenant.permission_denied", errBody["code"])
+	}
+}
+
 // ── helpers unique to this file ───────────────────────────────────────────────
 
 // invUniqueEmail generates a unique email with a per-test nano suffix.

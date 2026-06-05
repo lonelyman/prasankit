@@ -54,6 +54,26 @@ export interface Project {
   updated_at: string; // RFC3339
 }
 
+export interface ProjectMember {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  workspace_membership_id: string;
+  project_role_code: string;
+  joined_at: string; // RFC3339
+  removed_at: string | null; // key ALWAYS present (null when active); list returns active-only
+  display_name?: string; // PRESENT on list items; ABSENT on add/change responses (omitempty)
+}
+
+// Add-member picker source. GET /api/v1/workspaces/members returns active
+// memberships only with display_name; BE omits membership_status_code (already
+// active-filtered), so no status field here — matches the live contract.
+export interface WorkspaceMember {
+  workspace_membership_id: string;
+  display_name: string;
+  org_role_code: string;
+}
+
 export interface ProjectPagination {
   page: number;
   limit: number;

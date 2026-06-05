@@ -9,7 +9,7 @@ import { t } from "@/lib/i18n";
 import { Dropdown } from "@/components/ui";
 
 export function SiteHeader() {
-  const { lang, toggleLang } = useLang();
+  const { lang, setLang } = useLang();
   const { activeSlug, activeWorkspace, workspaces, setActiveSlug, clearActiveSlug } =
     useWorkspace();
   const { status, logout } = useAuth();
@@ -119,13 +119,32 @@ export function SiteHeader() {
             {t("nav.projects", lang)}
           </Link>
         )}
-        <button
-          onClick={toggleLang}
-          className="text-xs font-medium text-zinc-500 hover:text-zinc-800 transition px-2 py-1 rounded border border-zinc-200 hover:border-zinc-400"
-          aria-label="Toggle language"
+        {/* Segmented language toggle: both options visible, the active one
+            highlighted — so the current language is unambiguous (vs a single
+            action-label that showed the target language). */}
+        <div
+          role="group"
+          aria-label="Language"
+          className="inline-flex items-center rounded-md border border-zinc-200 p-0.5 text-xs font-medium"
         >
-          {t("lang.toggle", lang)}
-        </button>
+          {(["th", "en"] as const).map((code) => {
+            const active = lang === code;
+            return (
+              <button
+                key={code}
+                onClick={() => setLang(code)}
+                aria-pressed={active}
+                className={`px-2 py-0.5 rounded transition ${
+                  active
+                    ? "bg-zinc-900 text-white"
+                    : "text-zinc-500 hover:text-zinc-800"
+                }`}
+              >
+                {code === "th" ? "ไทย" : "EN"}
+              </button>
+            );
+          })}
+        </div>
         {status === "authenticated" && (
           <button
             onClick={handleLogout}

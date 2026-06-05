@@ -51,6 +51,17 @@ type currentWorkspaceResponse struct {
 	OrgRoleCode         string `json:"org_role_code"`
 }
 
+type memberPickerResponse struct {
+	WorkspaceMembershipID string `json:"workspace_membership_id"`
+	DisplayName           string `json:"display_name"`
+	OrgRoleCode           string `json:"org_role_code"`
+}
+
+type listMembersResponse struct {
+	Items []memberPickerResponse `json:"items"`
+	Count int                    `json:"count"`
+}
+
 func toWorkspaceResponse(ws workspace.Workspace) workspaceResponse {
 	return workspaceResponse{
 		ID:                  ws.ID.String(),
@@ -148,6 +159,31 @@ func (h *Handler) HandleGetCurrent(c fiber.Ctx) error {
 		WorkspaceStatusCode: item.Workspace.WorkspaceStatusCode,
 		OrgRoleCode:         tc.OrgRoleCode,
 	})
+}
+
+// HandleListMembers handles GET /workspaces/members
+// (requireSession + requireTenantContext + requireWorkspacePermission(invite)).
+// Returns the active workspace memberships with display_name for the add-member picker.
+func (h *Handler) HandleListMembers(c fiber.Ctx) error {
+	tc, ok := c.Locals(LocalsKeyTenant).(*workspace.TenantContext)
+	if !ok || tc == nil {
+		return presenter.RenderError(c, fiber.StatusBadRequest, "tenant.workspace_required", "Workspace context not resolved")
+	}
+
+	members, err := h.svc.ListWorkspaceMembers(c.Context(), *tc)
+	if err != nil {
+		return h.handleServiceError(c, err)
+	}
+
+	items := make([]memberPickerResponse, 0, len(members))
+	for _, m := range members {
+		items = append(items, memberPickerResponse{
+			WorkspaceMembershipID: m.ID.String(),
+			DisplayName:           m.DisplayName,
+			OrgRoleCode:           m.OrgRoleCode,
+		})
+	}
+	return presenter.RenderItem(c, listMembersResponse{Items: items, Count: len(items)})
 }
 
 // handleServiceError maps service errors to HTTP responses.

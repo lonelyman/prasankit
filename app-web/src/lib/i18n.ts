@@ -19,7 +19,6 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
   "label.display_name": { th: "ชื่อที่แสดง", en: "Display name" },
   "label.new_password": { th: "รหัสผ่านใหม่", en: "New password" },
   "label.confirm_password": { th: "ยืนยันรหัสผ่าน", en: "Confirm password" },
-  "lang.toggle": { th: "EN", en: "TH" },
 
   // --- page titles / headings ---
   "page.login.title": { th: "เข้าสู่ระบบ", en: "Log in" },
@@ -194,6 +193,39 @@ const UI_STRINGS: Record<string, Record<Lang, string>> = {
   "msg.status_changed": { th: "เปลี่ยนสถานะเรียบร้อยแล้ว", en: "Status updated." },
   "hint.internal_requesting_unit": { th: "โครงการภายในควรระบุหน่วยงานผู้ขอ", en: "Internal projects should specify a requesting unit." },
 
+  // --- team section (M2 FE-B) ---
+  "team.heading": { th: "ทีมงาน", en: "Team" },
+  "team.add_member": { th: "เพิ่มสมาชิก", en: "Add member" },
+  "team.owner_badge": { th: "เจ้าของ", en: "Owner" },
+  "team.owner_locked_hint": {
+    th: "การเปลี่ยนเจ้าของทำผ่านการโอนสิทธิ์ ซึ่งจะเปิดให้ใช้ภายหลัง",
+    en: "Owner changes happen via ownership transfer, available later.",
+  },
+  "team.empty": { th: "ยังไม่มีสมาชิกในทีม", en: "No team members yet." },
+  "team.no_eligible_members": {
+    th: "ไม่มีสมาชิกเวิร์กสเปซที่เพิ่มได้ เชิญสมาชิกใหม่ก่อน",
+    en: "No workspace members available to add — invite someone first.",
+  },
+  "team.invite_member": { th: "เชิญสมาชิก", en: "Invite a member" },
+  "label.member": { th: "สมาชิก", en: "Member" },
+  "label.member_role": { th: "บทบาทในโครงการ", en: "Project role" },
+  "label.select_member": { th: "เลือกสมาชิก", en: "Select member" },
+  "dialog.add_member.title": { th: "เพิ่มสมาชิกในโครงการ", en: "Add a project member" },
+  "dialog.remove_member.title": { th: "นำสมาชิกออก?", en: "Remove member?" },
+  "dialog.remove_member.body": {
+    th: "สมาชิกนี้จะถูกนำออกจากโครงการ คุณแน่ใจหรือไม่?",
+    en: "This member will be removed from the project. Are you sure?",
+  },
+  "btn.add": { th: "เพิ่ม", en: "Add" },
+  "btn.remove": { th: "นำออก", en: "Remove" },
+
+  // --- project-role labels (5) — pinned to migration 000009 label_th/label_en (lines 72-76) ---
+  "project_role.project_owner": { th: "เจ้าของโครงการ", en: "Project Owner" },
+  "project_role.project_manager": { th: "ผู้จัดการโครงการ", en: "Project Manager" },
+  "project_role.member": { th: "สมาชิก", en: "Member" },
+  "project_role.finance": { th: "การเงิน", en: "Finance" },
+  "project_role.viewer": { th: "ผู้ดูข้อมูล", en: "Viewer" },
+
   // --- status labels (8) — pinned to migration 000009 label_th/label_en ---
   "status.draft": { th: "ฉบับร่าง", en: "Draft" },
   "status.planning": { th: "วางแผน", en: "Planning" },
@@ -321,6 +353,28 @@ const ERROR_MESSAGES: Record<string, Record<Lang, string>> = {
   "project.not_found": {
     th: "ไม่พบโครงการนี้",
     en: "Project not found.",
+  },
+
+  // --- project member codes (M2 FE-B) ---
+  "project_member.membership_not_eligible": {
+    th: "สมาชิกที่เลือกไม่สามารถเพิ่มได้",
+    en: "The selected member is not eligible to add.",
+  },
+  "project_member.invalid_role_code": {
+    th: "บทบาทในโครงการไม่ถูกต้อง",
+    en: "Invalid project role.",
+  },
+  "project_member.owner_immutable": {
+    th: "ไม่สามารถแก้ไขเจ้าของโครงการนอกการโอนสิทธิ์",
+    en: "The project owner cannot be modified outside ownership transfer.",
+  },
+  "project_member.already_member": {
+    th: "ผู้ใช้นี้เป็นสมาชิกของโครงการอยู่แล้ว",
+    en: "This user is already a member of the project.",
+  },
+  "project_member.not_found": {
+    th: "ไม่พบสมาชิกนี้",
+    en: "Member not found.",
   },
   "internal.unexpected": {
     th: "เกิดข้อผิดพลาดภายในระบบ กรุณาลองอีกครั้ง",

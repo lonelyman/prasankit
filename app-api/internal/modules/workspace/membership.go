@@ -21,6 +21,16 @@ type Membership struct {
 	UpdatedBy              *uuid.UUID
 }
 
+// MembershipWithDisplayName is the read projection for ListWorkspaceMembers
+// (JOIN workspace_memberships → user_accounts). It carries the membership id,
+// the user's display_name, and the org_role_code — exactly what the FE add-member
+// picker needs (no email / PII beyond the display name).
+type MembershipWithDisplayName struct {
+	ID          uuid.UUID
+	DisplayName string
+	OrgRoleCode string
+}
+
 // TenantContext carries the resolved workspace + membership context for a request.
 // It is constructed by the requireTenantContext middleware and injected into c.Locals.
 // Service methods receive workspace_id exclusively from here (never from client input).
