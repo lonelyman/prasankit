@@ -29,4 +29,7 @@ type ProjectMember struct {
 type MemberWithDisplayName struct {
 	ProjectMember
 	DisplayName string // from user_accounts.display_name of the membership IN THIS workspace
+	// CompanyPositionCode is the membership's workspace-level company position (1:1,
+	// nil = unset). Read-only projection so the FE can show it without a second call.
+	CompanyPositionCode *string
 }

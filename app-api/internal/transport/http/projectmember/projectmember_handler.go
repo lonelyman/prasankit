@@ -46,6 +46,7 @@ type memberResponse struct {
 	JoinedAt              string  `json:"joined_at"`
 	RemovedAt             *string `json:"removed_at"`
 	DisplayName           *string `json:"display_name,omitempty"`
+	CompanyPositionCode   *string `json:"company_position_code,omitempty"`
 }
 
 type listMembersResponse struct {
@@ -73,6 +74,7 @@ func toMemberWithDisplayNameResponse(m projectmember.MemberWithDisplayName) memb
 	resp := toMemberResponse(m.ProjectMember)
 	dn := m.DisplayName
 	resp.DisplayName = &dn
+	resp.CompanyPositionCode = m.CompanyPositionCode
 	return resp
 }
 

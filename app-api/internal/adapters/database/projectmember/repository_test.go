@@ -450,6 +450,68 @@ func TestProjectMemberRepo_ListByProject_DisplayNameFromProjectWorkspaceMembersh
 	}
 }
 
+// ── (f') company_position_code projected from the membership (Decision-A) ────────
+
+// insertCompanyPosition adds an active company_positions row so a membership can FK to it.
+func insertCompanyPosition(t *testing.T, db *gorm.DB, wsID uuid.UUID, code string, createdBy uuid.UUID) {
+	t.Helper()
+	id, _ := ids.New()
+	now := time.Now().UTC()
+	if err := db.Exec(
+		`INSERT INTO company_positions
+		 (id, workspace_id, code, label_th, label_en, sort_order, is_system, status, created_at, created_by, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, wsID, code, "ตำแหน่ง", "Position", 0, false, "active", now, createdBy, now,
+	).Error; err != nil {
+		t.Fatalf("insertCompanyPosition: %v", err)
+	}
+}
+
+func TestProjectMemberRepo_ListByProject_ReturnsCompanyPositionCode(t *testing.T) {
+	db := openTestDB(t)
+	truncateTestTables(t, db)
+	t.Cleanup(func() { truncateTestTables(t, db) })
+
+	auditRepo := auditdbrepo.NewAuditRepo(db)
+	repo := projectmemberdbrepo.NewProjectMemberRepo(db, auditRepo)
+
+	owner := createTestAccount(t, db, "Owner")
+	wsA := createTestWorkspace(t, db, owner)
+	projectA := createTestProject(t, db, wsA.ID, owner)
+
+	m := buildMember(wsA.ID, projectA, wsA.OwnerMembershipID, owner, "member")
+	if err := repo.AddWithAudit(context.Background(), m, buildMemberAuditEntry(wsA.ID, projectA, owner, m.ID, projectmember.AuditActionProjectMemberAdd)); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	// Unset company position → nil projection.
+	rows, err := repo.ListByProject(context.Background(), wsA.ID, projectA)
+	if err != nil {
+		t.Fatalf("ListByProject: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].CompanyPositionCode != nil {
+		t.Errorf("CompanyPositionCode = %q, want nil (unset)", *rows[0].CompanyPositionCode)
+	}
+
+	// Assign a company position to the membership → it must project back on the list.
+	insertCompanyPosition(t, db, wsA.ID, "senior_engineer", owner)
+	if err := db.Exec(`UPDATE workspace_memberships SET company_position_code = ? WHERE id = ?`,
+		"senior_engineer", wsA.OwnerMembershipID).Error; err != nil {
+		t.Fatalf("set company_position_code: %v", err)
+	}
+
+	rows, err = repo.ListByProject(context.Background(), wsA.ID, projectA)
+	if err != nil {
+		t.Fatalf("ListByProject: %v", err)
+	}
+	if rows[0].CompanyPositionCode == nil || *rows[0].CompanyPositionCode != "senior_engineer" {
+		t.Errorf("CompanyPositionCode = %v, want senior_engineer", rows[0].CompanyPositionCode)
+	}
+}
+
 // ── ws-suspended member excluded ────────────────────────────────────────────────
 
 func TestProjectMemberRepo_ListByProject_ExcludesSuspendedWorkspaceMember(t *testing.T) {

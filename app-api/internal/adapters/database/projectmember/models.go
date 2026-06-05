@@ -45,6 +45,7 @@ type memberWithDisplayNameRow struct {
 	UpdatedAt             time.Time  `gorm:"column:updated_at"`
 	UpdatedBy             *uuid.UUID `gorm:"column:updated_by"`
 	DisplayName           string     `gorm:"column:display_name"`
+	CompanyPositionCode   *string    `gorm:"column:company_position_code"`
 }
 
 func projectMemberToModel(m projectmember.ProjectMember) projectMemberModel {
@@ -94,6 +95,7 @@ func rowToMemberWithDisplayName(r memberWithDisplayNameRow) projectmember.Member
 			UpdatedAt:             r.UpdatedAt,
 			UpdatedBy:             r.UpdatedBy,
 		},
-		DisplayName: r.DisplayName,
+		DisplayName:         r.DisplayName,
+		CompanyPositionCode: r.CompanyPositionCode,
 	}
 }

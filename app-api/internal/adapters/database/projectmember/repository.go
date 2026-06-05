@@ -124,7 +124,8 @@ func (r *ProjectMemberRepo) ListByProject(ctx context.Context, workspaceID, proj
 		Table("project_members AS pm").
 		Select(`pm.id, pm.workspace_id, pm.project_id, pm.workspace_membership_id,
 			pm.project_role_code, pm.joined_at, pm.removed_at, pm.created_at,
-			pm.created_by, pm.updated_at, pm.updated_by, ua.display_name AS display_name`).
+			pm.created_by, pm.updated_at, pm.updated_by, ua.display_name AS display_name,
+			wm.company_position_code AS company_position_code`).
 		Joins("INNER JOIN workspace_memberships wm ON wm.workspace_id = pm.workspace_id AND wm.id = pm.workspace_membership_id").
 		Joins("INNER JOIN user_accounts ua ON ua.id = wm.user_account_id").
 		Where("pm.workspace_id = ? AND pm.project_id = ? AND pm.removed_at IS NULL AND wm.membership_status_code = ?",
