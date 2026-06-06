@@ -7,7 +7,7 @@
 ## 1. เป้าหมาย first cut: Proof-of-Loop
 
 demo แรกนี้ **ภายใน** — พิสูจน์ 2 อย่างพร้อมกัน:
-1. **vibe-code loop ผลิต software ที่ทำงานจริงได้** (spec → dispatch Sonnet → review → commit) — โครงสร้าง role/gate ใน workflow ใช้ได้จริงบนโค้ด ไม่ใช่แค่บนเอกสาร
+1. **vibe-code loop ผลิต software ที่ทำงานจริงได้** (spec → dispatch implementer → review → commit) — โครงสร้าง role/gate ใน workflow ใช้ได้จริงบนโค้ด ไม่ใช่แค่บนเอกสาร
 2. **wedge ของ Prasankit ทำงาน end-to-end** — งวดงาน+ตรวจรับ + การเงินโครงการ (D6) — พิสูจน์ว่าไม่ใช่ Jira/Notion อีกตัว
 
 ไม่มี deadline ภายนอก → optimize เพื่อ **ความถูกต้องของ loop + โชว์ wedge** ไม่ใช่ความเร็วเอา demo
@@ -41,7 +41,7 @@ demo แรกนี้ **ภายใน** — พิสูจน์ 2 อย�
 ## 4. Build Approach (D19)
 
 - **1 milestone = 1 vertical slice** ที่ demo ได้ (BE+FE) — proof-of-loop ต้องเห็นของจริงทำงานทุกรอบ
-- **1 Sonnet dispatch = 1 stack** — แยก task BE (Go) กับ FE (Next.js) คนละ dispatch กัน Sonnet สลับ context งงสเปก + review เร็วขึ้น (workflow §6)
+- **1 implementer dispatch = 1 stack** — แยก task BE (Go) กับ FE (Next.js) คนละ dispatch กัน implementer สลับ context งงสเปก + review เร็วขึ้น (workflow §6)
 - **BE นำ FE ครึ่งก้าวเสมอ** — FE ต่อ API ที่ contract นิ่งแล้ว ไม่ไล่ตาม API ที่ขยับ
 - ทุก milestone จบด้วย **review (Opus) → User decide → commit** ตาม loop (workflow §3)
 - **data-model doc เขียน just-in-time ต่อ milestone** (M0/M1 ก่อน) — ไม่ model ทั้ง 8 module ล่วงหน้า (กัน over-build, vision §2)

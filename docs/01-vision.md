@@ -2,7 +2,7 @@
 
 > **Status: Canonical.** เอกสารนี้คือ vision และ scope หลักของ Prasankit — ใช้เป็น north star ตอนตัดสินใจว่า "อะไรอยู่ในระบบ / อะไรไม่อยู่".
 > เป็น **design intent** ของทั้งระบบ ไม่ใช่สถานะปัจจุบัน และ **ไม่ล็อกขอบเขต demo แรก** — ลำดับการ build และ scope ของ demo แรกอยู่ในเอกสาร build-plan (ชุดถัดไป).
-> การเปลี่ยน vision ทำตาม gate เดียวกับ [00-workflow.md](00-workflow.md) §8 (User เริ่ม → Kael trade-off → option Iri → User decide → แก้ doc + commit รอบเดียว).
+> การเปลี่ยน vision ทำตาม gate เดียวกับ [00-workflow.md](00-workflow.md) §8 (User เริ่ม → Kael trade-off → option external reviewer → User decide → แก้ doc + commit รอบเดียว).
 
 ## 1. North Star
 

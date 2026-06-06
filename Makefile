@@ -21,7 +21,7 @@ compose-config: env-init
 	docker compose config >/dev/null
 
 infra-up: env-init
-	docker compose up -d --wait prasankit-pgsql prasankit-redis prasankit-minio
+	docker compose up -d --wait prasankit-pgsql prasankit-redis prasankit-minio prasankit-mailpit
 
 db-migrate: env-init
 	$(MAKE) -C app-api db-migrate GOOSE_DSN="$(GOOSE_DSN)"

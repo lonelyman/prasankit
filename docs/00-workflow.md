@@ -17,6 +17,7 @@
   - รีวิว output ของ implementer ก่อนส่งให้ผู้ใช้ตัดสินใจ — **คง "คนเขียน ≠ คนรีวิว"**: ไม่รีวิวโค้ดที่ตัวเองเขียน (เลี่ยง confirmation bias). งานใหญ่ที่ Opus จะรีวิวเอง → dispatch implementer แยก instance
   - ตอบคำถาม / explain / debug session กับผู้ใช้
 - **เขียน production code เองได้ (D37):** งานเล็ก / iterate / debug / config — แก้ตรงได้เลย. งาน feature/module ใหญ่ → dispatch Opus implementer แยกตัว (§2.2) เพื่อคง author≠reviewer; ถ้าจำเป็นต้องเขียนเอง การรีวิวอิสระมาจาก external different-model reviewer + test/smoke
+  - **Carve-out (D53/D55, User-invoked):** ถ้า User ปฏิเสธ sub-agent dispatch → Opus main-thread เขียนเอง = author=reviewer ในรอบนั้น. ชดเชย independent review ที่หายไปด้วย `/scrutinize` (outsider review) + automated (test/lint/build) + **User manual smoke เป็น gate สุดท้าย**. ใช้เมื่อ User สั่งเท่านั้น — default ยังเป็น dispatch implementer แยก instance
 - **ไม่ทำ:** ไม่ตัดสินใจ scope หรือ design trade-off แทนผู้ใช้ — เสนอ + อธิบาย trade-off + ถาม
 
 ### 2.2 Implementer — Opus 4.8 (default) / Sonnet (option) (D37)
@@ -56,11 +57,11 @@
     ↓
 [User] approve spec  (ถ้าใหญ่ → ส่ง external reviewer ก่อน)
     ↓
-[Opus] dispatch Sonnet ผ่าน Agent tool
+[Opus] dispatch implementer (Opus 4.8 default / Sonnet option — §2.2) ผ่าน Agent tool
     ↓
-[Sonnet] implement + test → ส่ง summary + diff กลับ
+[implementer] implement + test → ส่ง summary + diff กลับ
     ↓
-[Opus] review (Opus = ผู้รีวิวคนแรก, ไม่ rubber-stamp Sonnet)
+[Opus] review (Opus = ผู้รีวิวคนแรก, ไม่ rubber-stamp implementer)
        - ตรง spec ไหม
        - มี side-effect นอก scope ไหม
        - test ครอบคลุมไหม
@@ -75,16 +76,16 @@
 
 ## 4. Gate Rules (สิ่งที่ห้ามข้าม)
 
-1. **ห้าม dispatch Sonnet โดยไม่มี spec เป็นลายลักษณ์อักษร** (ใน conversation หรือ docs/) — ไม่มี spec = ไม่มี baseline ตอน review
-2. **ห้าม commit code ที่ Sonnet เขียนโดย Opus ไม่ได้ review** — แม้ test pass ก็ไม่พอ
+1. **ห้าม dispatch implementer โดยไม่มี spec เป็นลายลักษณ์อักษร** (ใน conversation หรือ docs/) — ไม่มี spec = ไม่มี baseline ตอน review
+2. **ห้าม commit code ที่ implementer เขียนโดย Opus ไม่ได้ review** — แม้ test pass ก็ไม่พอ
 3. **ห้าม Opus ตัดสินใจ scope/architecture แทน User** — ขอแม้กระทั่งเรื่องเล็กที่ส่งผลต่อ pattern หลัก
-4. **ห้าม Sonnet ขยาย scope** — ถ้าเจองาน "พลอย" ต้องเขียนใน summary ว่า "พบเรื่อง X, ไม่ทำเพราะนอก spec" ไม่ใช่ทำเลย
+4. **ห้าม implementer ขยาย scope** — ถ้าเจองาน "พลอย" ต้องเขียนใน summary ว่า "พบเรื่อง X, ไม่ทำเพราะนอก spec" ไม่ใช่ทำเลย
 5. **ห้ามแก้ docs/00-workflow.md โดยไม่มี User approval** — เพราะมันคือ contract
 6. **ห้ามปล่อย decision ค้างในแชต** — decision ที่ตกลงแล้วต้อง fold เข้า `docs/` ที่เกี่ยวข้อง + เพิ่มบรรทัดใน `docs/DECISIONS.md` ภายในรอบเดียวกัน ไม่งั้นถือว่ายังไม่ตัดสิน (ดู §9)
 
-## 5. Spec Format (ที่ Opus ใช้ brief Sonnet)
+## 5. Spec Format (ที่ Opus ใช้ brief implementer)
 
-ทุก spec ที่ส่งให้ Sonnet ต้องมี:
+ทุก spec ที่ส่งให้ implementer ต้องมี:
 
 ```markdown
 ## Goal
@@ -110,14 +111,14 @@
 - integration test (ถ้าต้อง): กับ Postgres/Redis จริง
 
 ## Out of scope (อย่าแตะ)
-- รายการ feature/file ที่ Sonnet ห้ามแก้แม้อยากแก้
+- รายการ feature/file ที่ implementer ห้ามแก้แม้อยากแก้
 
 ## Acceptance
 - [ ] `go test ./...` ผ่าน
 - [ ] อื่นๆ ที่ Opus กำหนด
 ```
 
-## 6. Review Checklist (Opus ใช้ตอนรีวิว Sonnet)
+## 6. Review Checklist (Opus ใช้ตอนรีวิว implementer)
 
 - [ ] **Scope:** code ที่แก้/เพิ่ม อยู่ใน "Files to touch" ทั้งหมดไหม
 - [ ] **Spec:** behavior ตรง "Expected behavior" ไหม (เทียบ section 5)

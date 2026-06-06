@@ -237,7 +237,7 @@ verification/reset token + invitation **ไม่มีคอลัมน์ sta
 | `pending_deletion_at` | TIMESTAMPTZ | |
 | `deleted_at/deleted_by` | | soft delete |
 
-- `CHECK (slug ~ '^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$')`.
+- `CHECK (slug ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')`. *(relaxed `{1,61}`→`{0,61}` ใน 000017 เพื่อรับ slug 2 ตัว เช่น `ai` — D57)*
 - `CREATE UNIQUE INDEX uq_workspaces_slug_active ON workspaces (slug) WHERE deleted_at IS NULL`.
 - `ix_workspaces_owner_status ON workspaces (owner_user_account_id, workspace_status_code) WHERE deleted_at IS NULL`.
 - ตัดจาก v1: `mode` (demo/production), `email_verified_required`, `hard_deleted_at` — ไม่ใช่ M1 scope (future).
@@ -495,7 +495,7 @@ M1 มีแต่ global/system master. M2 เปิด class ใหม่: **w
 `projects.slug CITEXT NULL` — optional public identifier ภายใน workspace. URL: `/{workspace_slug}/projects/{project_slug}`.
 - **nullable** — Draft/imported project ใช้ UUID ก็ทำงานได้; slug = FE convenience auto-gen จาก `project_name` ตอน create
 - workspace-scoped unique: `UNIQUE (workspace_id, slug) WHERE deleted_at IS NULL AND slug IS NOT NULL`
-- format `CHECK (slug IS NULL OR slug ~ '^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$')` — ตรงกับ workspace slug pattern
+- format `CHECK (slug IS NULL OR slug ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')` — ตรงกับ workspace slug pattern *(relaxed `{1,61}`→`{0,61}` ใน 000017 — รับ slug 2 ตัว เช่น `ai`; D57)*
 - **public-identifier treatment (refine D32 สำหรับ project):** D32 ต้นฉบับ (workspace) ใช้ 404 (ไม่พบ) vs 403 (พบแต่ไม่ใช่สมาชิก) เพราะ workspace existence รั่วทาง create 409 อยู่แล้ว. **Project ต่าง:** member ของ ws A สามารถ probe `/wsB/projects/{guess}` แล้วแยก 404 vs 403 ได้ → enumerate project name ของ ws B ที่ตัวเองรู้ slug. **M2 collapse 403↔404 สำหรับ cross-workspace probe:** ถ้า requester ไม่มี active membership ใน ws ของ URL → return **404 เสมอ** (ทั้งกรณี project ไม่มี และกรณี project มีแต่ไม่ใช่สมาชิก ws). ภายใน ws ที่ตัวเองเป็นสมาชิก → 404 (ไม่พบ project) vs 403 (พบแต่ project_role ไม่อนุญาต) แยกตามปกติ
 - **D32 email-match clause ไม่ extend มา project ใน M2** — joining project ต้องมี `workspace_membership` active; ws-invite-accept (M1) บังคับ email-match แล้ว (D32). project-scoped invitation = M3+ → ทบทวนตอนนั้น
 
@@ -617,7 +617,7 @@ Constraints/indexes:
 | `deleted_by` | UUID → `user_accounts(id)` | |
 
 Constraints/indexes (ครบใน 6a migration `000010`, §M2.6):
-- `CHECK (slug IS NULL OR slug ~ '^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$')` — pattern เดียวกับ `workspaces.slug`
+- `CHECK (slug IS NULL OR slug ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')` — pattern เดียวกับ `workspaces.slug` *(relaxed `{1,61}`→`{0,61}` ใน 000017; D57)*
 - `CHECK (start_date IS NULL OR end_date IS NULL OR start_date <= end_date)` — date sanity
 - `CREATE UNIQUE INDEX uq_projects_workspace_slug_active ON projects (workspace_id, slug) WHERE deleted_at IS NULL AND slug IS NOT NULL` — slug unique per ws ตอน active
 - `CREATE INDEX ix_projects_workspace_status_created ON projects (workspace_id, project_status_code, created_at DESC) WHERE deleted_at IS NULL` — list view + status filter (executive dashboard, vision §6.1)
@@ -877,6 +877,10 @@ goose, ต่อจาก `000007_create_crosscutting_logs`. ลำดับแ�
 7. **`000014_create_position_masters`** — `project_positions`, `company_positions` (workspace-scoped customizable; ไม่ seed). indexes ต่อ table: `uq_*_workspace_code` UNIQUE non-partial (FK target backing), `ix_*_workspace_status`
 8. **`000015_create_project_member_positions`** — `project_member_positions` junction; composite FKs ไป `project_members` (000012) + `project_positions` (000014, FK-by-code §M2.2.4). indexes: `uq_pmp_member_position` UNIQUE, `ix_pmp_position`
 9. **`000016_alter_workspace_memberships_company_position`** — `ALTER workspace_memberships ADD COLUMN company_position_code TEXT` + composite FK ไป `company_positions(workspace_id, code)` (000014) + `ix_workspace_memberships_company_position` (partial)
+
+### Post-M2 hotfix (committed 2026-05-31)
+
+10. **`000017_relax_slug_min_length`** (commit `dc22633`) — แก้ bug slug format regex: `{1,61}` ห้าม slug ยาว **2 ตัวพอดี** (เช่น `ai`) โดยไม่ตั้งใจ (pattern match 1 ตัว หรือ 3–63 ตัว ไม่เคย match 2). relax `{1,61}`→`{0,61}` ทั้ง `ck_workspaces_slug` + `ck_projects_slug_format`; start/end ยังต้อง alphanumeric, hyphen กลางเท่านั้น, max 63. mirror FE (`validation.ts` SLUG_RE) + BE (`workspace`/`project` slugPattern). regex ที่ deploy จริง = `{0,61}` (§4.3/§M2.2/§M2.3.3 sync แล้ว). **fold ย้อนหลังตาม workflow §9 — D57.**
 
 > **Renumber note (D45, Pin A):** เดิม §M2.6 (ก่อน split) วาง 6b เป็น 000012 position_masters → 000016. เมื่อ split: **6b-1** เอา 000012 (project_members) + 000013 (owner FK); **6b-2** เลื่อนเป็น 000014 (position_masters) / 000015 (junction) / 000016 (company_position). FK ordering ยังถูก — `project_members` (000012) ไม่ขึ้นกับ position_masters; junction (000015) + company_position (000016) ขึ้นกับ position_masters (000014). **ค้างที่ migration file `000010` (committed):** inline comment ของมัน naming owner FK เป็น `000012_alter_projects_add_owner_fk` — ไม่เคยถูกต้อง (owner FK = `000013`); ไม่แก้ไฟล์ committed, flag ไว้ตรงนี้
 
