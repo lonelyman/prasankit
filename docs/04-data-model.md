@@ -926,3 +926,202 @@ goose, ต่อจาก `000007_create_crosscutting_logs`. ลำดับแ�
 - **Audit log UI** (M1 §8 ค้าง) — M2 มี `project_id` แล้ว → query "log per project" พร้อม. UI = append เมื่อ User เปิด
 - **`requireSession` JOIN optimization + multi-identity/MFA revocation semantics** — carried from M1 §4.1 (D36 open thread)
 - **Backing UNIQUE pattern สำหรับ M3+ entities** — ถ้า M3+ entity (deliverable, task) มี composite FK ไป `user_accounts(workspace_id, id)` pattern (ซึ่งจะผิดเพราะ user เป็น global) — confirm scope exclusion D38 ไว้กันความเข้าใจผิด
+
+---
+
+## M3 — Deliverable + ตรวจรับ (wedge ครึ่งแรก)
+
+> **Status: Canonical.** เอกสารส่วนนี้ extend §M2 ตาม [03-build-plan §5 row M3](03-build-plan.md) — เพิ่ม `deliverables` (งวดงาน), `submissions` (ส่งจริงหลายรอบ), `submission_reviews` (ตรวจรับ accept/reject/conditional) + masters `submission_decisions`/`deliverable_statuses`. **สานต่อ conventions §2 + §M2.2 — ไม่เปิด convention ใหม่.** Decisions **D58–D64** (§M3.8).
+> **OQ ทั้ง 7 = User accept defaults (2026-06-06)** รวม **OQ-7: accept = terminal** (งวดที่ผ่านแล้วส่งซ้ำไม่ได้). design ผ่าน multi-agent (3 architect → synthesize → 3 adversarial critic). wedge = [vision §1.1](01-vision.md)/D6: งวดงาน + ส่งหลายรอบ + ตรวจรับ + ส่งเร็ว/ตรงเวลา/ช้า.
+
+### M3.1 ขอบเขต
+
+**In (M3):**
+- `deliverables` — งวดงาน (ws-scoped business, soft-delete): title, due_date (กำหนดส่ง), sort_order
+- `submissions` — ส่งจริงหลายรอบ (ws-scoped business, **append-only**): round_no, note/url (**text/link เท่านั้น — D8 ไม่มี file upload**)
+- `submission_reviews` — ตรวจรับ (append-only, 1 review/submission): decision accept/conditional/reject + comment
+- `submission_decisions` (global system master, 3 codes), `deliverable_statuses` (global system master, 5 codes = **label dictionary** ของสถานะที่ derive — **ไม่เป็น FK target**)
+- **ไม่ ALTER `audit_logs`** (`project_id` มีตั้งแต่ 000011/D43)
+
+**Out → §M3.9:** file/attachment upload (D8) · deliverable assignee/owner column (M4) · task↔deliverable (M4) · submission/review edit/retract (append-only) · multi-reviewer/approval chain (vision §9) · status materialize column (D59 = derive) · timeliness master/column + decision-rollup/KPI index (M5) · lifecycle coupling project↔deliverable (D44 free) · finance penalty (M5) · `requireProjectPermission` middleware (M4/M5, D63)
+
+**Inherit:** §2.1 PK/timestamps · §2.4/§2.11 FK-by-code · §2.6 state-from-timestamp · §M2.2.1 composite FK iron rule (D38) · §M2.5 isolation invariant (6 ข้อ + audit-by-project) · §M2.6 migration style
+
+### M3.2 Schema
+
+#### M3.2.1 Global system masters (`is_system=true`, ไม่มี `workspace_id`)
+
+**`submission_decisions`** — vocabulary ตรวจรับ (3 rows). master shape §2.2 (เหมือน 000009).
+
+| code | label_th | label_en | sort |
+| --- | --- | --- | --- |
+| `accepted` | ผ่าน | Accepted | 10 |
+| `conditional` | ผ่านแบบมีเงื่อนไข | Conditional | 20 |
+| `rejected` | ตีกลับ | Rejected | 30 |
+
+- CHECKs: `code ~ '^[a-z][a-z0-9_]{1,62}$'`, `uq_submission_decisions_code UNIQUE(code)`, `status IN ('active','deprecated')`, `sort_order >= 0`. FK target = `submission_decisions(code)`.
+- Domain const: `submissiondecision.Accepted/.Conditional/.Rejected` (**rename code = breaking** — derive branch บนค่านี้, pin contract เหมือน `projectrole.*`).
+
+**`deliverable_statuses`** — label dictionary ของสถานะงวดที่ **derive** (5 rows, **ไม่มี FK ชี้มา**). master shape §2.2.
+
+| code | label_th | label_en | sort |
+| --- | --- | --- | --- |
+| `not_submitted` | ยังไม่ส่ง | Not Submitted | 10 |
+| `in_review` | รอตรวจรับ | In Review | 20 |
+| `accepted` | ผ่าน | Accepted | 30 |
+| `conditional` | ผ่านแบบมีเงื่อนไข | Conditional | 40 |
+| `rejected` | ตีกลับ | Rejected | 50 |
+
+- **master แรกที่ไม่มี FK ชี้มาโดยตั้งใจ** (D59) — เป็น i18n home ของ derived code (§2.3/D27) ไม่ใช่ table ที่ลืม. **migration 000019 comment ต้องระบุชัด: "label dictionary ของ derived status — ไม่มี FK target โดยตั้งใจ; ห้ามเพิ่ม `deliverable_status_code` column บน `deliverables` โดยไม่ revisit D59"** (กัน wrong-fix reflex แบบ D47/D48).
+- domain const `deliverablestatus.*`; **unit test: 3 code ที่ทับกัน (`accepted/conditional/rejected`) ต้อง string-equal ข้าม 2 master** (กัน drift ตอน rename).
+
+#### M3.2.2 `deliverables` (ws-scoped business, soft-delete)
+
+| Column | Type | Note |
+| --- | --- | --- |
+| `id` | UUID PK | UUIDv7 (app) |
+| `workspace_id` | UUID NOT NULL → `workspaces(id)` | isolation key |
+| `project_id` | UUID NOT NULL | composite FK ↓ (iron rule) |
+| `title` | TEXT NOT NULL | `CHECK length 1..200` (เหมือน `projects.project_name`) |
+| `description` | TEXT | nullable; `CHECK ≤ 10000` |
+| `due_date` | DATE | nullable; **กำหนดส่ง** |
+| `sort_order` | INT NOT NULL DEFAULT 0 | `CHECK ≥ 0`; งวด order ด้วยมือ (1/2/3) |
+| `created_at/created_by` | | `created_by` → `user_accounts(id)` (single-col, D38 exclusion) |
+| `updated_at/updated_by` | | |
+| `deleted_at/deleted_by` | | soft delete |
+
+- `fk_deliverables_project FOREIGN KEY (workspace_id, project_id) REFERENCES projects(workspace_id, id)`
+- `uq_deliverables_workspace_id_id UNIQUE (workspace_id, id)` non-partial — **FK-target backing** ของ submissions
+- `ix_deliverables_project_sort (workspace_id, project_id, sort_order) WHERE deleted_at IS NULL`
+- `ix_deliverables_project_due (workspace_id, project_id, due_date) WHERE deleted_at IS NULL AND due_date IS NOT NULL`
+- ไม่มี status column (derive, D59) · ไม่มี assignee/reviewer column (M4)
+
+#### M3.2.3 `submissions` (ws-scoped business, **append-only**)
+
+| Column | Type | Note |
+| --- | --- | --- |
+| `id` | UUID PK | UUIDv7 (app) |
+| `workspace_id` | UUID NOT NULL → `workspaces(id)` | isolation key |
+| `project_id` | UUID NOT NULL | composite FK ↓ (bind audit project_id) |
+| `deliverable_id` | UUID NOT NULL | composite FK ↓ |
+| `round_no` | INT NOT NULL | `CHECK ≥ 1`; service assign `MAX+1` ใต้ deliverable FOR UPDATE (ไม่รับจาก client) |
+| `note` | TEXT | nullable; `CHECK ≤ 10000` — text only (D8) |
+| `url` | TEXT | nullable; `CHECK ≤ 2000` — link (D8: no file upload) |
+| `submitted_by` | UUID NOT NULL | composite FK ↓ → `project_members` (ผู้ส่ง) |
+| `submitted_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | source ของ timeliness (vs `due_date`) |
+| `created_at/created_by` | | `created_by` → `user_accounts(id)` (identity single-col) |
+
+- FKs: `(workspace_id, project_id)→projects`, `(workspace_id, deliverable_id)→deliverables`, `(workspace_id, submitted_by)→project_members(workspace_id, id)` (D60)
+- `uq_submissions_deliverable_round UNIQUE (workspace_id, deliverable_id, round_no)` non-partial — **round uniqueness / race backstop** (≠ FK backing)
+- `uq_submissions_workspace_id_id UNIQUE (workspace_id, id)` non-partial — **FK-target backing** ของ reviews (คนละตัวกับ round index)
+- `ix_submissions_deliverable (workspace_id, deliverable_id, round_no DESC)` — list รอบ (ล่าสุดบนสุด = derive driver)
+- **append-only** (ไม่มี updated_at/deleted_at; แก้ = ส่งรอบใหม่) — precedent 000015; deviation §2.1 flagged
+- **service guards** (FK ไม่จับ): `submitted_by.project_id == deliverable.project_id` + `removed_at IS NULL`
+- **`submitted_by` = server-derive จาก actor's project_member ไม่รับจาก body** (§5.4 ไม่เชื่อ ownership จาก client)
+
+#### M3.2.4 `submission_reviews` (append-only, 1/submission)
+
+| Column | Type | Note |
+| --- | --- | --- |
+| `id` | UUID PK | UUIDv7 (app) |
+| `workspace_id` | UUID NOT NULL → `workspaces(id)` | isolation key |
+| `project_id` | UUID NOT NULL | composite FK ↓ (audit project_id) |
+| `submission_id` | UUID NOT NULL | composite FK ↓ |
+| `decision_code` | TEXT NOT NULL → `submission_decisions(code)` | FK-by-code |
+| `comment` | TEXT | nullable; `CHECK ≤ 10000` — เหตุผล/เงื่อนไข |
+| `reviewed_by` | UUID NOT NULL | composite FK ↓ → `project_members` (ปิด M2.8 deliverable_reviewer FK) |
+| `reviewed_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| `created_at/created_by` | | identity single-col |
+
+- FKs: `(workspace_id, project_id)→projects`, `(workspace_id, submission_id)→submissions`, `(workspace_id, reviewed_by)→project_members`, `decision_code→submission_decisions(code)`
+- `uq_submission_reviews_submission UNIQUE (workspace_id, submission_id)` — **1 review/submission** (verdict immutable; กัน double-review race)
+- **ไม่มี** `ix_submission_reviews_decision` — decision rollup = M5 dashboard (§M3.9)
+- append-only, verdict immutable (ผิด → ส่งรอบใหม่ + review ใหม่)
+- service guards: `reviewed_by.project_id` match + `removed_at IS NULL` + project-role can-review (§M3.5); `reviewed_by` server-derive (§5.4)
+- **review-latest-only:** review ได้เฉพาะ submission ที่ `round_no == MAX` + ยังไม่มี review; เก่ากว่า → 409 `submission.superseded` (race-free ด้วย lock §M3.4)
+- **self-review** (reviewer==submitter): M3 default = อนุญาต (OQ-6); ship guard `reviewed_by != submitted_by` เป็น **config flag ปิดไว้** (เปิดโชว์ separation-of-duty ได้โดยไม่แก้ schema/contract)
+
+### M3.3 Acceptance + multi-round + derived status (§2.6)
+
+1 deliverable → N submission (round 1..N, append-only) → แต่ละ submission มี 0..1 review (immutable). review ผูก **submission ไม่ใช่ deliverable** → "รอบ 2 reject, รอบ 3 accept" = history audit-grade.
+
+**สถานะงวด = derive ไม่มี column (D59)** — projection จาก (รอบล่าสุด = `MAX(round_no)`, review ของมัน):
+
+| derived | เงื่อนไข |
+| --- | --- |
+| `not_submitted` | ไม่มี submission |
+| `in_review` | มี submission รอบล่าสุด แต่ยังไม่มี review |
+| `accepted` | review รอบล่าสุด = accepted |
+| `conditional` | review รอบล่าสุด = conditional |
+| `rejected` | review รอบล่าสุด = rejected |
+
+- derive-query: "latest" = `MAX(round_no)` (round UNIQUE การันตี 1 row/round); list ใช้ `LEFT JOIN LATERAL (... ORDER BY round_no DESC LIMIT 1) + LEFT JOIN its review`. ไม่มี state ที่ 6; presenter คืน `deliverable_status_code`, FE map label (D27)
+- **accept = terminal (OQ-7, D58):** review รอบล่าสุด = accepted → submit รอบใหม่ถูก block ตอน submit-time (409). `conditional`/`rejected` → resubmit ได้ (round MAX+1 → derive กลับเป็น in_review). *(narrows append-only: append หลัง accept ไม่ได้ — business rule ที่ตั้งใจ)*
+- **conditional = terminal (OQ-5):** ไม่บังคับ follow-up (บังคับ = approval-workflow, vision §9). อยากตามต่อ = ส่งรอบใหม่ปกติ; product ตีความ `comment`
+- **ส่งเร็ว/ตรงเวลา/ช้า = derive ที่ presenter (D62):** `f(due_date, submitted_at)` — due NULL→`no_due`, `<`→`early`, `==`→`on_time`, `>`→`late` (+`late_by_days`). per-round; ระดับงวด = timeliness ของรอบที่ให้ verdict ปัจจุบัน (ไม่งั้น = รอบล่าสุด). M5 penalty consume สัญญานี้. **timezone = UTC date ใน M3 (OQ-3); revisit M5** (penalty มี business stake)
+
+### M3.4 Race semantics — single mandatory serialization point (D64)
+
+ทั้ง submission INSERT (submit/resubmit) **และ** submission_review INSERT ต้อง acquire เป็น statement แรกของ tx:
+```sql
+SELECT id FROM deliverables WHERE workspace_id = $1 AND id = $2 AND deleted_at IS NULL FOR UPDATE;
+```
+= **serialization point เดียวต่อ deliverable**. resubmit กับ review contend lock row เดียวกัน → "compute `MAX(round_no)`" + "assert reviewed == `MAX`" race-free ต่อกัน.
+
+| race | guard | result |
+| --- | --- | --- |
+| 2 submit พร้อมกัน | FOR UPDATE → `round_no=MAX+1` | serialized |
+| 2 review submission เดียวกัน | UNIQUE (ws, submission_id) | 1 ชนะ, 2nd = 409 |
+| review รอบเก่า (มี resubmit) | latest-only ใต้ FOR UPDATE | 409 superseded |
+| review-vs-resubmit interleave | ทั้งคู่ถือ deliverable FOR UPDATE | serialized — ไม่ double-accept |
+
+- **FOR UPDATE = primary; round/review UNIQUE = backstop.** ถ้า UNIQUE fire = lock หาย = bug → fail loud (500) ไม่ใช่ retry (ตาม D40: IMMEDIATE+serialized > optimistic-retry)
+
+### M3.5 Authz — project-role gate (service-layer, D63)
+
+**M3 = milestone แรกที่มี project-role gating จริง** (ก่อนนี้ org-role-only — [02 §5.5](02-architecture.md)).
+
+| action | allowed | ที่ไหน |
+| --- | --- | --- |
+| deliverable create/update/delete | org Owner/Admin **หรือ** project `project_owner`/`project_manager` | service-layer |
+| submit (create submission) | org Owner/Admin **หรือ** project member ที่ `role != viewer` + active | service guard + actor-derive `submitted_by` |
+| review (accept/reject/conditional) | org Owner/Admin **หรือ** project `project_owner`/`project_manager` | service-layer + actor-derive `reviewed_by` |
+| read | project member ใดก็ได้ (รวม viewer) | read path filter by membership |
+
+- **D63:** gate = **service-layer** (ไม่ทำ `requireProjectPermission` middleware ใน M3 — 2-3 action, premature; project_id มาหลาย path + matrix ต่อ action ต่างกัน). resolve per-request (D16, no cache) จาก `project_members WHERE (workspace_id, project_id, actor's workspace_membership_id)` ผ่าน `ix_project_members_membership`. org Owner/Admin = bypass. middleware = M4/M5. **amend [02 §5.5](02-architecture.md)**
+- **non-member read = 404** (reuse D42 probe-collapse — ไม่ leak การมีอยู่ของ deliverable)
+- finance role/visibility = M5 (ไม่แตะ M3)
+
+### M3.6 Isolation invariant mapping + test (extend §M2.5)
+
+- ทุก ws-scoped repo (deliverable/submission/review) รับ `workspace_id` ใส่ `WHERE`
+- audit `LogTx` ทุก mutation (`deliverable.create/update/delete`, `submission.create`, `submission_review.create`) — bind `project_id` (invariant #6)
+- **test ต่อ repo:** ws isolation ("ws อื่นมองไม่เห็น") · cross-ws FK reject · removed-member → service 422 · double-round → UNIQUE backstop · **2 concurrent submit → 1 commit/round** · **review-vs-resubmit interleave → ไม่ double-accept** · double-review → 409 · derive path เต็ม (create→submit→reject→resubmit→conditional→resubmit→accept, assert derived status ทุกขั้น) · **accept→resubmit = 409 (terminal)** · timeliness derive (early/on_time/late+late_by_days/no_due) · cross-master code string-equal · `submitted_by`/`reviewed_by` จาก body ถูก ignore
+
+### M3.7 Migration plan (000018–000022) — style §M2.6
+
+goose, ต่อจาก `000017`. **ไม่ ALTER audit_logs** (project_id มี 000011). FK-ordered masters→business:
+
+1. **`000018_create_submission_decision_master`** — `submission_decisions` (+seed 3); shape เหมือน 000009
+2. **`000019_create_deliverable_status_master`** — `deliverable_statuses` (+seed 5); **comment: label dictionary, NO FK target by design, ห้ามเพิ่ม status column โดยไม่ revisit D59**
+3. **`000020_create_deliverables`** — composite FK→projects; `uq_deliverables_workspace_id_id` (FK backing) non-partial; 2 partial idx; CHECKs title/description/sort_order
+4. **`000021_create_submissions`** — 3 composite FK; `uq_submissions_deliverable_round` (round backstop) + `uq_submissions_workspace_id_id` (FK backing — คนละตัว) non-partial; `ix_submissions_deliverable`; CHECKs round_no/note/url
+5. **`000022_create_submission_reviews`** — 3 composite FK + FK-by-code; `uq_submission_reviews_submission` (1/submission); **ไม่มี** decision idx (M5); CHECK comment
+
+- FK ordering: masters 18/19 → deliverables 20 (←projects/000010) → submissions 21 (←deliverables + project_members/000012) → reviews 22 (←submissions + submission_decisions). **no backfill** (greenfield); down = reverse 22→18; CI up/down idempotent; no CONCURRENTLY (pre-prod)
+
+### M3.8 Decisions to fold (D58–D64) — ดู [DECISIONS.md](DECISIONS.md)
+
+| # | สรุป |
+| --- | --- |
+| **D58** | 3-table model (deliverables soft-del / submissions append-only round MAX+1 / submission_reviews append-only 1-per-submission immutable) + acceptance rules: **accept=terminal (OQ-7), conditional=terminal (OQ-5), 1 review/submission (OQ-2), self-review allowed flag-off (OQ-6)** |
+| **D59** | deliverable status = **derived ไม่ materialize** (OQ-1) — `deliverable_statuses` = label dictionary no-FK; §2.6 (precedent D39) |
+| **D60** | `submitted_by`/`reviewed_by` = composite FK → `project_members` (refine D38 → project-scoped, stricter; closes M2.8 reviewer-FK; server-derive จาก actor §5.4) |
+| **D61** | submissions + submission_reviews = **append-only** (edit = new round; precedent 000015) |
+| **D62** | ส่งเร็ว/ตรงเวลา/ช้า = **derived ที่ presenter** (no column, §2.6; UTC M3 OQ-3; M5 penalty hook) |
+| **D63** | project-role gate = **service-layer M3** (OQ-4; first project-role enforcement; non-member 404; amend 02 §5.5) |
+| **D64** | race = **mandatory deliverable FOR UPDATE ทั้ง submit/resubmit + review** (UNIQUE = backstop fire=bug; D40 precedent) |
+
+### M3.9 Open threads (M4+)
+
+file/attachment upload (D8, vision §9) · deliverable assignee/owner + reviewer-assignment column (M4) · task↔deliverable link (M4) · submission/review edit+retract (append-only D61) · multi-reviewer/approval chain (vision §9) · status materialize column (D59 profiling-gated) · timeliness master/snapshot + decision-rollup/KPI index (M5 dashboard) · lifecycle coupling project↔deliverable (D44 free — service-layer เมื่อพิสูจน์ misuse) · finance penalty จาก late (M5, consume D62) · deliverable cancel/reopen state (M4+) · reminder/notification (no infra) · `workspaces.timezone` (OQ-3, M5) · `requireProjectPermission` middleware (M4/M5, D63) · `project_member_role_history` + RLS hardening (carried M2.8)

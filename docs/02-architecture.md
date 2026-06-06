@@ -127,6 +127,8 @@ membership / org role / project role **resolve ใหม่ทุก request** �
 - per-request `X-Workspace-Slug` (§5.2) ทำให้ "active workspace/role" ไม่ใช่ค่าระดับ session; project role เป็น per-(user, project) ไม่ fit session granularity
 - lookup membership = index hit ราคาถูก. ถ้า profiling พบ hot path → เพิ่ม **cache แยก key `(account, workspace)` ที่ invalidate ได้ตอน role/membership เปลี่ยน** ไม่ใช่ยัดใน session token
 
+> **(M3, D63) project-role gating เริ่มที่ M3.** ก่อน M3 ทุก permission middleware (`requireWorkspacePermission` + per-module variants) gate ด้วย **org role อย่างเดียว** — `project_role_code` ถูกเก็บเป็น data แต่ยังไม่ใช้บังคับสิทธิ์. M3 (deliverable/submission/review) เพิ่ม **project-role gate ที่ service layer** (ไม่ใช่ middleware — 2-3 action, abstraction premature): resolve per-request จาก `project_members` ตาม `(workspace_id, project_id, actor membership)` (ตามหลัก §5.5 no-cache), org Owner/Admin = bypass, non-member read → 404 (D42 collapse). middleware `requireProjectPermission` = M4/M5 เมื่อ action สะสมพอ. ดู [04 §M3.5](04-data-model.md)
+
 ## 6. Cross-cutting (map vision §8 ลง architecture)
 
 | Concern (vision §8) | บังคับใช้ที่ layer ไหน |
