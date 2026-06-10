@@ -18,6 +18,15 @@ type Config struct {
 	Redis              RedisConfig
 	Storage            StorageConfig
 	Mail               MailConfig
+	Deliverable        DeliverableConfig
+}
+
+// DeliverableConfig holds M3 deliverable-module feature flags.
+type DeliverableConfig struct {
+	// ForbidSelfReview (env DELIVERABLE_FORBID_SELF_REVIEW, default false). When true, a
+	// reviewer whose project_member matches the submission's submitter is rejected with
+	// deliverable self_review_forbidden (OQ-6 separation-of-duty). Default false = allowed.
+	ForbidSelfReview bool
 }
 
 // MailConfig holds SMTP transport settings for outbound email.
@@ -111,7 +120,25 @@ func Load() (Config, error) {
 		Redis:              redis,
 		Storage:            storage,
 		Mail:               mail,
+		Deliverable: DeliverableConfig{
+			ForbidSelfReview: optionalBoolEnv("DELIVERABLE_FORBID_SELF_REVIEW", false),
+		},
 	}, nil
+}
+
+// optionalBoolEnv reads an optional boolean env var. Empty/unset → def. Recognizes the same
+// truthy/falsy literals as strconv.ParseBool (1/t/T/true/0/f/false…); an unparseable value
+// falls back to def rather than failing boot (the flag is non-critical, defaults safe).
+func optionalBoolEnv(key string, def bool) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
 }
 
 func (c Config) HTTPAddress() string {

@@ -10,6 +10,7 @@ import (
 	"prasankit-api/internal/modules/workspace"
 	authhandler "prasankit-api/internal/transport/http/auth"
 	companypositionhandler "prasankit-api/internal/transport/http/companyposition"
+	deliverablehandler "prasankit-api/internal/transport/http/deliverable"
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
 	projecthandler "prasankit-api/internal/transport/http/project"
@@ -36,6 +37,7 @@ func RegisterRoutes(
 	companyPositionH *companypositionhandler.Handler,
 	projectMemberPositionH *projectmemberpositionhandler.Handler,
 	companyPositionAttachH *companypositionhandler.Handler, // same companyposition handler exposes set/clear
+	deliverableH *deliverablehandler.Handler,
 ) {
 	app.Use(middlewares.RequestID)
 	app.Use(middlewares.CORS(corsAllowedOrigins))
@@ -149,6 +151,20 @@ func RegisterRoutes(
 				wsGroup.Post("/projects/:id/members/:memberId/positions", requireSession, requireTenant, requireAssignPos, projectMemberPositionH.HandleAssign)
 				wsGroup.Get("/projects/:id/members/:memberId/positions", requireSession, requireTenant, requireReadPos, projectMemberPositionH.HandleList)
 				wsGroup.Delete("/projects/:id/members/:memberId/positions/:code", requireSession, requireTenant, requireUnassignPos, projectMemberPositionH.HandleUnassign)
+			}
+
+			// Deliverable routes (M3). requireSession + requireTenant ONLY — there is NO
+			// org-permission middleware here: all authz (project-role gate, D63) is enforced
+			// in the deliverable service layer per-request. The route param is :projectID
+			// (deliverable handler reads c.Params("projectID")/("deliverableID")/("submissionID")).
+			if deliverableH != nil {
+				wsGroup.Post("/projects/:projectID/deliverables", requireSession, requireTenant, deliverableH.HandleCreate)
+				wsGroup.Get("/projects/:projectID/deliverables", requireSession, requireTenant, deliverableH.HandleList)
+				wsGroup.Get("/projects/:projectID/deliverables/:deliverableID", requireSession, requireTenant, deliverableH.HandleGet)
+				wsGroup.Put("/projects/:projectID/deliverables/:deliverableID", requireSession, requireTenant, deliverableH.HandleUpdate)
+				wsGroup.Delete("/projects/:projectID/deliverables/:deliverableID", requireSession, requireTenant, deliverableH.HandleDelete)
+				wsGroup.Post("/projects/:projectID/deliverables/:deliverableID/submissions", requireSession, requireTenant, deliverableH.HandleSubmit)
+				wsGroup.Post("/projects/:projectID/deliverables/:deliverableID/submissions/:submissionID/review", requireSession, requireTenant, deliverableH.HandleReview)
 			}
 		}
 

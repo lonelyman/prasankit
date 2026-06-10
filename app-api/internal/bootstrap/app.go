@@ -47,7 +47,7 @@ func InitializeApp(cfg config.Config) (*App, error) {
 
 	return &App{
 		config:      cfg,
-		httpApp:     NewHTTPApp(postgresSQLDB, gormDB, redisClient, storageClient, cfg.CORSAllowedOrigins, cfg.APIEnv, cfg.Mail),
+		httpApp:     NewHTTPApp(postgresSQLDB, gormDB, redisClient, storageClient, cfg.CORSAllowedOrigins, cfg.APIEnv, cfg.Mail, cfg.Deliverable),
 		postgresSQL: postgresSQLDB,
 		redis:       redisClient,
 		storage:     storageClient,

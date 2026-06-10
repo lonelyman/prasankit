@@ -8,6 +8,7 @@ import (
 	auditdbrepo "prasankit-api/internal/adapters/database/audit"
 	authdbrepo "prasankit-api/internal/adapters/database/auth"
 	companypositiondbrepo "prasankit-api/internal/adapters/database/companyposition"
+	deliverabledbrepo "prasankit-api/internal/adapters/database/deliverable"
 	projectdbrepo "prasankit-api/internal/adapters/database/project"
 	projectmemberdbrepo "prasankit-api/internal/adapters/database/projectmember"
 	projectmemberpositiondbrepo "prasankit-api/internal/adapters/database/projectmemberposition"
@@ -17,6 +18,7 @@ import (
 	"prasankit-api/internal/config"
 	"prasankit-api/internal/modules/auth"
 	"prasankit-api/internal/modules/companyposition"
+	"prasankit-api/internal/modules/deliverable"
 	"prasankit-api/internal/modules/project"
 	"prasankit-api/internal/modules/projectmember"
 	"prasankit-api/internal/modules/projectmemberposition"
@@ -25,6 +27,7 @@ import (
 	httptransport "prasankit-api/internal/transport/http"
 	authhandler "prasankit-api/internal/transport/http/auth"
 	companypositionhandler "prasankit-api/internal/transport/http/companyposition"
+	deliverablehandler "prasankit-api/internal/transport/http/deliverable"
 	"prasankit-api/internal/transport/http/health"
 	"prasankit-api/internal/transport/http/middlewares"
 	projecthandler "prasankit-api/internal/transport/http/project"
@@ -47,6 +50,7 @@ func NewHTTPApp(
 	corsAllowedOrigins []string,
 	apiEnv string,
 	mailCfg config.MailConfig,
+	deliverableCfg config.DeliverableConfig,
 ) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:      "prasankit-api",
@@ -123,6 +127,15 @@ func NewHTTPApp(
 	projectMemberPositionSvc := projectmemberposition.NewService(projectMemberPositionRepo, projectMemberRepo, projectPositionMasterRepo)
 	projectMemberPositionH := projectmemberpositionhandler.NewHandler(projectMemberPositionSvc)
 
+	// Deliverable wiring (M3). The repo holds the OQ-6 self-review flag (enforced under the
+	// deliverable lock). ProjectAccessRepo resolves project existence + the actor's project_member
+	// for the D63 service-layer authz gate. Reuse the shared auditRepo.
+	deliverableRepo := deliverabledbrepo.NewDeliverableRepo(gormDB, auditRepo, deliverableCfg.ForbidSelfReview)
+	deliverableMasterRepo := deliverabledbrepo.NewMasterRepo(gormDB)
+	deliverableAccessRepo := deliverabledbrepo.NewProjectAccessRepo(gormDB)
+	deliverableSvc := deliverable.NewService(deliverableRepo, deliverableMasterRepo, deliverableAccessRepo)
+	deliverableH := deliverablehandler.NewHandler(deliverableSvc)
+
 	httptransport.RegisterRoutes(
 		app,
 		healthHandler,
@@ -135,6 +148,7 @@ func NewHTTPApp(
 		companyPositionH,
 		projectMemberPositionH,
 		companyPositionH, // companyPositionAttachH — same handler exposes set/clear
+		deliverableH,
 	)
 
 	return app
