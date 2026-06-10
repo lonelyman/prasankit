@@ -1089,6 +1089,7 @@ SELECT id FROM deliverables WHERE workspace_id = $1 AND id = $2 AND deleted_at I
 | read | project member ใดก็ได้ (รวม viewer) | read path filter by membership |
 
 - **D63:** gate = **service-layer** (ไม่ทำ `requireProjectPermission` middleware ใน M3 — 2-3 action, premature; project_id มาหลาย path + matrix ต่อ action ต่างกัน). resolve per-request (D16, no cache) จาก `project_members WHERE (workspace_id, project_id, actor's workspace_membership_id)` ผ่าน `ix_project_members_membership`. org Owner/Admin = bypass. middleware = M4/M5. **amend [02 §5.5](02-architecture.md)**
+- **D65 (refine D63):** org Owner/Admin bypass **ไม่ครอบ submit/review** — `submitted_by`/`reviewed_by` ต้องมี active `project_members` row จริง (composite FK, D60) → org O/A ที่ไม่ใช่ member = **422 `deliverable.not_project_member`** (ไม่ auto-create member). bypass = deliverable CRUD + read เท่านั้น
 - **non-member read = 404** (reuse D42 probe-collapse — ไม่ leak การมีอยู่ของ deliverable)
 - finance role/visibility = M5 (ไม่แตะ M3)
 
